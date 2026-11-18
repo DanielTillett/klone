@@ -1,0 +1,5 @@
+<%
+    const char *previous = session_get(session, "probe");
+    io_printf(out, "%s\n", previous ? previous : "new");
+    session_set(session, "probe", "persisted");
+%>

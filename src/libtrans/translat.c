@@ -147,11 +147,11 @@ err:
 
 static int ppctx_depend_push(ppctx_t *ppc, const char *filepath)
 {
-    const char *s;
+    char *s;
 
     dbg_err_if((s = u_strdup(filepath)) == NULL);
 
-    dbg_err_if(u_list_add(ppc->depend, (void*)s));
+    dbg_err_if(u_list_add(ppc->depend, s));
 
     return 0;
 err:
@@ -653,7 +653,7 @@ static int parse_directive(parser_t *p, void *arg, const char *buf, size_t sz)
     dbg_return_if (p == NULL, ~0);
     dbg_return_if (buf == NULL, ~0);
     
-    dbg_err_if(io_mem_create((char*)buf, sz, 0, &io));
+    dbg_err_if(io_mem_create(KLONE_UNCONST(buf), sz, 0, &io));
 
     while(io_gets(io, line, LINE_BUFSZ) > 0)
         dbg_err_if(process_directive(p, line));
@@ -932,7 +932,7 @@ int translate(trans_info_t *pti)
         {
             /* set a cipher filter */
             dbg_err_if(codec_cipher_create(CIPHER_ENCRYPT, EVP_aes_256_cbc(),
-                pti->key, NULL, &aes));
+                (unsigned char *)pti->key, NULL, &aes));
             dbg_err_if(io_codec_add_tail(in, aes));
             aes = NULL;
         }

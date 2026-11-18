@@ -873,7 +873,7 @@ ssize_t io_get_until(io_t *io, char stop_at, char *buf, size_t size)
         if((p = io_strnchr(io->rbuf + io->roff, io->rcount, stop_at)) != NULL)
         {
             p++; /* jump over 'stop_at' char*/
-            wr = U_MIN(p - (io->rbuf + io->roff), size);
+            wr = U_MIN((size_t)(p - (io->rbuf + io->roff)), size);
             memcpy(buf, io->rbuf + io->roff, wr);
             buf[wr] = 0;
             io->rcount -= wr;

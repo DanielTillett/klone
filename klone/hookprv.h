@@ -16,7 +16,7 @@ extern "C" {
 #endif 
 
 #ifndef ENABLE_HOOKS
-    #define hook_call( func, ... )
+    #define hook_call( func, ... ) do { } while(0)
 #else
     #define hook_call( func, ... ) \
         do { if(ctx && ctx->hook && ctx->hook->func) \

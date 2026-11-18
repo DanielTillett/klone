@@ -282,7 +282,7 @@ static void server_close_fd(server_t *s, int fd)
 static int server_be_accept(server_t *s, backend_t *be, int *pfd)
 {
     struct sockaddr sa;
-    int sa_len = sizeof(struct sockaddr);
+    socklen_t sa_len = sizeof(struct sockaddr);
     int ad;
 
     u_unused_args(s);

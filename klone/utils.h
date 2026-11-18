@@ -34,6 +34,11 @@ extern "C" {
 
 #define KLONE_FREE(p) do {if (p) { free(p); p = NULL; }} while (0)
 
+/* drop 'const' from a pointer without a -Wcast-qual warning, for APIs that
+ * take or return non-const pointers they do not write through (like
+ * strchr(3)) */
+#define KLONE_UNCONST(p) ((void *)(uintptr_t)(const void *)(p))
+
 #define klone_die(...) do { u_con(__VA_ARGS__); exit(EXIT_FAILURE); } while(0)
 #define klone_die_if(cond, ...) \
     do { dbg_ifb(cond) klone_die(__VA_ARGS__); } while(0)

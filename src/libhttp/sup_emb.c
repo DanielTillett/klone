@@ -61,6 +61,7 @@ err:
     return 0; /* not found */
 }
 
+#ifdef SSL_ON
 static int supemb_get_cipher_key(request_t *rq, response_t *rs, char *key, 
     size_t keysz)
 {
@@ -104,6 +105,7 @@ err:
         session_free(ss);
     return ~0;
 }
+#endif /* SSL_ON */
 
 static int supemb_static_set_header_fields(request_t *rq, response_t *rs, 
     embfile_t *e, int *sai)
@@ -146,7 +148,9 @@ static int supemb_serve_static(request_t *rq, response_t *rs, embfile_t *e)
     codec_t *gzip = NULL, *decrypt = NULL;
     int sai = 0; /* send as is */
     int decrypting = 0, ec = ~0;
+#ifdef SSL_ON
     char key[CODEC_CIPHER_KEY_BUFSZ];
+#endif
     codec_t *rsf = NULL;
 
     dbg_return_if (rq == NULL, ~0);
@@ -191,7 +195,7 @@ static int supemb_serve_static(request_t *rq, response_t *rs, embfile_t *e)
         response_disable_caching(rs);
 
         dbg_err_if(codec_cipher_create(CIPHER_DECRYPT, EVP_aes_256_cbc(),
-                    key, NULL, &decrypt));
+                    (unsigned char *)key, NULL, &decrypt));
         /* delete the key from the stack */
         memset(key, 0, CODEC_CIPHER_KEY_BUFSZ);
     } 
@@ -213,7 +217,7 @@ static int supemb_serve_static(request_t *rq, response_t *rs, embfile_t *e)
     /* print out page content (the header will be autoprinted by the 
        response io filter) */
     dbg_err_if(io_write(response_io(rs), (const char*)e->data, e->size) 
-        < e->size);
+        < (ssize_t)e->size);
 
     /* remove and free the gzip/decrypt codecs (if they have been set) */
     dbg_err_if(io_codecs_remove(response_io(rs))); 

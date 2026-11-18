@@ -489,7 +489,8 @@ static int http_serve(http_t *h, int fd)
     vhost_t *vhost;
     struct sockaddr_storage ss;
     socklen_t slen;
-    char *uri, nuri[URI_MAX];
+    const char *uri;
+    char nuri[URI_MAX];
     const char *port;
     supplier_t *sup;
 

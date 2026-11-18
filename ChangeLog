@@ -11,6 +11,10 @@ KLone 4.0.0:
 	  suite); the API documentation builds with the CMake 'doc' target
 	- access log: fix the timezone offset of half-hour zones (e.g. +1030
 	  was logged as +1000)
+	- build: no compiler warnings in KLone's code with GCC, Clang and Apple
+	  Clang, including -DKLONE_ENABLE_WARNINGS=ON; embfile_t.data and the
+	  ppc_write() data argument are now const; kloned no longer uses the
+	  deprecated daemon(3)
 	- build: build/build.py, a reproducible build-and-test runner with LibU
 	  pinned in build/dependencies.json; requires OpenSSL 3
 	- tls: port to OpenSSL 3; require TLS 1.2 or newer and disable TLS

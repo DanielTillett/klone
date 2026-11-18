@@ -45,7 +45,7 @@ typedef struct embfile_s
 {
     embres_t res;           /* any emb resource must start with a embres_t    */
     size_t size;            /* size of the data block                         */
-    unsigned char *data;    /* file data                                      */
+    const unsigned char *data; /* file data                                   */
     int comp;               /* if data is compressed                          */
     int encrypted;          /* if data is encrypted                           */
     time_t mtime;           /* time of last modification                      */

@@ -366,17 +366,15 @@ static int klog_threshold (const char *threshold)
 /* map threshold directive to the internal representation */
 static int klog_logopt (const char *options)
 {
-    char *o2 = NULL;    /* 'options' dupped for safe u_tokenize() */
-    int i, logopt = 0;
-    enum { NOPTS = 4 };
-    char *optv[NOPTS + 1];
-    
-    dbg_return_if (options == NULL, 0);
-    dbg_return_if ((o2 = u_strdup(options)) == NULL, 0);
+    char **optv = NULL;
+    size_t i, nopts = 0;
+    int logopt = 0;
 
-    dbg_err_if (u_tokenize(o2, " \t", optv, NOPTS + 1));
-    
-    for (i = 0; optv[i] != NULL; i++)
+    dbg_return_if (options == NULL, 0);
+
+    dbg_err_if (u_strtok(options, " \t", &optv, &nopts));
+
+    for (i = 0; i < nopts; i++)
     {
         if (!strcasecmp(optv[i], "LOG_CONS"))
             logopt |= LOG_CONS;
@@ -392,11 +390,10 @@ static int klog_logopt (const char *options)
             warn("bad log option: \'%s\'", optv[i]);
     }
 
-    U_FREE(o2);
+    u_strtok_cleanup(optv, nopts);
     return logopt;
 
 err:
-    U_FREE(o2);
     return 0;
 }
 #endif

@@ -39,7 +39,7 @@ err:
 /* insert the element at the tail of the list */
 int vhost_list_add(vhost_list_t *vs, vhost_t *vhost)
 {
-    vhost_t *first, *last, *elm;
+    vhost_t *last, *elm;
 
     last = NULL;
     LIST_FOREACH(elm, vs, np)
@@ -55,8 +55,6 @@ int vhost_list_add(vhost_list_t *vs, vhost_t *vhost)
     }
 
     return 0;
-err:
-    return ~0;
 }
 
 vhost_t* vhost_list_get(vhost_list_t *vs, const char *host)

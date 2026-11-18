@@ -465,7 +465,7 @@ int session_prv_load_from_io(session_t *ss, io_t *io)
                 memset(key, 0, sizeof(key));
 				ksz = sizeof(key);
                 dbg_ifb(u_cipher_decrypt(EVP_aes_256_cbc(), ss->so->session_key,
-                    ss->so->session_iv, key, &ksz, 
+                    ss->so->session_iv, (char *)key, &ksz, 
                     var_get_value(v), var_get_value_size(v)))
                 {
                     v = vars_get(ss->vars, SESSION_KEY_VAR);
@@ -731,7 +731,8 @@ int session_set_cipher_key(session_t *ss, const char *data, size_t sz)
     }
 
     /* may contain \0 values; treat it as opaque binary data */
-    dbg_err_if(var_bin_create(SESSION_KEY_VAR, data, sz, &v));
+    dbg_err_if(var_bin_create(SESSION_KEY_VAR, (const unsigned char *)data,
+        sz, &v));
 
     dbg_err_if(vars_add(ss->vars, v));
     v = NULL;
@@ -865,7 +866,7 @@ int session_prv_save_var(var_t *v, void *vp)
     vsz += CODEC_CIPHER_BLOCK_LEN; /* encryption may enlarge the content up 
                                        to CODEC_CIPHER_BLOCK_LEN -1         */
 #else
-    u_unused_args(ekey, eksz);
+    u_unused_args(ekey, eksz, pkey, pksz);
 #endif
 
     /* if the buffer on the stack is too small alloc a bigger one */
@@ -903,7 +904,7 @@ int session_prv_save_var(var_t *v, void *vp)
             /* encrypt the key and save it to ekey */
             dbg_err_if(u_cipher_encrypt(EVP_aes_256_cbc(), 
                 pprm->ss->so->session_key, pprm->ss->so->session_iv, 
-                ekey, &eksz, pkey, pksz));
+                (char *)ekey, &eksz, (const char *)pkey, pksz));
 
             /* save it to the var list */
             dbg_err_if(var_set_bin_value(v, ekey, eksz));

@@ -53,7 +53,7 @@ again:
     return n;
 }
 
-static ssize_t ppc_do_write(int fd, char *data, size_t size)
+static ssize_t ppc_do_write(int fd, const char *data, size_t size)
 {
     ssize_t n;
 
@@ -68,7 +68,7 @@ again:
     return n;
 }
 
-ssize_t ppc_write(ppc_t *ppc, int fd, unsigned char cmd, char *data, 
+ssize_t ppc_write(ppc_t *ppc, int fd, unsigned char cmd, const char *data, 
     size_t size)
 {
     ssize_t n;
@@ -82,7 +82,7 @@ ssize_t ppc_write(ppc_t *ppc, int fd, unsigned char cmd, char *data,
     h.cmd = cmd;
     h.size = size;
 
-    n = ppc_do_write(fd, (char*)&h, sizeof(ppc_header_t));
+    n = ppc_do_write(fd, (const char*)&h, sizeof(ppc_header_t));
     if(n <= 0) /* error */
         return n;
 

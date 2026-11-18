@@ -26,7 +26,7 @@ static int fs_is_valid_uri(http_t *h, request_t *rq, const char *uri,
     dbg_return_if (mtime == NULL, 0);
     dbg_return_if (len + 1 > U_FILENAME_MAX, 0);
 
-    u_unused_args(h);
+    u_unused_args(h, rq);
 
     memcpy(fqn, uri, len);
     fqn[len] = '\0';

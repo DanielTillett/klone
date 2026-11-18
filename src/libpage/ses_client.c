@@ -302,11 +302,11 @@ int session_client_module_init(u_config_t *config, session_opt_t *so)
     EVP_MAC_free(mac);
     dbg_err_if(so->hmac_ctx == NULL);
     params[0] = OSSL_PARAM_construct_utf8_string(OSSL_MAC_PARAM_DIGEST,
-        (char *)EVP_MD_get0_name(so->hash), 0);
+        KLONE_UNCONST(EVP_MD_get0_name(so->hash)), 0);
     params[1] = OSSL_PARAM_construct_end();
 
     /* gen HMAC key */
-    dbg_err_if(!RAND_bytes(so->hmac_key, HMAC_KEY_LEN));
+    dbg_err_if(!RAND_bytes((unsigned char *)so->hmac_key, HMAC_KEY_LEN));
 
     /* init HMAC with our key and chose hash algorithm */
     dbg_err_if(EVP_MAC_init(so->hmac_ctx, (const unsigned char *)so->hmac_key,

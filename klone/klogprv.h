@@ -16,10 +16,8 @@
 extern "C" {
 #endif 
 
-static const char *kloglev[] =
-{
-    "DBG", "INF", "NTC", "WRN", "ERR", "CRT", "ALR", "EMR"
-};
+/* level names, indexed by KLOG_DEBUG .. KLOG_EMERG */
+extern const char *kloglev[];
 
 /* common */
 int klog_new (int type, int threshold, const char *ident, klog_t **pkl);

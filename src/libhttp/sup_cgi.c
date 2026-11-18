@@ -449,7 +449,7 @@ static int cgi_exec(request_t *rq, response_t *rs, pid_t *pchild,
 
         /* run the cgi (never returns); execve() does not modify argv, its
          * prototype is just not const-qualified */
-        crit_err_sif(execve(argv[0], (char * const *) argv, cgi_env.env));
+        crit_err_sif(execve(argv[0], KLONE_UNCONST(argv), cgi_env.env));
 
         /* never reached */
 

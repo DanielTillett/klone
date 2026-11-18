@@ -125,7 +125,7 @@ int emb_open(const char *file, io_t **pio)
     
     dbg_err_if(emb_lookup(file, (embres_t**)&e) || e->res.type != ET_FILE);
 
-    dbg_err_if(io_mem_create((char*)e->data, e->size, 0, &io));
+    dbg_err_if(io_mem_create(KLONE_UNCONST(e->data), e->size, 0, &io));
 
 #ifdef HAVE_LIBZ
     if(e->comp)
@@ -233,7 +233,7 @@ err:
 static int listadd (const void *val, const void *arg)
 {
     size_t i;
-    const char **list = (const char **) arg;
+    const char **list = KLONE_UNCONST(arg);
     const embres_t *res = (const embres_t *) val;
 
     /* Skip over already filled slots. */

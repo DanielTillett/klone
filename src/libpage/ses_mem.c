@@ -268,7 +268,7 @@ static int session_cmd_get(ppc_t *ppc, int fd, unsigned char cmd, char *data,
     return 0;
 err:
     if(ppc)
-        ppc_write(ppc, fd, PPC_CMD_RESPONSE_ERROR, (char *)"", 1);
+        ppc_write(ppc, fd, PPC_CMD_RESPONSE_ERROR, "", 1);
     if(esm && esm != (void *)buf)
         U_FREE(esm);
     return ~0;

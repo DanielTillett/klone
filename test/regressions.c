@@ -12,6 +12,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include <ctype.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,6 +34,7 @@ typedef ptrdiff_t ssize_t;
 #define dbg_ifb(c) if (c)
 #define warn_err_ifm(c, message) dbg_err_if(c)
 #define U_MIN(a, b) ((a) < (b) ? (a) : (b))
+#define KLONE_UNCONST(p) ((void *)(uintptr_t)(const void *)(p))
 enum { URLCPY_VERBATIM, URLCPY_ENCODE, URLCPY_DECODE };
 enum { HEXCPY_VERBATIM, HEXCPY_ENCODE, HEXCPY_DECODE };
 enum { HTMLCPY_VERBATIM, HTMLCPY_ENCODE, HTMLCPY_DECODE };

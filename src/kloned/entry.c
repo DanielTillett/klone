@@ -10,6 +10,7 @@
 #include "klone_conf.h"
 #include <stdlib.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <u/libu.h>
 #include <klone/server.h>
@@ -395,6 +396,41 @@ err:
 
 #elif defined(OS_UNIX)
 
+#ifdef HAVE_FORK
+/* daemon(3) equivalent (daemon() is deprecated on macOS): detach from the
+ * terminal and redirect the standard streams to /dev/null */
+static int kloned_daemon(int nochdir)
+{
+    int fd;
+
+    switch(fork())
+    {
+    case -1:
+        return -1;
+    case 0:
+        break;
+    default:
+        _exit(EXIT_SUCCESS);    /* parent */
+    }
+
+    if(setsid() == -1)
+        return -1;
+
+    if(!nochdir && chdir("/") == -1)
+        return -1;
+
+    if((fd = open("/dev/null", O_RDWR)) == -1)
+        return -1;
+    (void) dup2(fd, STDIN_FILENO);
+    (void) dup2(fd, STDOUT_FILENO);
+    (void) dup2(fd, STDERR_FILENO);
+    if(fd > STDERR_FILENO)
+        (void) close(fd);
+
+    return 0;
+}
+#endif  /* HAVE_FORK */
+
 int main(int argc, char **argv)
 {
     int rc = 0;
@@ -413,7 +449,7 @@ int main(int argc, char **argv)
 #ifdef HAVE_FORK
     /* daemonize if not -F */
     if(ctx->daemon && !ctx->cgi)
-        con_err_ifm(daemon(ctx->nochdir, 0), "daemon error");
+        con_err_ifm(kloned_daemon(ctx->nochdir), "daemon error");
 #endif  /* HAVE_FORK */
 
     /* save the PID in a file */

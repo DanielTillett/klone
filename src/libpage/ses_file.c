@@ -125,12 +125,6 @@ err:
     return ~0;
 }
 
-int session_file_module_term(session_opt_t *so)
-{
-    u_unused_args(so);
-    return 0;
-}
-
 int session_file_module_init(u_config_t *config, session_opt_t *so)
 {
     const char *v;

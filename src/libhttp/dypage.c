@@ -5,7 +5,7 @@
 
 const char *dypage_get_param(dypage_args_t *args, const char *key)
 {
-    int i;
+    size_t i;
 
     for(i = 0; i < args->nparams; ++i)
         if(strcmp(key, args->params[i].key) == 0)

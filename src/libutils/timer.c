@@ -75,7 +75,7 @@ static int timerm_set_next(void)
     return 0;
 }
 
-void timerm_sigalrm(int sigalrm)
+static void timerm_sigalrm(int sigalrm)
 {
     talarm_t *al = NULL;
     pid_t pid = getpid();
@@ -257,8 +257,6 @@ err:
 int timerm_add(int secs, talarm_cb_t cb, void *arg, talarm_t **pa)
 {
     talarm_t *al = NULL;
-    talarm_t *item = NULL;
-    time_t now = time(0);
     pid_t pid = getpid();
 
     dbg_return_if (cb == NULL, ~0);

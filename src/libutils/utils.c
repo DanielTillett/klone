@@ -233,14 +233,14 @@ char *u_strnstr(const char *buf, const char *sub, size_t buflen)
     dbg_return_if (buf == NULL || sub == NULL, NULL);
     len = strlen(sub);
     if (len == 0)
-        return (char *)buf;
+        return KLONE_UNCONST(buf);
     if (len > buflen)
         return NULL;
 
     /* Never form a search range beyond the caller's buffer. */
     for (i = 0; i <= buflen - len && buf[i] != '\0'; ++i)
         if (strncmp(buf + i, sub, len) == 0)
-            return (char *)(buf + i);
+            return KLONE_UNCONST(buf + i);
 
     return NULL;
 }
@@ -832,7 +832,7 @@ char *u_stristr(const char *string, const char *sub)
     for(p = string; *p; ++p)
     {
         if(strncasecmp(p, sub, len) == 0)
-            return (char*)p;
+            return KLONE_UNCONST(p);
     }
 
 err: /* fall through */
@@ -860,7 +860,7 @@ char* u_strnrchr(const char *s, char c, size_t len)
     
     for(; i >= 0; --i)
         if(s[i] == c)
-            return (char*)s + i; /* found */
+            return KLONE_UNCONST(s + i); /* found */
 err:
     return NULL;
 }
@@ -1187,7 +1187,7 @@ int u_md5(const char *buf, size_t sz, char out[MD5_DIGEST_BUFSZ])
     dbg_return_if (out == NULL, ~0);
     
     md5_init(&md5ctx);
-    md5_append(&md5ctx, (md5_byte_t*)buf, sz);
+    md5_append(&md5ctx, (const md5_byte_t*)buf, sz);
     md5_finish(&md5ctx, md5_digest);
 
     u_tohex(out, (const char*)md5_digest, 16);
@@ -1352,7 +1352,7 @@ int u_io_unzip_copy(io_t *out, const char *data, size_t sz)
     dbg_return_if (data == NULL, ~0);
     
     /* create an io_t around the HTML block */
-    dbg_err_if(io_mem_create((char*)data, sz, 0, &ios));
+    dbg_err_if(io_mem_create(KLONE_UNCONST(data), sz, 0, &ios));
 
     /* apply a gzip codec */
     dbg_err_if(codec_gzip_create(GZIP_UNCOMPRESS, &zip));

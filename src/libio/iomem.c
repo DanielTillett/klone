@@ -90,6 +90,7 @@ static ssize_t io_mem_write(io_mem_t *im, const char *buf, size_t size)
 
 static int io_mem_close(io_mem_t *im)
 {
+    u_unused_args(im);
     return 0;
 }
 

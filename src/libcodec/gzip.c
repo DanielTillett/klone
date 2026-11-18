@@ -13,6 +13,7 @@
 #include <klone/cgzip.h>
 #include <klone/utils.h>
 
+#define ZLIB_CONST  /* const next_in */
 #include <zlib.h>
 
 struct codec_gzip_s
@@ -39,7 +40,7 @@ static ssize_t gzip_flush(codec_t *codec, char *dst, size_t *dcount)
     iz = (codec_gzip_t*)codec;
     
     /* can't set it to NULL even if zlib must not use it (avail_in == 0) */
-    iz->zstr.next_in = (char*)0xDEADBEEF;
+    iz->zstr.next_in = (const Bytef *)0xDEADBEEF;
     iz->zstr.avail_in = 0;
 
 #if !defined(ZLIB_VERNUM) || ZLIB_VERNUM < 0x1200
@@ -53,7 +54,7 @@ static ssize_t gzip_flush(codec_t *codec, char *dst, size_t *dcount)
     }
 #endif
 
-    iz->zstr.next_out = dst;
+    iz->zstr.next_out = (Bytef *)dst;
     iz->zstr.avail_out = *dcount;
 
     /* should be Z_STREAM_END while uncompressing */
@@ -87,10 +88,10 @@ static ssize_t gzip_transform(codec_t *codec, char *dst, size_t *dcount,
 
     iz = (codec_gzip_t*)codec;
     
-    iz->zstr.next_out = dst;
+    iz->zstr.next_out = (Bytef *)dst;
     iz->zstr.avail_out = *dcount;
 
-    iz->zstr.next_in = (char*)src;
+    iz->zstr.next_in = (const Bytef *)src;
     iz->zstr.avail_in = src_sz;
 
     iz->err = iz->op(&iz->zstr, Z_NO_FLUSH);

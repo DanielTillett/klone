@@ -174,7 +174,7 @@ static int print_var_definition(parser_t *p, int comp, const char *varname,
     dbg_err_if(buf == NULL);
 
     /* create an io_t around the HTML block */
-    dbg_err_if(io_mem_create((char*)buf, bufsz, 0, &ios));
+    dbg_err_if(io_mem_create(KLONE_UNCONST(buf), bufsz, 0, &ios));
 
 #ifdef HAVE_LIBZ
     /* if compression is enabled zip the data block */
@@ -185,6 +185,8 @@ static int print_var_definition(parser_t *p, int comp, const char *varname,
         dbg_err_if(io_codec_add_tail(ios, zip));
         zip = NULL; /* io_free() will free the codec */
     }
+#else
+    u_unused_args(comp);
 #endif
 
     io_printf(p->out, "static const char %s[] = {\n", varname);
@@ -258,7 +260,7 @@ static void print_static_page_block(io_t *out, lang_c_ctx_t *ctx)
         "{                                  \n"
         "   e.res.type = ET_FILE;           \n"
         "   e.res.filename = \"%s\";        \n"
-        "   e.data = (unsigned char*)data;  \n"
+        "   e.data = (const unsigned char*)data;\n"
         "   e.size = sizeof(data);          \n"
         "   e.file_size = %u;               \n"
         "   e.mime_type = \"%s\";           \n"

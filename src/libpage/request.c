@@ -1087,11 +1087,6 @@ static int is_encoded(header_t *h)
     return 1; /* encoded */
 }
 
-static inline int is_nl(char c)
-{
-    return (c == '\n' || c == '\r' ? c : 0);
-}
-
 static inline int is_quote(char c)
 {
     return (c == '"' || c == '\'' ? c : 0);
@@ -1555,7 +1550,7 @@ err:
 static int request_parse_multipart_data(request_t *rq)
 {
     enum { BOUNDARY_BUFSZ = 128, BUFSZ = 1024 }; 
-    char boundary[BOUNDARY_BUFSZ], nl_boundary[BOUNDARY_BUFSZ], buf[BUFSZ], *nl;
+    char boundary[BOUNDARY_BUFSZ], nl_boundary[BOUNDARY_BUFSZ], buf[BUFSZ];
     int eof, rc;
 
     /* boundary lines must start with -- */

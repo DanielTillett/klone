@@ -171,7 +171,6 @@ int io_ssl_create(int fd, int flags, int client_mode,
         SSL_CTX *ssl_ctx, io_t **pio)
 {
     io_ssl_t *io_ssl = NULL;
-    int rc = 0;
     long vfy;
 
     dbg_return_if (pio == NULL, ~0);

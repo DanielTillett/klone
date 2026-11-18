@@ -47,6 +47,11 @@ err:
     return ~0;
 }
 
+const char *kloglev[] =
+{
+    "DBG", "INF", "NTC", "WRN", "ERR", "CRT", "ALR", "EMR"
+};
+
 const char *klog_to_str (int lev)
 {
     return (lev < KLOG_DEBUG || lev > KLOG_EMERG) ? "?" : kloglev[lev];

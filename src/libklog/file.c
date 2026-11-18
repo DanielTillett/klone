@@ -290,7 +290,7 @@ static int klog_file_shift_page (klog_file_t *klf)
     dbg_err_if ((klf->wfp = fopen(wf, "w")) == NULL);
 
     klf->offset = 0;                                /* reset offset counter */
-    klf->wpageid = ++(klf->wpageid)%klf->npages;    /* increment page id */
+    klf->wpageid = (klf->wpageid + 1) % klf->npages;  /* increment page id */
     
     return 0;
 err:

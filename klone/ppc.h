@@ -30,7 +30,7 @@ int ppc_free(ppc_t *ppc);
 int ppc_register(ppc_t *ppc, unsigned char cmd, ppc_cb_t func, void *arg);
 int ppc_dispatch(ppc_t *ppc, int fd, unsigned char cmd, char *data, 
     size_t size);
-ssize_t ppc_write(ppc_t *ppc, int fd, unsigned char cmd, char *data, 
+ssize_t ppc_write(ppc_t *ppc, int fd, unsigned char cmd, const char *data, 
     size_t size);
 ssize_t ppc_read(ppc_t *ppc, int fd, unsigned char *cmd, char *data, 
     size_t size);

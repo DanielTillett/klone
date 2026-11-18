@@ -368,24 +368,6 @@ err:
     return ~0;
 }
 
-static int is_cpp(const char *file_in)
-{
-    size_t l;
-
-    dbg_err_if (file_in == NULL);
-
-    l = strlen(file_in);
-    if(l < 4)
-        return 0;
-
-    /* if the file name ends with "[Cc][Cc]" consider it a c++ file */
-    if(tolower(file_in[--l]) == 'c' && tolower(file_in[--l]) == 'c')
-        return 1; /* c++ */
-
-err:
-    return 0;
-}
-
 /* !0 if s can be wrapped in a bracket argument closed by 'close': it must
  * not contain 'close', nor end with its prefix (e.g. "x]" + "]]" -> "x]]]") */
 static int cmake_bracket_safe(const char *s, const char *close)
@@ -615,6 +597,7 @@ err:
 
 static int command_import(void)
 {
+    static char empty[] = "";
     char *root_dir, *base_uri;
 
     if(ctx->narg != 1)
@@ -623,7 +606,7 @@ static int command_import(void)
     root_dir = ctx->arg[0];
     dbg_err_if(root_dir == NULL);
 
-    base_uri = ctx->base_uri ? ctx->base_uri : "";
+    base_uri = ctx->base_uri ? ctx->base_uri : empty;
 
     dbg_err_if(trans_site(root_dir, base_uri));
 

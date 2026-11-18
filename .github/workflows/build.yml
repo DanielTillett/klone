@@ -1,0 +1,30 @@
+name: Build and test
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [release, sanitize]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential clang libclang-rt-dev libssl-dev zlib1g-dev python3 git patch
+      - name: Build and test
+        run: python3 build/build.py --test ${{ matrix.mode == 'sanitize' && '--sanitize' || '' }}
+      - name: Fuzz parser smoke test
+        if: matrix.mode == 'release'
+        run: python3 test/run_fuzz.py --source .build/release/source --runs 10000
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: build-logs-${{ matrix.mode }}
+          path: |
+            .build/${{ matrix.mode }}/*.log
+            .build/${{ matrix.mode }}/build-info.json

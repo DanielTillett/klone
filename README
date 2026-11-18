@@ -32,3 +32,92 @@ NOTE: KLone needs GNU make in order to be built, which is not the default 'make'
 
 
 For further info and documentation, see http://www.koanlogic.com/klone
+
+MODERN LINUX / WSL BUILD
+-----------------------
+
+Supported baseline: Linux, Python 3, GNU make/GCC, OpenSSL 3 and zlib. On Ubuntu:
+
+    sudo apt-get update
+    sudo apt-get install build-essential clang libclang-rt-dev libssl-dev zlib1g-dev python3 git patch
+    python3 build/build.py --test
+    python3 build/build.py --sanitize --test
+
+On Windows, open PowerShell in this repository and run the Python commands
+through WSL, for example:
+
+    wsl -d Ubuntu -- python3 build/build.py --test
+
+The runner downloads MaKL and LibU at the exact commits in
+build/dependencies.json. Existing dependency checkouts must match those commits
+and have no tracked modifications (CRLF-only changes are normalized). It copies
+source files into .build/release/source or .build/sanitize/source and applies the
+reviewable build/makl-modern.patch there. Your checkout is not reconfigured or
+compiled in place. --offline uses already downloaded dependencies; --incremental
+reuses generated files during development. Omit --incremental for clean checks.
+
+The resulting daemon is .build/<mode>/source/src/kloned/kloned. Logs and
+build-info.json are in .build/<mode>. The metadata records dependency commits,
+a normalized source fingerprint, compiler and OpenSSL versions, and C flags.
+These reproduce the source inputs; identical binaries across different compiler
+or distribution versions are not guaranteed. No system service is installed.
+
+--test imports a small test-only dynamic page into the generated build, starts
+the daemon on temporary localhost ports, and checks static/HEAD responses,
+malformed headers and URIs, TLS negotiation, cookie flags, and memory/client-side
+session persistence. The test page is not added to the normal build. Test
+certificates and listeners are temporary. Never publish the test-enabled binary.
+
+The build currently disables C++ pages. Native Windows and the old CyaSSL backend
+are not covered by the full build; Windows uses the tested WSL path. Some warnings
+remain in legacy code and pinned dependencies. CI runs the Linux build and tests
+in normal and sanitizer configurations.
+
+REGRESSION AND FUZZ TESTS
+------------------------
+
+With Python 3 and Clang, the dependency-free utility suite runs on Windows/Linux:
+
+    python test/run_regressions.py --sanitize
+
+It compiles selected production functions verbatim as C99 with warnings treated
+as errors. LibU and network collaborators are test doubles; production MD5 is
+linked directly. This complements the full-server tests, not replaces them.
+
+After a full build, run a bounded libFuzzer test of actual parser/utility code:
+
+    python3 test/run_fuzz.py --source .build/release/source --runs 10000
+
+Fuzz logs, corpus and any crash inputs are kept inside the selected build folder.
+Longer fuzz campaigns and platform coverage remain useful follow-up work.
+
+SECURITY AND COMPATIBILITY CHANGES
+----------------------------------
+
+* OpenSSL contexts use owned opaque objects and public accessors. TLS negotiates
+  TLS 1.2 or newer; ephemeral 512-bit RSA and the default 1024-bit DH group are no
+  longer used. OpenSSL selects suitable DH parameters automatically unless an
+  explicit dh_file is configured.
+* Session IDs contain 128 bits of cryptographic randomness. Client-session MACs
+  default to HMAC-SHA256, use checked OpenSSL EVP_MAC calls, and compare tags in
+  constant time. Client-session IV and encoded-data bounds are checked.
+* Session cookies use Path=/, HttpOnly and SameSite=Lax, plus Secure on direct
+  TLS connections. The old response_set_cookie API preserves application-cookie
+  behavior; response_set_cookie_ex exposes explicit security flags. Deletion
+  cookies retain their scope and security attributes. Third-party login/embedding
+  flows may need an explicit SameSite policy; proxy TLS is not inferred from
+  untrusted forwarded headers.
+* HTTP input rejects duplicate Content-Length, unsupported Transfer-Encoding,
+  invalid field names/control characters, folded headers, unterminated headers,
+  numeric overflow, and decoded NULs in URI paths. Limits: 256 fields, 8192 bytes
+  per header line, 65536 aggregate bytes. URL path '+' and escaped '?' are preserved.
+  Chunked request bodies remain unsupported and are rejected explicitly.
+* Capacity-aware u_{url,hex,html,sql}ncpy_s APIs reject insufficient destinations.
+  Internal URL/hex callers use them; legacy public APIs remain available for
+  compatibility and still require correctly sized caller buffers. SQL quote
+  encoding now processes the complete input instead of truncating after quotes.
+
+Existing client-side sessions may need renewal when the default MAC changes.
+The client-session format still uses encrypt-then-MAC around AES-CBC; migrating
+that versioned wire format to AEAD, replacing MaKL, and extending native-platform
+coverage are larger follow-up changes, rather than claims of this update.

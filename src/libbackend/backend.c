@@ -124,17 +124,18 @@ err:
     return ~0;
 }
 
+/* serve the connection 'fd'; the backend owns it and closes it */
 int backend_serve(backend_t *be, int fd)
 {
-    dbg_return_if (be == NULL, ~0);
     dbg_return_if (fd < 0, ~0);
-    
+    dbg_err_if (be == NULL);
     dbg_err_if(be->cb_serve == NULL);
 
     be->cb_serve(be, fd);
 
     return 0;
 err:
+    close(fd);
     return ~0;
 }
 

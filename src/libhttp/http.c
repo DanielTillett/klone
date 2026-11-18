@@ -638,6 +638,10 @@ static int http_serve_request(http_t *h, io_t *cin, io_t *cout, int cgi,
         goto err;
     }
 
+    /* busy again after waiting on a kept-alive connection */
+    if(nreq)
+        dbg_if(server_watchdog(ctx->server, 1));
+
     response_set_method(rs, request_get_method(rq));
 
     /* keep the connection open if both sides want it */
@@ -746,7 +750,7 @@ static int http_serve(http_t *h, int fd, int keep_alive)
     io_t *conn = NULL, *cout = NULL;
     http_conn_addr_t ca;
     const char *gwi = NULL;
-    int cgi = 0, nreq, keep = 0;
+    int cgi = 0, nreq, keep = 0, owned = 1;   /* fd is ours to close */
 
     dbg_err_if (h == NULL);
     dbg_err_if (fd < 0);
@@ -759,6 +763,10 @@ static int http_serve(http_t *h, int fd, int keep_alive)
         keep_alive = 0;
 
     dbg_err_if(http_get_conn_addr(fd, cgi, &ca));
+
+    /* from here the connection io closes fd (also when its creation fails,
+       e.g. on a failed TLS handshake) */
+    owned = 0;
 
 #ifdef SSL_ON
     /* create the connection io (the TLS handshake happens here) */
@@ -793,6 +801,9 @@ static int http_serve(http_t *h, int fd, int keep_alive)
                 keep_alive && nreq + 1 < h->ka_max, &keep);
         if(!keep)
             break;
+
+        /* waiting for the next request is not a slow page (prefork) */
+        dbg_if(server_watchdog(ctx->server, 0));
     }
 
     io_free(cout);
@@ -804,6 +815,8 @@ err:
         io_free(cout);
     if(conn)
         io_free(conn);
+    if(owned && fd >= 0)
+        close(fd);
     return ~0;
 }
 
@@ -1022,6 +1035,8 @@ static int http_backend_serve(struct backend_s *be, int fd)
 
     return rc;
 err:
+    if(fd >= 0)
+        close(fd);
     return ~0;
 }
 

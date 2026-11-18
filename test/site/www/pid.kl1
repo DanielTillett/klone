@@ -1,0 +1,4 @@
+<%!
+    #include <unistd.h>
+%>
+<% io_printf(out, "%ld\n", (long) getpid()); %>

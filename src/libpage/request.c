@@ -149,6 +149,29 @@ io_t *request_io(request_t *rq)
     return rq->io;
 }
 
+/* the variable lists are created on first use: most requests (e.g. for
+ * static files) have no arguments, cookies or uploads */
+static vars_t *request_vars(request_t *rq, vars_t **pvars)
+{
+    if(*pvars == NULL)
+    {
+        dbg_err_if(vars_create(pvars));
+
+        /* args_get and args_post link to var_t owned by the rq->args list */
+        if(pvars == &rq->args_get || pvars == &rq->args_post)
+            dbg_err_if(vars_set_flags(*pvars, VARS_FLAG_FOREIGN));
+    }
+
+    return *pvars;
+err:
+    if(*pvars)
+    {
+        vars_free(*pvars);
+        *pvars = NULL;
+    }
+    return NULL;
+}
+
 /**
  * \ingroup request
  * \brief   Get the cookies list
@@ -164,7 +187,7 @@ vars_t *request_get_cookies(request_t *rq)
 {
     dbg_return_if (rq == NULL, NULL);
 
-    return rq->cookies;
+    return request_vars(rq, &rq->cookies);
 }
 
 /**
@@ -185,7 +208,7 @@ const char *request_get_cookie(request_t *rq, const char *name)
     dbg_return_if (rq == NULL, NULL);
     dbg_return_if (name == NULL, NULL);
 
-    v = vars_get(rq->cookies, name);
+    v = vars_get(request_vars(rq, &rq->cookies), name);
 
     return v ? var_get_value(v): NULL;
 }
@@ -204,7 +227,7 @@ vars_t *request_get_args(request_t *rq)
 {
     dbg_return_if (rq == NULL, NULL);
 
-    return rq->args;
+    return request_vars(rq, &rq->args);
 }
 
 /**
@@ -221,7 +244,7 @@ vars_t *request_get_getargs(request_t *rq)
 {
     dbg_return_if (rq == NULL, NULL);
 
-    return rq->args_get;
+    return request_vars(rq, &rq->args_get);
 }
 
 /**
@@ -238,7 +261,7 @@ vars_t *request_get_postargs(request_t *rq)
 {
     dbg_return_if (rq == NULL, NULL);
 
-    return rq->args_post;
+    return request_vars(rq, &rq->args_post);
 }
 
 /**
@@ -261,7 +284,7 @@ const char *request_get_arg(request_t *rq, const char *name)
     dbg_return_if (rq == NULL, NULL);
     dbg_return_if (name == NULL, NULL);
 
-    v = vars_get(rq->args, name);
+    v = vars_get(request_vars(rq, &rq->args), name);
 
     return v ? var_get_value(v): NULL;
 }
@@ -286,7 +309,7 @@ const char *request_get_getarg(request_t *rq, const char *name)
     dbg_return_if (rq == NULL, NULL);
     dbg_return_if (name == NULL, NULL);
 
-    v = vars_get(rq->args_get, name);
+    v = vars_get(request_vars(rq, &rq->args_get), name);
 
     return v ? var_get_value(v): NULL;
 }
@@ -311,7 +334,7 @@ const char *request_get_postarg(request_t *rq, const char *name)
     dbg_return_if (rq == NULL, NULL);
     dbg_return_if (name == NULL, NULL);
 
-    v = vars_get(rq->args_post, name);
+    v = vars_get(request_vars(rq, &rq->args_post), name);
 
     return v ? var_get_value(v): NULL;
 }
@@ -823,7 +846,7 @@ static int request_parse_cookie(request_t *rq, field_t *field)
 
     /* foreach name=value pair... */
     for(src = buf; (tok = strtok_r(src, " ;", &pp)) != NULL; src = NULL)
-        dbg_if(vars_add_urlvar(rq->cookies, tok, NULL));
+        dbg_if(vars_add_urlvar(request_vars(rq, &rq->cookies), tok, NULL));
 
     return 0;
 err:
@@ -878,14 +901,16 @@ static int request_cb_add_post_var(void *arg, const char *tok)
 {
     request_t *rq = (request_t*)arg;
 
-    return request_cb_add_var(rq->args, rq->args_post, tok);
+    return request_cb_add_var(request_vars(rq, &rq->args),
+            request_vars(rq, &rq->args_post), tok);
 }
 
 static int request_cb_add_get_var(void *arg, const char *tok)
 {
     request_t *rq = (request_t*)arg;
 
-    return request_cb_add_var(rq->args, rq->args_get, tok);
+    return request_cb_add_var(request_vars(rq, &rq->args),
+            request_vars(rq, &rq->args_get), tok);
 }
 
 static int foreach_query_var(const char *urlquery, int offset, 
@@ -1239,7 +1264,7 @@ err:
  */
 vars_t *request_get_uploads(request_t *rq)
 {
-    return rq->uploads;
+    return request_vars(rq, &rq->uploads);
 }
 
 /*
@@ -1285,7 +1310,7 @@ static int request_add_uploaded_file(request_t *rq, const char *name,
     info = NULL;
 
     /* push into the cookie list */
-    dbg_err_if(vars_add(rq->uploads, v));
+    dbg_err_if(vars_add(request_vars(rq, &rq->uploads), v));
 
     return 0;
 err:
@@ -1357,13 +1382,13 @@ int request_get_uploaded_file(request_t *rq, const char *name, size_t idx,
 
     dbg_err_if (rq == NULL);
     dbg_err_if (name == NULL);
-    dbg_err_if (idx >= vars_count(rq->uploads));
+    dbg_err_if (idx >= vars_count(request_vars(rq, &rq->uploads)));
     dbg_err_if (local_filename == NULL);
     dbg_err_if (client_filename == NULL);
     dbg_err_if (mime_type == NULL);
     dbg_err_if (file_size == NULL);
 
-    v = vars_geti(rq->uploads, name, idx);
+    v = vars_geti(request_vars(rq, &rq->uploads), name, idx);
     dbg_err_if(v == NULL);
 
     return request_get_uploaded_filev(rq, v, local_filename, client_filename,
@@ -1508,10 +1533,10 @@ static int request_parse_multipart_chunk(request_t *rq, io_t *io,
                     (ubuf ? u_buf_len(ubuf) : rc), 
                     &v));
 
-        dbg_if(vars_add(rq->args, v));
+        dbg_if(vars_add(request_vars(rq, &rq->args), v));
 
         /* also add it to the post array */
-        dbg_if(vars_add(rq->args_post, v));
+        dbg_if(vars_add(request_vars(rq, &rq->args_post), v));
     }
 
     /* will read "\r\n" for not-ending boundaries, "--" otherwise */
@@ -2044,16 +2069,7 @@ int request_create(http_t *http, request_t **prq)
 
     dbg_err_if(header_create(&rq->header));
 
-    dbg_err_if(vars_create(&rq->args));
-    dbg_err_if(vars_create(&rq->cookies));
-    dbg_err_if(vars_create(&rq->uploads));
-
-    dbg_err_if(vars_create(&rq->args_get));
-    dbg_err_if(vars_create(&rq->args_post));
-
-    /* args_get and args_post link to var_t owned by the rq->args list */
-    dbg_err_if(vars_set_flags(rq->args_get, VARS_FLAG_FOREIGN));
-    dbg_err_if(vars_set_flags(rq->args_post, VARS_FLAG_FOREIGN));
+    /* the variable lists are created on first use (request_vars()) */
 
     rq->http = http;
 

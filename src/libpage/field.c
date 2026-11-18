@@ -18,35 +18,26 @@ int field_set_from_line(field_t*, const char *line);
 const char* field_get_name(field_t *f);
 const char* field_get_value(field_t *f);
 
-/**
- * \ingroup header
- * \brief   Set a field
- *
- * Set field \p f to have \p name and \p value.
- *  
- * \param f     field object
- * \param name  field name
- * \param value field value
- *      
- * \return \c 0 if successful, non-zero on error
- */     
-int field_set(field_t *f, const char *name, const char *value)
+/* set field 'f' to the 'nlen' bytes long 'name' and to 'value' */
+static int field_setn(field_t *f, const char *name, size_t nlen,
+        const char *value)
 {
     char *n = NULL, *v = NULL;
-    const unsigned char *p;
+    const unsigned char *p, *end;
 
     dbg_err_if (f == NULL);
     dbg_err_if (name == NULL);
     dbg_err_if (value == NULL);
-    dbg_err_if (*name == '\0');
-    for (p = (const unsigned char *)name; *p; ++p)
+    dbg_err_if (nlen == 0);
+    end = (const unsigned char *)name + nlen;
+    for (p = (const unsigned char *)name; p < end; ++p)
         dbg_err_if(!((*p >= 'a' && *p <= 'z') ||
             (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') ||
-            strchr("!#$%&'*+-.^_`|~", *p) != NULL));
+            (*p != '\0' && strchr("!#$%&'*+-.^_`|~", *p) != NULL)));
     for (p = (const unsigned char *)value; *p; ++p)
         dbg_err_if((*p < 32 && *p != '\t') || *p == 127);
 
-    n = u_strdup(name);
+    n = u_strndup(name, nlen);
     dbg_err_if(n == NULL);
 
     v = u_strdup(value);
@@ -68,6 +59,25 @@ err:
 
 /**
  * \ingroup header
+ * \brief   Set a field
+ *
+ * Set field \p f to have \p name and \p value.
+ *
+ * \param f     field object
+ * \param name  field name
+ * \param value field value
+ *
+ * \return \c 0 if successful, non-zero on error
+ */
+int field_set(field_t *f, const char *name, const char *value)
+{
+    dbg_return_if (name == NULL, ~0);
+
+    return field_setn(f, name, strlen(name), value);
+}
+
+/**
+ * \ingroup header
  * \brief   Set a field from a line
  *
  * Set the name and value of field \p f.  Name and value must be separated by 
@@ -80,30 +90,23 @@ err:
  */ 
 int field_set_from_line(field_t *f, const char *ln)
 {
-    enum { BUFSZ = 256 };
-    char *p, *name = NULL;
+    const char *colon, *p;
 
     dbg_err_if (f == NULL);
     dbg_err_if (ln == NULL);
     dbg_err_if (!strlen(ln));
 
-    dbg_err_if((p = strchr(ln, ':')) == NULL);
-
-    name = u_strndup(ln, p-ln);
-    dbg_err_if(name == NULL);
+    dbg_err_if((colon = strchr(ln, ':')) == NULL);
 
     /* eat blanks between ':' and value */
-    for(++p; u_isblank(*p); ++p)
+    for(p = colon + 1; u_isblank(*p); ++p)
         ;
 
-    dbg_err_if(field_set(f, name, p));
-
-    U_FREE(name);
+    dbg_err_if(field_setn(f, ln, colon - ln, p));
 
     return 0;
 err:
     u_dbg("failed setting field from line: %s", ln);
-    U_FREE(name);
     return ~0;
 }
 

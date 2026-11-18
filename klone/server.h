@@ -52,6 +52,7 @@ int server_free(server_t *s);
 int server_loop(server_t *s);
 int server_cgi(server_t *s);
 int server_stop(server_t *s);
+int server_watchdog(server_t *s, int busy);
 ppc_t* server_get_ppc(server_t *s);
 
 int server_get_logger(server_t *s, klog_t **pkl);

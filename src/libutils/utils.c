@@ -985,19 +985,32 @@ err:
  */
 int u_getline_limit(io_t *io, u_string_t *ln, size_t limit)
 {
-    char c;
-    size_t n = 0;
+    enum { BUFSZ = 1024 };
+    char buf[BUFSZ];
+    size_t n = 0, want;
+    ssize_t len;
+
     dbg_return_if(io == NULL || ln == NULL, ~0);
     dbg_err_if(u_string_clear(ln));
-    while (io_getc(io, &c) == 1)
+
+    for (;;)
     {
-        dbg_err_if(++n > limit || c == '\0');
-        if (c == '\n')
-            return 0;
-        dbg_err_if(u_string_append(ln, &c, 1));
+        /* up to and including '\n'; one byte over the limit is enough to
+           tell that the line is too long */
+        want = U_MIN(sizeof(buf) - 1, limit + 1 - n);
+        len = io_get_until(io, '\n', buf, want + 1);
+        dbg_err_if(len <= 0); /* EOF or a read error before a complete line */
+
+        n += (size_t) len;
+        dbg_err_if(n > limit || memchr(buf, '\0', (size_t) len) != NULL);
+
+        if (buf[len - 1] == '\n')
+            return u_string_append(ln, buf, (size_t) len - 1) ? ~0 : 0;
+
+        dbg_err_if(u_string_append(ln, buf, (size_t) len));
     }
 err:
-    return ~0; /* EOF or a read error before a complete line */
+    return ~0;
 }
 
 int u_getline(io_t *io, u_string_t *ln)

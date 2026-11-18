@@ -8,6 +8,8 @@
  */
 
 #include "klone_conf.h"
+#include <stddef.h>
+#include <string.h>
 #include <time.h>
 #include <u/libu.h>
 #include <klone/request.h>
@@ -47,7 +49,7 @@ struct response_filter_s
     response_t *rs;
     session_t *ss;
     int state, feeded;
-    char buf[RFBUFSZ], *ptr;
+    char *ptr;
     size_t off;
     io_t *iob;              /* header and buffered body, ready to be sent */
     int chunked;            /* chunk-encode the body                      */
@@ -55,8 +57,11 @@ struct response_filter_s
     int no_body;            /* HEAD, 1xx, 204, 304: the body is dropped   */
     int limited;            /* the header announced a Content-Length ...  */
     size_t limit, sent;     /* ... of 'limit' bytes; 'sent' so far        */
-    char cbuf[RF_CHUNK_MAX + RF_CHUNK_EXTRA];  /* pending encoded chunk    */
     size_t clen, coff;
+
+    /* the buffers must be the last items: they are not zeroed on creation */
+    char buf[RFBUFSZ];
+    char cbuf[RF_CHUNK_MAX + RF_CHUNK_EXTRA];  /* pending encoded chunk    */
 };
 
 static int rf_init_iob(response_filter_t *rf)
@@ -340,8 +345,10 @@ int response_filter_create(request_t *rq, response_t *rs, session_t *ss,
     dbg_err_if (rs == NULL);
     dbg_err_if (prf == NULL);
 
-    rf = u_zalloc(sizeof(response_filter_t));
+    /* zero all but the (8 KB of) buffers */
+    rf = u_malloc(sizeof(response_filter_t));
     dbg_err_if(rf == NULL);
+    memset(rf, 0, offsetof(response_filter_t, buf));
 
     rf->rq = rq;
     rf->rs = rs;

@@ -462,6 +462,30 @@ err:
     return ~0;
 }
 
+/* the last date formatted by a caller: the same few dates (the current
+ * second, a file's modification time) are formatted over and over */
+typedef struct response_date_s
+{
+    int valid;
+    time_t date;
+    char buf[64];
+} response_date_t;
+
+static const char *response_format_date(response_date_t *cache, time_t date)
+{
+    if(!cache->valid || cache->date != date)
+    {
+        cache->valid = 0;
+        dbg_err_if(u_tt_to_rfc822(cache->buf, date));
+        cache->date = date;
+        cache->valid = 1;
+    }
+
+    return cache->buf;
+err:
+    return NULL;
+}
+
 /**
  * \ingroup response
  * \brief   Set the date field in a response header
@@ -477,12 +501,10 @@ err:
  */
 int response_set_date(response_t *rs, time_t date)
 {
-    enum { BUFSZ = 64 };
-    char buf[BUFSZ];
+    static response_date_t cache;
 
-    dbg_err_if(u_tt_to_rfc822(buf, date));
-
-    dbg_err_if(header_set_field(rs->header, "Date", buf));
+    dbg_err_if(header_set_field(rs->header, "Date",
+                response_format_date(&cache, date)));
 
     return 0;
 err:
@@ -504,12 +526,10 @@ err:
  */
 int response_set_last_modified(response_t *rs, time_t mtime)
 {
-    enum { BUFSZ = 64 };
-    char buf[BUFSZ];
+    static response_date_t cache;
 
-    dbg_err_if(u_tt_to_rfc822(buf, mtime));
-
-    dbg_err_if(header_set_field(rs->header, "Last-Modified", buf));
+    dbg_err_if(header_set_field(rs->header, "Last-Modified",
+                response_format_date(&cache, mtime)));
 
     return 0;
 err:

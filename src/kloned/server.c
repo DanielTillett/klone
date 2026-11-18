@@ -565,20 +565,19 @@ static int server_child_serve(server_t *s, backend_t *be, int ad)
 
         hook_call(child_init);
 
-        /* serve the page */
+        /* serve the page (the backend closes the client socket) and die */
         dbg_if(backend_serve(be, ad));
 
         hook_call(child_term);
 
-        /* close client socket and die */
-        close(ad);
-        server_stop(be->server); 
-    }
-    /* parent */
+        server_stop(be->server);
+    } else
+        close(ad); /* parent: the child owns the client socket */
 
     return 0;
 err:
     warn_strerror(errno);
+    close(ad);
     return ~0;
 }
 
@@ -606,36 +605,84 @@ err:
 }
 #endif /* ifdef OS_UNIX */
 
+/* prefork: the alarm that asks the parent for one more worker when this one
+ * has been busy serving a request for more than a second */
+static talarm_t *server_watchdog_al = NULL;
+static int server_watchdog_enabled = 0;
+
+/**
+ * \brief   Tell a prefork worker whether it is serving a request
+ *
+ * Called with \p busy set to \c 0 while a kept-alive connection waits for its
+ * next request, and to \c 1 when that request arrives, so that an idle
+ * connection does not count as a slow page.  Does nothing in other server
+ * models.
+ *
+ * \param s     the server object
+ * \param busy  \c 1 when serving a request, \c 0 when idle
+ *
+ * \return \c 0 if successful, non-zero on error
+ */
+int server_watchdog(server_t *s, int busy)
+{
+    if(!server_watchdog_enabled || s == NULL)
+        return 0;
+
+#if defined(OS_UNIX) && defined(HAVE_FORK)
+    /* once fired the worker exits after this connection: don't ask again */
+    if(busy && server_watchdog_al == NULL && !s->stop)
+    {
+        /* FIXME lower timeout value may be needed */
+        dbg_err_if(timerm_add(1, server_cb_spawn_child, (void*)s,
+                    &server_watchdog_al));
+    } else if(!busy && server_watchdog_al) {
+        /* remove and free the alarm (pending or already fired) */
+        timerm_del(server_watchdog_al);
+        server_watchdog_al = NULL;
+    }
+#else
+    u_unused_args(s, busy);
+#endif
+
+    return 0;
+err:
+    return ~0;
+}
+
+/* serve the accepted socket 'ad', which is always consumed (closed) */
 static int server_be_serve(server_t *s, backend_t *be, int ad)
 {
-    talarm_t *al = NULL;
+    int owned = 1;  /* 'ad' not yet handed over */
 
     dbg_err_if (s == NULL);
     dbg_err_if (be == NULL);
-    
+
     switch(be->model)
     {
 #if defined(OS_UNIX) && defined(HAVE_FORK)
     case SERVER_MODEL_FORK:
         /* spawn a child to handle the request */
+        owned = 0;  /* consumed by server_child_serve() */
         dbg_err_if(server_child_serve(s, be, ad));
         break;
 
-    case SERVER_MODEL_PREFORK: 
-        /* FIXME lower timeout value may be needed */
-        /* if _serve takes more then 1 second spawn a new worker process */
-        dbg_err_if(timerm_add(1, server_cb_spawn_child, (void*)s, &al));
+    case SERVER_MODEL_PREFORK:
+        /* if a request takes more then 1 second spawn a new worker process */
+        server_watchdog_enabled = 1;
+        dbg_if(server_watchdog(s, 1));
 
-        /* serve the page */
+        /* serve the page (the backend closes the socket) */
+        owned = 0;
         dbg_if(backend_serve(be, ad));
 
-        /* remove and free the alarm */
-        timerm_del(al); /* prefork */
+        dbg_if(server_watchdog(s, 0));
+        server_watchdog_enabled = 0;
         break;
 #endif  /* OS_UNIX && HAVE_FORK */
 
     case SERVER_MODEL_ITERATIVE:
-        /* serve the page */
+        /* serve the page (the backend closes the socket) */
+        owned = 0;
         dbg_if(backend_serve(be, ad));
         break;
 
@@ -643,12 +690,10 @@ static int server_be_serve(server_t *s, backend_t *be, int ad)
         warn_err_if("server model not supported");
     }
 
-    /* close the accepted (already served) socket */
-    close(ad);
-
     return 0;
 err:
-    close(ad);
+    if(owned)
+        close(ad);
     return ~0;
 }
 
@@ -757,7 +802,7 @@ err:
 static int server_dispatch(server_t *s, int fd)
 {
     backend_t *be;
-    int ad = -1; 
+    int ad = -1, rc;
 
     dbg_err_if (s == NULL);
 
@@ -776,8 +821,10 @@ static int server_dispatch(server_t *s, int fd)
      * in the UNIX family or it is using the SCTP transport instead of TCP. */
     (void) u_net_nagle_off(ad);
 
-    /* serve the page */
-    dbg_err_if(server_be_serve(s, be, ad));
+    /* serve the page (this consumes the socket) */
+    rc = server_be_serve(s, be, ad);
+    ad = -1;
+    dbg_err_if(rc);
 
     return 0;
 err:

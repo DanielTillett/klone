@@ -49,6 +49,22 @@ struct timerm_s
 /* this must be a singleton */
 static timerm_t *timer = NULL;
 
+#ifdef OS_UNIX
+/* The alarm list is guarded by a flag instead of blocking SIGALRM, which
+ * costs two system calls each time: a SIGALRM that arrives while the list
+ * is being changed is only recorded, and handled when the change is done. */
+static volatile sig_atomic_t alarms_locked = 0;
+static volatile sig_atomic_t alarm_pending = 0;
+
+/* keep the compiler from moving list changes across the flag updates (the
+ * handler runs on the same thread, so no CPU fence is needed) */
+#if defined(__GNUC__) || defined(__clang__)
+#define TIMERM_BARRIER() __asm__ __volatile__("" ::: "memory")
+#else
+#define TIMERM_BARRIER()
+#endif
+#endif
+
 static int timerm_set_alarm(int timeout)
 {
     time_t n = time(0) + timeout;
@@ -75,13 +91,12 @@ static int timerm_set_next(void)
     return 0;
 }
 
-static void timerm_sigalrm(int sigalrm)
+/* run the expired alarms */
+static void timerm_run(void)
 {
     talarm_t *al = NULL;
     pid_t pid = getpid();
     time_t now = time(0);
-
-    u_unused_args(sigalrm);
 
     dbg_err_if(timer == NULL);
 
@@ -124,12 +139,34 @@ err:
     return;
 }
 
+static void timerm_sigalrm(int sigalrm)
+{
+    u_unused_args(sigalrm);
+
+#ifdef OS_UNIX
+    if(alarms_locked)
+    {
+        /* the list is being changed: run the alarms when that is done */
+        alarm_pending = 1;
+        return;
+    }
+    alarms_locked = 1;
+#endif
+
+    timerm_run();
+
+#ifdef OS_UNIX
+    alarms_locked = 0;
+#endif
+}
+
 static int timerm_block_alarms(void)
 {
 #ifdef OS_UNIX
-    if(timer->cb_running)
+    if(timer == NULL || timer->cb_running)
         return 0;
-    dbg_err_if(u_sig_block(SIGALRM));
+    alarms_locked = 1;
+    TIMERM_BARRIER();
 #endif
 
 #ifdef OS_WIN
@@ -137,16 +174,37 @@ static int timerm_block_alarms(void)
 #endif
 
     return 0;
-err:
-    return ~0;
 }
 
 static int timerm_unblock_alarms(void)
 {
 #ifdef OS_UNIX
-    if(timer->cb_running)
+    if(timer == NULL)
+    {
+        alarms_locked = 0;  /* e.g. on a timerm_add() error */
         return 0;
-    dbg_err_if(u_sig_unblock(SIGALRM));
+    }
+
+    if(timer->cb_running)
+        return 0;   /* the alarms run with the list locked */
+
+    for(;;)
+    {
+        TIMERM_BARRIER();
+        if(!alarm_pending)
+        {
+            alarms_locked = 0;
+
+            /* a SIGALRM may have been deferred just before the unlock */
+            if(!alarm_pending)
+                break;
+            alarms_locked = 1;
+        }
+
+        /* handle the deferred SIGALRM, still locked against a new one */
+        alarm_pending = 0;
+        timerm_run();
+    }
 #endif
 
 #ifdef OS_WIN
@@ -154,8 +212,6 @@ static int timerm_unblock_alarms(void)
 #endif
 
     return 0;
-err:
-    return ~0;
 }
 
 static int timerm_free(timerm_t *t)

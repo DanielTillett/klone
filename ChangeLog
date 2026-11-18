@@ -1,6 +1,20 @@
 ChangeLog file of KLone - https://github.com/DanielTillett/klone
 
 KLone 4.0.0:
+	- prefork: the 1 s watchdog that asks for a new worker when a page is
+	  slow now covers only serving a request, not waiting for the next one
+	  on a kept-alive connection. It fired on every connection held for
+	  more than a second: the idle connection was dropped and the worker
+	  replaced. New server_watchdog()
+	- performance: 7-15% less CPU per small request (macOS, measured). The
+	  timer no longer blocks SIGALRM with two system calls per change (a
+	  signal that arrives while the alarm list changes is deferred); request
+	  argument, cookie and upload lists are created on first use; header
+	  lines are read in blocks, not byte by byte; header field names are
+	  copied once; Date and Last-Modified values are formatted once per
+	  value; the response filter's buffers are not zeroed
+	- server: the HTTP backend owns and closes the accepted socket, which
+	  was closed twice
 	- http: client connections use a 64 KB write buffer (was 4 KB), so large
 	  responses go out in large blocks: about 3-4x the throughput for a 1 MB
 	  file on macOS; new io_set_write_buffer_size()

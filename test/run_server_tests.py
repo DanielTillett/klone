@@ -270,6 +270,26 @@ def run_keep_alive_checks(args, check, plain, secure, request):
         check(big_page(body) and "transfer-encoding" not in headers and conn.closed(),
               f"HTTP/1.0 body of unknown length must end with the close: {headers}")
 
+    # a connection kept open for more than a second, but busy only for short
+    # requests, must not make the worker ask for a replacement and exit
+    pids, dropped = set(), False
+    with Connection(plain) as conn:
+        try:
+            for _ in range(7):
+                conn.send(get(b"/pid.kl1"))
+                status, headers, body = conn.response()
+                pids.add(body.strip())
+                time.sleep(0.4)
+        except EOFError:
+            dropped = True
+    check(not dropped, "Kept-alive connection dropped after a second (prefork watchdog)")
+    worker = pids.pop().decode() if len(pids) == 1 else ""
+    time.sleep(1)
+    state = subprocess.run(["ps", "-o", "stat=", "-p", worker or "0"],
+                           stdout=subprocess.PIPE, text=True).stdout.strip()
+    check(worker.isdigit() and state and not state.startswith("Z"),
+          f"Worker retired after an idle keep-alive connection: pid {worker} state {state!r}")
+
     # an idle connection is closed after keep_alive_timeout (1 s)
     with Connection(plain) as conn:
         conn.send(request)

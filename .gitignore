@@ -19,4 +19,6 @@ src/tools/klone/klone
 tags
 skin/default/Makefile
 klone_conf.h
+.build/
+__pycache__/
 

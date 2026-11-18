@@ -23,4 +23,5 @@ SUBDIR += kloned
 include subdir.mk
 
 # dir dependencies
-kloned tools: $(filter-out kloned tools, $(SUBDIR))
+tools.all: $(addsuffix .all,$(filter-out kloned tools,$(SUBDIR)))
+kloned.all: tools.all

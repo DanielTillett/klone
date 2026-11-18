@@ -9,6 +9,9 @@
  */
 
 #include "klone_conf.h"
+#ifdef OS_UNIX
+#include <grp.h>
+#endif
 #include <sys/types.h>
 #include <sys/stat.h>
 #ifdef HAVE_SYS_WAIT

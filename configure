@@ -95,7 +95,7 @@ case `makl_target_name` in
 
     *mingw*)
         makl_set_var        "OS_WIN"
-        makl_append_var_mk  "POST_LDADD"      "-lwsock32 -L/c/WINDOWS" 
+        makl_append_var_mk  "POST_LDADD"      "-lwsock32 -lbcrypt -L/c/WINDOWS"
         ;;
 
     *cygwin*)
@@ -171,9 +171,9 @@ makl_checkstackp          0
 # check va_list behaviour
 makl_va_list_by_value
 
-makl_checkfunc          0   "syslog" "" ""
-makl_checkfunc          0   "mkstemp" "" ""
-makl_checkfunc          0   "localtime_r" "" ""
+makl_checkfunc          0   "syslog" 3 "" "<syslog.h>"
+makl_checkfunc          0   "mkstemp" 1 "" "<stdlib.h>"
+makl_checkfunc          0   "localtime_r" 2 "" "<time.h>"
 
 makl_checkinline        0
 if [ $? -ne 0 ]; then

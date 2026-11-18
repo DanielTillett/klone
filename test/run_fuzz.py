@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Daniel Tillett. Part of KLone; see the LICENSE file.
 """Run a bounded libFuzzer smoke test against actual parser/utility libraries."""
 import argparse
 import os

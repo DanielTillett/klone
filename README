@@ -5,23 +5,26 @@ KLone is a web application development framework for embedded systems. It
 compiles a web server, its configuration and the site's static and dynamic
 (C-scripted) pages into a single executable, kloned.
 
-This branch modernizes KLone 3.1.0 for current toolchains: a reproducible
-Linux build against OpenSSL 3, TLS 1.2 or newer, hardened HTTP parsing and
-sessions, and automated regression, full-server and fuzz tests. See SECURITY
-AND COMPATIBILITY CHANGES below before upgrading an existing deployment.
+KLone 4.0.0 modernizes KLone 3.1.0 for current toolchains: a CMake build
+that needs no GNU make, OpenSSL 3 with TLS 1.2 or newer, hardened HTTP
+parsing and sessions, and automated regression, full-server and fuzz tests.
+See SECURITY AND COMPATIBILITY CHANGES below before upgrading an existing
+deployment.
 
-Original project documentation: http://www.koanlogic.com/klone
+Project home: https://github.com/DanielTillett/klone
+Original KoanLogic project (no longer maintained): https://github.com/koanlogic/klone
 
 
-QUICK START (LINUX / WSL)
--------------------------
+QUICK START (LINUX / WSL / MACOS)
+---------------------------------
 
-Supported baseline: Linux, Python 3.9 or newer, GNU make, GCC or Clang,
-OpenSSL 3 and zlib. On Ubuntu:
+Requirements: CMake 3.24 or newer, a build tool (Ninja, BSD make or GNU
+make), GCC or Clang, OpenSSL 3, zlib, Git, and Python 3.9 or newer for the
+build-and-test runner. On Ubuntu:
 
     sudo apt-get update
     sudo apt-get install build-essential clang libclang-rt-dev libssl-dev \
-        zlib1g-dev python3 git patch
+        zlib1g-dev python3 git cmake ninja-build
     python3 build/build.py --test
 
 On Windows, run the same commands inside WSL from PowerShell in this
@@ -29,40 +32,108 @@ repository, for example:
 
     wsl -d Ubuntu -- python3 build/build.py --test
 
-The daemon is built at .build/release/source/src/kloned/kloned. Build logs
-and build-info.json are in .build/release.
+On macOS, with Homebrew:
+
+    brew install cmake ninja openssl@3
+    export OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)
+    python3 build/build.py --test
+
+The daemon is built at .build/release/cmake/bin/kloned and the page
+translator at .build/release/cmake/bin/klone. Build logs and
+build-info.json are in .build/release.
 
 
-BUILD OPTIONS
--------------
+BUILDING WITH CMAKE
+-------------------
+
+build/build.py (below) wraps CMake with pinned dependencies and tests. To
+use CMake directly, fetch the pinned LibU once (python3 build/build.py does
+this, or pass -DLIBU_SOURCE_DIR=<checkout>), then:
+
+    cmake -S . -B out -G Ninja -DKLONE_SITE_DIR=doc/example-site
+    cmake --build out
+    cmake --install out           # optional; honors CMAKE_INSTALL_PREFIX
+
+The install includes the libraries and all headers (KLone, LibU and the
+generated configuration headers). To build against it, also put OpenSSL's
+headers on the include path; KLone's public headers include them. The
+server itself (including the embedded site and emb_init()) is linked by
+the CMake build; the installed libraries do not contain kloned's own
+sources, as in KLone 3.x.
+
+Multi-configuration generators (Visual Studio, Xcode, Ninja Multi-Config)
+are not supported; choose the configuration with CMAKE_BUILD_TYPE (Release,
+the default, builds with -O2).
+
+GNU make is not required. With BSD make, use the Makefile generator (BSD
+make cannot handle spaces in site paths; use Ninja for those):
+
+    cmake -S . -B out -G "Unix Makefiles" -DCMAKE_MAKE_PROGRAM=bmake
+    cd out && bmake
+
+Options (KLone 3.x configure equivalents in brackets):
+
+    KLONE_SITE_DIR=<dir>          site to embed into kloned (default: none)
+    KLONE_IMPORT_ARGS=<list>      extra 'klone -c import' options, e.g.
+                                  "-z;-x;*.bak" (compression, exclusions,
+                                  encryption patterns and key file)
+    KLONE_DEBUG=ON                debug logging and symbols [--enable_debug]
+    KLONE_ENABLE_SUP_FS=ON        serve files from disk [--enable_sup_fs]
+    KLONE_ENABLE_SUP_CGI=ON       external CGIs [--enable_sup_cgi]
+    KLONE_ENABLE_HOOKS=ON         user hooks_setup() [--enable_hooks]
+    KLONE_ENABLE_WARNINGS=ON      extra warnings [--enable_warns]
+    KLONE_DAEMON_NAME=<name>      daemon file name [--daemon_name]
+    KLONE_INSTALL_DAEMON_ONLY=ON  install only kloned [--install_daemon_only]
+    KLONE_WEBAPP_SOURCES=<list>   web application sources [WEBAPP_SRCS]
+    KLONE_WITH_OPENSSL=OFF        build without TLS and encryption
+    KLONE_WITH_ZLIB=OFF           build without compression
+
+With Doxygen installed, 'cmake --build out --target doc' writes the API
+reference to out/doc.
+
+How it works: CMake runs the platform checks that KLone 3.x's configure ran and
+generates klone_conf.h and LibU's libu_conf.h in the build directory. It
+builds LibU from the pinned checkout without modifying it, then the klone
+tool, then the site. The site is a small separate CMake project (cmake/site)
+because the klone tool must exist before the site can be imported:
+'klone -c import' writes autogen.cmake, a list of pages, and each page is
+translated to C and compiled into libsite. Editing a page retranslates only
+that page; adding or removing files re-runs the import automatically.
+
+
+BUILD-AND-TEST RUNNER
+---------------------
 
     python3 build/build.py [--sanitize] [--test] [--offline] [--incremental]
-                           [--jobs N]
+                           [--jobs N] [--generator G] [--make-program P]
 
-    --sanitize     Build with AddressSanitizer and UndefinedBehaviorSanitizer
-                   into .build/sanitize instead of .build/release.
-    --test         Run the regression suite and the full-server tests after
-                   building (see TESTING).
-    --offline      Use already downloaded dependencies; fail if missing.
-    --incremental  Reuse generated build files during development. Omit it
-                   for clean, release-quality checks.
-    --jobs N       Parallel make jobs (default 2).
+    --sanitize      Build with AddressSanitizer and UndefinedBehaviorSanitizer
+                    into .build/sanitize instead of .build/release.
+    --test          Run the regression suite and the full-server tests after
+                    building (see TESTING).
+    --offline       Use already downloaded dependencies; fail if missing.
+    --incremental   Reuse the previous build directory during development.
+                    Omit it for clean, release-quality checks.
+    --jobs N        Parallel build jobs (default 2).
+    --generator G   CMake generator (default Ninja if installed, otherwise
+                    "Unix Makefiles").
+    --make-program P  Build tool for the generator, e.g. bmake.
 
-How the build works:
+How the runner works:
 
-* MaKL and LibU are cloned at the exact commits pinned in
-  build/dependencies.json. Existing checkouts must match those commits and
-  have no tracked modifications (CRLF-only differences are tolerated).
+* LibU is cloned at the exact commit pinned in build/dependencies.json. Existing checkouts must match those
+  commits and have no tracked modifications (CRLF-only differences are
+  tolerated).
 * Sources are copied, with line endings normalized, into
-  .build/<mode>/source, and build/makl-modern.patch is applied there. Your
+  .build/<mode>/source and built out of tree in .build/<mode>/cmake. Your
   checkout is never configured or compiled in place, and nothing is
   installed on the system.
 * Only one build may use a given .build/<mode> directory at a time; a
   second concurrent build of the same mode is refused.
 * build-info.json records the dependency commits, a normalized source
-  fingerprint, compiler and OpenSSL versions, and C flags. This reproduces
-  the source inputs; identical binaries across different compilers or
-  distributions are not guaranteed.
+  fingerprint, compiler, CMake, generator and OpenSSL versions, and C flags.
+  This reproduces the source inputs; identical binaries across different
+  compilers or distributions are not guaranteed.
 * The build fails rather than silently disabling TLS if OpenSSL 3 is not
   found.
 
@@ -70,27 +141,28 @@ How the build works:
 BUILDING AND RUNNING A SITE
 ---------------------------
 
-KLone embeds your site at build time. build.py produces a daemon with an
-empty site; to embed your own pages, import the site directory into the
-generated tree and rebuild kloned. For example, with the bundled example
-site:
+KLone embeds your site at build time. Point KLONE_SITE_DIR at the site
+directory (its etc/ and www/ trees become the embedded file system) and
+build:
 
-    S=$PWD/.build/release/source
-    export MAKL_DIR=$S/makl MAKEFLAGS=-I$S/makl/mk
-    cd $S/site
-    ../src/tools/klone/klone -c import ../../../../doc/example-site
-    make && make depend
-    make -C ../src/kloned
+    cmake -S . -B out -G Ninja -DKLONE_SITE_DIR=doc/example-site
+    cmake --build out
 
 Then run the daemon in the foreground with a configuration file:
 
-    ../src/kloned/kloned -F -f /path/to/kloned.conf
+    out/bin/kloned -F -f /path/to/kloned.conf
 
--F keeps kloned attached to the terminal and serves requests iteratively;
-omit it to run as a forking daemon. -f overrides values in the embedded
-configuration. See kloned(8) and kloned.conf(5) in doc/man for all options.
-The next clean build discards the imported site, so keep your site sources
-outside .build.
+-F keeps kloned attached to the terminal instead of detaching as a daemon;
+it still uses the configured server model. -d adds debug logging and serves
+requests iteratively in a single process. -f overrides values in the
+embedded configuration. See kloned(8) and kloned.conf(5) in doc/man for all
+options.
+
+Encrypted pages: give the import a pattern of pages to encrypt and the key
+file, with an absolute path, for example
+-DKLONE_IMPORT_ARGS="-e;*.kl1;-k;/path/to/key". Pages are re-encrypted when
+the key file changes. A key given through the KLONE_CIPHER_KEY environment
+variable is not tracked, so rebuild from clean after changing it.
 
 HTTPS: the certificate in doc/example-site/etc/kloned.pem is a 1024-bit RSA
 key with an MD5 signature that expired in 2006. OpenSSL 3 at the default
@@ -118,15 +190,14 @@ TESTING
    under the sanitizers. LibU and network collaborators are test doubles;
    production MD5 is linked directly.
 2. The full-server tests (81 checks), run twice: once in single-process
-   mode and once in the normal prefork model. They import a small test-only
-   page into the generated build, start kloned on temporary localhost ports
+   mode and once in the normal prefork model. They temporarily embed the
+   test-only site in test/site, start kloned on temporary localhost ports
    and check static and HEAD responses, dynamic pages, malformed headers and
    URIs, TLS 1.2 and 1.3 negotiation and rejection of TLS 1.0 and 1.1, cookie
    flags, and memory and client-side session persistence over HTTP and
    HTTPS. Under --sanitize, any AddressSanitizer, LeakSanitizer or UBSan
-   report fails the run.
+   report fails the run. Afterwards the build's original site is restored.
 
-The test-enabled binary contains the test page; never deploy or publish it.
 Test certificates and listeners are temporary.
 
 The regression suite also runs without a full build, on Windows or Linux,
@@ -137,13 +208,24 @@ with Python 3 and Clang:
 After a release build, run a bounded libFuzzer test of the real header,
 field and utility parsers:
 
-    python3 test/run_fuzz.py --source .build/release/source --runs 10000
+    python3 test/run_fuzz.py --build .build/release/cmake --runs 10000
 
 Fuzz logs, the corpus and any crash inputs are kept in the build folder.
 
-Continuous integration (.github/workflows/build.yml) runs the build and
-tests in release and sanitizer modes, plus the fuzz test, on every push and
-pull request, and uploads the build logs.
+Build-system checks build a site with awkward file names, page includes,
+escaped compiler flags, import options and the optional CGI and file-system
+suppliers, check incremental rebuilds, and compile and link a program
+against the install tree alone (in a temporary directory):
+
+    python3 test/run_build_checks.py [--generator G] [--make-program P]
+The fuzz runner uses GNU linker options, so it runs on Linux only.
+
+Continuous integration (.github/workflows/build.yml) runs on every push and
+pull request: the release and sanitizer builds and tests with CMake and
+Ninja on Linux and macOS, the fuzz test, and a build and test with BSD make
+(bmake) while any
+GNU make on the PATH is made to fail, proving GNU make is not needed. Build
+logs are uploaded.
 
 
 SECURITY AND COMPATIBILITY CHANGES
@@ -212,45 +294,24 @@ Reliability
 KNOWN LIMITATIONS
 -----------------
 
-* Only Linux (including WSL) is built and tested. Native Windows, *BSD and
-  the CyaSSL backend (README.CyaSSL) are not covered by the modern build.
-* C++ pages are disabled in the modern build.
+* Built and tested on Linux (including WSL), with Ninja and with BSD make,
+  and on macOS 15 (Apple Silicon, Apple Clang, Homebrew OpenSSL 3). *BSD
+  and native Windows are untested. On macOS, LeakSanitizer is unavailable,
+  so the sanitizer build checks memory errors and undefined behavior only.
+* C++ pages (.klx) are not supported; the import stops with an error.
+  LibU's SCTP support is off by default (LIBU_ENABLE_SCTP).
 * Client-side sessions still use encrypt-then-MAC around AES-CBC. Moving
   that versioned wire format to an AEAD cipher is planned follow-up work.
 * Some compiler warnings remain in legacy code and the pinned dependencies.
 * Fuzzing is a short smoke test; longer campaigns are still worthwhile.
 
 
-LEGACY QUICK START
-------------------
+REMOVED IN 4.0.0
+----------------
 
-The original KLone build is kept for reference. It predates OpenSSL 3 and
-current compilers, and is not maintained or tested on this branch.
-
-NOTE: KLone needs GNU make in order to be built, which is not the default
-      'make' on most *BSD systems (usually you will find it as 'gmake' or
-      'gnumake').
-
-1) Configure and build KLone:
-
-    $ ./configure && ${GNUMAKE}
-
-2) Import the example web-application
-
-    [ on Windows edit doc/example-site/etc/kloned.conf and remove syslog
-      logging paragraph ]
-
-    $ ${GNUMAKE} depend
-    $ cd site && ../src/tools/klone/klone -c import ../doc/example-site
-    $ cd .. && ${GNUMAKE}
-    $ su
-    # ${GNUMAKE} install
-
-3) Launch the KLone executable:
-
-    [ on Windows register the service with "kloned -i" and start it using
-      the Services console ]
-
-    $ kloned
-
-4) Start your web browser and go to http://localhost:8080/
+The MaKL configure script and GNU makefiles, the skin/ packaging system, the
+CyaSSL backend, OpenSSL TLS-PSK support, the Kilt URL module and the old
+LibU 1.x unit tests (their checks are covered by the regression suite) were
+removed.
+'klone -c import' no longer writes autogen.mk or autogen.dps. KLone 3.1.0 in
+the original KoanLogic repository still has them.

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Daniel Tillett. Part of KLone; see the LICENSE file.
 """Compile selected production functions without the legacy MaKL/LibU build.
 
 The C harness provides only the external types/macros and I/O test doubles.

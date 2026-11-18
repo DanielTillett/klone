@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2005-2012 by KoanLogic s.r.l. <http://www.koanlogic.com>
+ * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
  * This file is part of KLone, and as such it is subject to the license stated
@@ -42,6 +43,7 @@ static void usage (void)
 "(with OpenSSL)"
 #endif
             " - Copyright (c) 2005-2012 KoanLogic s.r.l.                     \n"
+"Copyright (c) 2026 Daniel Tillett\n"
 "All rights reserved.                                                       \n"
 "\n"
 "    -d          turn on debugging (forces iterative mode)                  \n"

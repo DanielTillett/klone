@@ -1,4 +1,3 @@
-.\" $Id: kloned.8,v 1.2 2009/10/23 14:08:28 tho Exp $
 .TH "KLONED" "8" "11/03/2005" "KoanLogic Srl" "KoanLogic Srl"
 .\" disable hyphenation
 .nh
@@ -22,7 +21,7 @@ manual page.
 .SH "OPTIONS"
 .TP
 \-d
-Enable verbose logging for debugging purposes.
+Enable verbose logging for debugging purposes. HTTP/HTTPS requests are also served iteratively: no child is forked to handle the client connection.
 .TP
 \-f \fIconfig_file\fR
 Load further configuration parameters from the external file
@@ -51,7 +50,9 @@ will override the default address and root directory values for a previously def
 \-F
 If specified, this parameter causes the main
 \fBkloned\fR
-process to not detach from the terminal. HTTP/HTTPS requests are served iteratively: no child is forked to handle the client connection.
+process to not detach from the terminal. Requests are still served using the configured server model; use
+\-d
+to serve them iteratively.
 .TP
 \-p \fIpid_file\fR
 Save 
@@ -146,4 +147,4 @@ signal and wait for it to die on its own.
 .SH "BUGS"
 .PP
 Sure there are some. If you find one, please email it to
-<klone\-bug@koanlogic.com>.
+https://github.com/DanielTillett/klone/issues.

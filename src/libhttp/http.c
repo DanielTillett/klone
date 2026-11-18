@@ -1,11 +1,10 @@
 /*
  * Copyright (c) 2005-2012 by KoanLogic s.r.l. <http://www.koanlogic.com>
+ * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
  * This file is part of KLone, and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
- *
- * $Id: http.c,v 1.69 2010/05/30 12:51:13 stewy Exp $
  */
 
 #include "klone_conf.h"
@@ -465,7 +464,7 @@ static int http_print_error_page(http_t *h, request_t *rq, response_t *rs,
         "<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">"
         "<html><head><title>%d %s</title></head>\n"
         "<body><h1>%s</h1><p>URL: %s</p><hr>"
-        "<address>KLone/%s web server - www.koanlogic.com</address>"
+        "<address>KLone/%s web server</address>"
         "</body></html>", 
         http_status, http_get_status_desc(http_status), 
         http_get_status_desc(http_status), 

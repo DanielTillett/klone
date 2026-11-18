@@ -1,11 +1,10 @@
 /*
  * Copyright (c) 2005-2012 by KoanLogic s.r.l. <http://www.koanlogic.com>
+ * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
  * This file is part of KLone, and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
- *
- * $Id: server_ppc_cmd.h,v 1.1 2007/11/09 22:06:26 tat Exp $
  */
 
 #ifndef _KLONE_PPC_COMMAND_H_

@@ -1,10 +1,18 @@
-$Id: ChangeLog,v 1.85 2010/06/01 20:20:51 tho Exp $
+ChangeLog file of KLone - https://github.com/DanielTillett/klone
 
-ChangeLog file of KLone - http://koanlogic.com
-
-KLone X.Y.Z:
-	- build: reproducible Linux/WSL build (build/build.py) with MaKL and
-	  LibU pinned in build/dependencies.json; requires OpenSSL 3
+KLone 4.0.0:
+	- build: CMake build (CMake 3.24+) replacing MaKL and GNU make for KLone
+	  and LibU; works with Ninja, BSD make or GNU make, tested on Linux and
+	  macOS. 'klone -c import' writes autogen.cmake for the site build
+	  instead of autogen.mk/autogen.dps
+	- removed: MaKL configure and makefiles, skin/ packaging, pkg/, contrib/
+	  tools, the RHEL init script, the CyaSSL backend, OpenSSL TLS-PSK and the
+	  Kilt URL module, and the LibU 1.x unit tests (covered by the regression
+	  suite); the API documentation builds with the CMake 'doc' target
+	- access log: fix the timezone offset of half-hour zones (e.g. +1030
+	  was logged as +1000)
+	- build: build/build.py, a reproducible build-and-test runner with LibU
+	  pinned in build/dependencies.json; requires OpenSSL 3
 	- tls: port to OpenSSL 3; require TLS 1.2 or newer and disable TLS
 	  compression; drop ephemeral 512-bit RSA and the built-in 1024-bit DH
 	  group (DH parameters are now chosen automatically unless dh_file is

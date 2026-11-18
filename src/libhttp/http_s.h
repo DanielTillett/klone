@@ -1,11 +1,10 @@
 /*
  * Copyright (c) 2005-2012 by KoanLogic s.r.l. <http://www.koanlogic.com>
+ * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
  * This file is part of KLone, and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
- *
- * $Id: http_s.h,v 1.8 2007/11/09 01:30:45 tat Exp $
  */
 
 #ifndef _KLONE_HTTP_S_H_

@@ -1,11 +1,10 @@
 /* 
  * Copyright (c) 2005-2012 by KoanLogic s.r.l. <http://www.koanlogic.com>
+ * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
  * This file is part of KLone, and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
- *
- * $Id: translat.c,v 1.32 2009/05/29 10:26:01 tho Exp $
  */
 
 #include "klone_conf.h"

@@ -1,4 +1,3 @@
-.\" $Id: klone.1,v 1.3 2007/07/10 21:29:45 stewy Exp $
 .TH "KLONE" "1" "11/03/2005" "KoanLogic Srl" "KoanLogic Srl"
 .\" disable hyphenation
 .nh
@@ -16,35 +15,23 @@ performs two different tasks depending on the argument supplied to the
 \fB\-c\fR
 switch: import a site directory tree into the KLone building environment (i.e. the embedded file system), or translate static and dynamic pages into C files.
 .PP
-The translation phase is rarely seen by the user since it is hidden in the Makefile of the site building directory, i.e.
-\fI${KLONE_SRC_DIR}/site\fR. Generally, the developer gets an embedded version of his/her site by providing the following command sequence:
+.PP
+Both commands are normally run by the CMake build rather than by hand. Pass the site directory when configuring KLone and build:
 .sp
 .nf
-    $ cd ${KLONE_SRC_DIR}/site
-    $ ../src/tools/klone/klone \-c import ${SITE_BASE_DIR}
-    $ make
+    $ cmake \-S ${KLONE_SRC_DIR} \-B build \-G Ninja \-DKLONE_SITE_DIR=${SITE_BASE_DIR}
+    $ cmake \-\-build build
 .fi
 .sp
-The latter
-\fBmake\fR
-invocation calls
+The build runs
+\fB'klone \-c import'\fR
+on the site directory, then
 \fB'klone \-c translate'\fR
-over the imported files to perform the needed translation and registering (pre\-linking).
-.PP
-Note that whenever a source file is added, removed or renamed, or in case the embedded file system encrypting key changes, the import operation must be done again.
-.PP
-The subsequent phase, by which the embedded site is linked to the
-\fBkloned\fR
-server skeleton, does not involve
-\fBklone\fR
-anymore. Nevertheless, the steps are illustrated here for reference:
-.sp
-.nf
-    $ cd ${KLONE_SRC_DIR}
-    $ make
-.fi
-.sp
-That's all.
+on each page, and links the result into
+\fBkloned\fR.
+Extra import options (\fB\-e\fR, \fB\-k\fR, \fB\-x\fR, \fB\-z\fR, \fB\-Z\fR) are given with
+\fB\-DKLONE_IMPORT_ARGS\fR.
+Changed pages are retranslated, and the import is repeated automatically when files are added or removed.
 .SH "OPTIONS"
 .TP
 \-h
@@ -80,11 +67,11 @@ the \fB\-z\fR flag is given.
 .PP
 Import the site tree starting at
 \fIdir\fR
-into the KLone building environment. The command output comprises two makefiles (\fIautogen.mk\fR
-and
-\fIautogen.dps\fR) and the
-\fIregister.c\fR
-file which will gather the imported and translated site files. The latter file is the glue by which the embedded site can afterwards be linked to the HTTP/S server. 
+into the KLone building environment. The command writes
+\fIautogen.cmake\fR,
+the list of pages and how to translate each one, read by the CMake build, and
+\fIregister.c\fR,
+the glue by which the translated pages are linked into the HTTP/S server. 
 
 When the \fB\-e\fR flag is given, the files matching the specified
 \fIpattern\fR will be encrypted using the key enclosed in the supplied
@@ -125,4 +112,4 @@ if an error occurs.
 .SH "BUGS"
 .PP
 If you find one, please email it to
-<klone\-bug@koanlogic.com>
+https://github.com/DanielTillett/klone/issues

@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026 Daniel Tillett
+ * All rights reserved.
+ *
+ * This file is part of KLone, and as such it is subject to the license stated
+ * in the LICENSE file which you have received as part of this distribution.
+ */
 /* Isolated regression tests for verbatim production functions.
  * LibU allocation/string operations and network reads are test doubles;
  * this suite does not replace an integration build of the server. */

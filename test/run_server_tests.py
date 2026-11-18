@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Daniel Tillett. Part of KLone; see the LICENSE file.
 """Build a test-only embedded page and exercise the real HTTP/TLS daemon."""
 import argparse
 from http.cookies import SimpleCookie

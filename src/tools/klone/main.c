@@ -1,11 +1,10 @@
 /*
  * Copyright (c) 2005-2012 by KoanLogic s.r.l. <http://www.koanlogic.com>
+ * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
  * This file is part of KLone, and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
- *
- * $Id: main.c,v 1.44 2008/10/18 17:23:32 tat Exp $
  */
 
 #include "klone_conf.h"
@@ -77,6 +76,7 @@ static void usage(void)
     static const char * us = 
 "Usage: klone [-hvV] -c COMMAND OPTIONS ARGUMENTS\n"
 "Version: %s - Copyright (c) 2005-2012 KoanLogic s.r.l.\n"
+"Copyright (c) 2026 Daniel Tillett\n"
 "All rights reserved.\n"
 "\n"
 "       -h            display this help\n"

@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Daniel Tillett. Part of KLone; see the LICENSE file.
 name: Build and test
 on: [push, pull_request]
 permissions:

@@ -1,6 +1,10 @@
 ChangeLog file of KLone - https://github.com/DanielTillett/klone
 
 KLone 4.0.0:
+	- prefork: refill the backends' worker processes round-robin. A backend
+	  at its process limit, or a failed fork(2), stopped the refill of the
+	  other backends, which could be left with no workers (no longer
+	  accepting connections); prefork.start_child is capped at max_child
 	- http: persistent connections (keep-alive) and pipelining for HTTP/1.1
 	  and HTTP/1.0 clients; new keep_alive, keep_alive_timeout and
 	  keep_alive_max settings. Response bodies are always delimited

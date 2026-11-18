@@ -104,6 +104,10 @@ int backend_create(const char *proto, u_config_t *config, backend_t **pbe)
             "prefork.max_requests_per_child", SERVER_PREFORK_MAX_RQ_CHILD, 
             (int *)&be->max_rq_xchild));
 
+        /* never more than the backend may run at once */
+        if(be->start_child > be->max_child)
+            be->start_child = be->max_child;
+
         /* set start_child child to be forked when possible */
         be->fork_child = be->start_child;
     }

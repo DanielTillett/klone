@@ -838,26 +838,39 @@ err:
 static int server_spawn_children(server_t *s)
 {
     backend_t *be;
-    register size_t i;
+    int spawned;
 
     dbg_err_if (s == NULL);
 
-    /* spawn N child process that will sleep asap into accept(2) */
+    /* never ask for more children than a backend may have */
     LIST_FOREACH (be, &s->bes, np)
-    {
-        if(be->model != SERVER_MODEL_PREFORK || be->fork_child == 0)
-            continue;
+        if(be->model == SERVER_MODEL_PREFORK &&
+                be->nchild + be->fork_child > be->max_child)
+            be->fork_child = be->max_child > be->nchild ?
+                be->max_child - be->nchild : 0;
 
-        /* spawn be->fork_child child processes */
-        for(i = 0; i < be->fork_child; ++i)
+    /* spawn the missing child processes (that will sleep asap into
+       accept(2)) one per backend at a time, so that every backend still
+       gets children when the server or system process limit is reached */
+    do {
+        spawned = 0;
+        LIST_FOREACH (be, &s->bes, np)
         {
-            dbg_err_if(server_spawn_child(s, be));
+            if(be->model != SERVER_MODEL_PREFORK || be->fork_child == 0)
+                continue;
+
+            /* at a process limit: try again later */
+            if(server_spawn_child(s, be))
+                return 0;
+
             /* child context? */
             if(ctx->pipc)
-                break; /* the child previously spawned is dying, exit */
+                return 0; /* the child previously spawned is dying, exit */
+
             be->fork_child--;
+            spawned++;
         }
-    }
+    } while(spawned);
 
     return 0;
 err:

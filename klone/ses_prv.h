@@ -96,9 +96,13 @@ typedef struct session_opt_s
     char keyvar[128]; /* name of the session variable w/ the description key */
     const EVP_CIPHER *cipher; /* encryption cipher algorithm         */
     unsigned char cipher_key[CIPHER_KEY_BUFSZ]; /* cipher secret key  */
-    unsigned char cipher_iv[CIPHER_IV_LEN];   /* cipher Init Vector */
+    unsigned char cipher_iv[CIPHER_IV_LEN + 1]; /* hex decoder also writes NUL */
     /* client-side options/structs                                   */
-    HMAC_CTX hmac_ctx;  /* openssl HMAC context                      */
+    #ifdef SSL_OPENSSL
+    EVP_MAC_CTX *hmac_ctx; /* owned OpenSSL 3 MAC context */
+    #else
+    HMAC_CTX hmac_ctx;
+    #endif
     const EVP_MD *hash; /* client-side session HMAC hash algorithm   */
     char hmac_key[HMAC_KEY_LEN]; /* session HMAC secret key         */
     #endif
@@ -145,6 +149,8 @@ int session_file_module_init(u_config_t *config, session_opt_t *pso);
 int session_mem_module_init(u_config_t *config, session_opt_t *pso);
 int session_client_module_init(u_config_t *config, session_opt_t *pso);
 int session_module_term(session_opt_t *so);
+int session_set_cookie(session_t *ss, const char *name, const char *value,
+    time_t expire, const char *path, const char *domain, int secure);
 int session_module_term(session_opt_t *so);
 
 #ifdef __cplusplus

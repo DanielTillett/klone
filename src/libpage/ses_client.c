@@ -25,6 +25,10 @@
 #ifdef SSL_ON
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
+#ifdef SSL_OPENSSL
+#include <openssl/core_names.h>
+#include <openssl/params.h>
+#endif
 #endif
 #ifdef SSL_CYASSL
 #include <config.h>
@@ -42,13 +46,13 @@
 enum { HMAC_HEX_SIZE = 2*EVP_MAX_MD_SIZE + 1 };
 
 /* calc the hmac of data+sid+mtime */
-static int session_client_hmac(HMAC_CTX *ctx, char *hmac, size_t hmac_sz, 
+static int session_client_hmac(session_opt_t *so, char *hmac, size_t hmac_sz,
     const char *data, const char *sid, const char *mtime, const char *hex_iv)
 {
-    char mac[EVP_MAX_MD_SIZE];
-    int mac_len;
+    unsigned char mac[EVP_MAX_MD_SIZE];
+    size_t mac_len;
 
-    dbg_err_if (ctx == NULL);
+    dbg_err_if (so == NULL);
     dbg_err_if (hmac == NULL);
     dbg_err_if (data == NULL);
     dbg_err_if (sid == NULL);
@@ -60,16 +64,17 @@ static int session_client_hmac(HMAC_CTX *ctx, char *hmac, size_t hmac_sz,
     dbg_err_if(hmac_sz < EVP_MAX_MD_SIZE*2 + 1);
 
     /* calc HMAC hash of the data buf + mtime (reuse stored key and md) */
-    HMAC_Init_ex(ctx, NULL, 0, NULL, NULL); 
-    HMAC_Update(ctx, data, strlen(data));
-    HMAC_Update(ctx, sid, strlen(sid));
-    HMAC_Update(ctx, mtime, strlen(mtime));
+    dbg_err_if(EVP_MAC_init(so->hmac_ctx, NULL, 0, NULL) != 1);
+    dbg_err_if(EVP_MAC_update(so->hmac_ctx, (const unsigned char *)data, strlen(data)) != 1);
+    dbg_err_if(EVP_MAC_update(so->hmac_ctx, (const unsigned char *)sid, strlen(sid)) != 1);
+    dbg_err_if(EVP_MAC_update(so->hmac_ctx, (const unsigned char *)mtime, strlen(mtime)) != 1);
     if(hex_iv)
-        HMAC_Update(ctx, hex_iv, strlen(hex_iv));
-    HMAC_Final(ctx, mac, &mac_len);
+        dbg_err_if(EVP_MAC_update(so->hmac_ctx, (const unsigned char *)hex_iv, strlen(hex_iv)) != 1);
+    dbg_err_if(EVP_MAC_final(so->hmac_ctx, mac, &mac_len, sizeof(mac)) != 1);
 #endif
 
 #ifdef SSL_CYASSL
+    HMAC_CTX *ctx = &so->hmac_ctx;
     HmacUpdate(ctx, (const byte*)data, strlen(data));
     HmacUpdate(ctx, (const byte*)sid, strlen(sid));
     HmacUpdate(ctx, (const byte*)mtime, strlen(mtime));
@@ -86,7 +91,7 @@ static int session_client_hmac(HMAC_CTX *ctx, char *hmac, size_t hmac_sz,
 #endif
 
     /* encode the hash */
-    dbg_err_if(u_hexncpy(hmac, mac, mac_len, HEXCPY_ENCODE) <= 0);
+    dbg_err_if(u_hexncpy_s(hmac, hmac_sz, (const char *)mac, mac_len, HEXCPY_ENCODE) <= 0);
 
     return 0;
 err:
@@ -98,7 +103,7 @@ static int session_client_save(session_t *ss)
     /* BUF_SIZE: cookie size + MAC size + gzip header + encryption padding  */
     enum { 
         MTIME_SIZE = 32, 
-        BUF_SIZE = COOKIE_MAX_SIZE + EVP_MAX_BLOCK_LENGTH + 96 
+        BUF_SIZE = 2 * COOKIE_MAX_SIZE + 1
     };
     session_opt_t *so = ss->so;
     char hmac[HMAC_HEX_SIZE], ebuf[BUF_SIZE], mtime[MTIME_SIZE];
@@ -113,7 +118,7 @@ static int session_client_save(session_t *ss)
     {
         /* generate a new IV for each session */
         #ifdef SSL_OPENSSL
-        dbg_err_if(!RAND_pseudo_bytes(ss->so->cipher_iv, CIPHER_IV_LEN));
+        dbg_err_if(RAND_bytes(ss->so->cipher_iv, CIPHER_IV_LEN) != 1);
         #endif
 
         #ifdef SSL_CYASSL
@@ -121,9 +126,9 @@ static int session_client_save(session_t *ss)
         #endif
 
         /* hex encode the IV and save it in a cookie */
-        dbg_err_if(u_hexncpy(cipher_iv_hex, ss->so->cipher_iv, CIPHER_IV_LEN,
+        dbg_err_if(u_hexncpy_s(cipher_iv_hex, sizeof(cipher_iv_hex), (const char *)ss->so->cipher_iv, CIPHER_IV_LEN,
             HEXCPY_ENCODE) <= 0);
-        dbg_err_if(response_set_cookie(ss->rs, KL1_CLISES_IV, cipher_iv_hex, 
+        dbg_err_if(session_set_cookie(ss, KL1_CLISES_IV, cipher_iv_hex,
             0, NULL, NULL, 0));
     }
     #endif
@@ -135,23 +140,23 @@ static int session_client_save(session_t *ss)
                 "session data too big for client-side sessions");
 
     /* hex-encode the buffer */
-    dbg_err_if(u_hexncpy(ebuf, buf, sz, HEXCPY_ENCODE) <= 0);
+    dbg_err_if(u_hexncpy_s(ebuf, sizeof(ebuf), buf, sz, HEXCPY_ENCODE) <= 0);
 
-    dbg_err_if(response_set_cookie(ss->rs, KL1_CLISES_DATA, ebuf, 0, NULL, 
+    dbg_err_if(session_set_cookie(ss, KL1_CLISES_DATA, ebuf, 0, NULL,
         NULL, 0));
 
     /* set mtime cookie */
     dbg_err_sif ((now = time(NULL)) == (time_t) -1);
     dbg_err_if (u_snprintf(mtime, sizeof mtime, "%d", (ss->mtime = (int) now)));
-    dbg_err_if (response_set_cookie(ss->rs, KL1_CLISES_MTIME, mtime, 0, NULL,
+    dbg_err_if (session_set_cookie(ss, KL1_CLISES_MTIME, mtime, 0, NULL,
                 NULL, 0));
 
     /* calc the HMAC */
-    dbg_err_if(session_client_hmac(&so->hmac_ctx, hmac, HMAC_HEX_SIZE, 
+    dbg_err_if(session_client_hmac(so, hmac, HMAC_HEX_SIZE,
         ebuf, ss->id, mtime, ss->so->encrypt ? cipher_iv_hex : NULL));
 
     /* store the hash in a cookie */
-    dbg_err_if(response_set_cookie(ss->rs, KL1_CLISES_HMAC, hmac, 0, NULL, 
+    dbg_err_if(session_set_cookie(ss, KL1_CLISES_HMAC, hmac, 0, NULL,
         NULL, 0));
 
     u_free(buf);
@@ -183,11 +188,12 @@ static int session_client_load(session_t *ss)
     /* cli_iv may be NULL */
 
     /* calc the HMAC */
-    dbg_err_if(session_client_hmac(&so->hmac_ctx, hmac, HMAC_HEX_SIZE, 
+    dbg_err_if(session_client_hmac(so, hmac, HMAC_HEX_SIZE,
         cli_ebuf, ss->id, cli_mtime, ss->so->encrypt ? cli_iv : NULL));
 
     /* compare HMACs */
-    if(strcmp(hmac, cli_hmac))
+    if(strlen(hmac) != strlen(cli_hmac) ||
+        CRYPTO_memcmp(hmac, cli_hmac, strlen(hmac)) != 0)
     {
         session_remove(ss); /* remove all bad stale data */
         warn_err("HMAC don't match, rejecting session data");
@@ -196,8 +202,12 @@ static int session_client_load(session_t *ss)
     /* hash ckeched. decode/uncompress/decrypt session data */
 
     /* hex decode and save current cipher IV */
-    dbg_err_if((c = u_hexncpy(ss->so->cipher_iv, cli_iv, strlen(cli_iv), 
-        HEXCPY_DECODE)) <= 0);
+    if (ss->so->encrypt)
+    {
+        dbg_err_if(cli_iv == NULL || strlen(cli_iv) != 2 * CIPHER_IV_LEN);
+        dbg_err_if((c = u_hexncpy_s((char *)ss->so->cipher_iv, sizeof(ss->so->cipher_iv), cli_iv,
+            strlen(cli_iv), HEXCPY_DECODE)) != CIPHER_IV_LEN);
+    }
 
     /* set client provided mtime */
     ss->mtime = strtoul(cli_mtime, NULL, 0);
@@ -205,7 +215,7 @@ static int session_client_load(session_t *ss)
     dbg_err_if(strlen(cli_ebuf) > COOKIE_MAX_SIZE);
 
     /* hex decode session data */
-    dbg_err_if((c = u_hexncpy(buf, cli_ebuf, strlen(cli_ebuf), 
+    dbg_err_if((c = u_hexncpy_s(buf, sizeof(buf), cli_ebuf, strlen(cli_ebuf),
         HEXCPY_DECODE)) <= 0);
 
     /* load session data from the buffer */
@@ -227,13 +237,13 @@ static int session_client_remove(session_t *ss)
     dbg_err_if (ss == NULL);
     
     /* removes all clises-related cookies */
-    dbg_err_if(response_set_cookie(ss->rs, KL1_CLISES_DATA, NULL, 0, NULL, 
+    dbg_err_if(session_set_cookie(ss, KL1_CLISES_DATA, NULL, 0, NULL,
         NULL, 0));
-    dbg_err_if(response_set_cookie(ss->rs, KL1_CLISES_MTIME, NULL, 0, NULL, 
+    dbg_err_if(session_set_cookie(ss, KL1_CLISES_MTIME, NULL, 0, NULL,
         NULL, 0));
-    dbg_err_if(response_set_cookie(ss->rs, KL1_CLISES_HMAC, NULL, 0, NULL, 
+    dbg_err_if(session_set_cookie(ss, KL1_CLISES_HMAC, NULL, 0, NULL,
         NULL, 0));
-    dbg_err_if(response_set_cookie(ss->rs, KL1_CLISES_IV, NULL, 0, NULL, 
+    dbg_err_if(session_set_cookie(ss, KL1_CLISES_IV, NULL, 0, NULL,
         NULL, 0));
 
     return 0;
@@ -282,7 +292,7 @@ int session_client_module_init(u_config_t *config, session_opt_t *so)
     dbg_err_if (so == NULL);
     
     /* default */
-    so->hash = EVP_sha1(); 
+    so->hash = EVP_sha256();
 
     /* always enable encryption for client-side sessions */
     if(!so->encrypt)
@@ -293,7 +303,9 @@ int session_client_module_init(u_config_t *config, session_opt_t *so)
     {
         if((v = u_config_get_subkey_value(c, "hash_function")) != NULL)
         {
-            if(!strcasecmp(v, "md5"))
+            if(!strcasecmp(v, "sha256"))
+                so->hash = EVP_sha256();
+            else if(!strcasecmp(v, "md5"))
                 so->hash = EVP_md5();
             else if(!strcasecmp(v, "sha1"))
                 so->hash = EVP_sha1();
@@ -308,13 +320,22 @@ int session_client_module_init(u_config_t *config, session_opt_t *so)
 
 #ifdef SSL_OPENSSL
     /* initialize OpenSSL HMAC stuff */
-    HMAC_CTX_init(&so->hmac_ctx);
+    EVP_MAC *mac = EVP_MAC_fetch(NULL, "HMAC", NULL);
+    OSSL_PARAM params[2];
+    dbg_err_if(mac == NULL);
+    so->hmac_ctx = EVP_MAC_CTX_new(mac);
+    EVP_MAC_free(mac);
+    dbg_err_if(so->hmac_ctx == NULL);
+    params[0] = OSSL_PARAM_construct_utf8_string(OSSL_MAC_PARAM_DIGEST,
+        (char *)EVP_MD_get0_name(so->hash), 0);
+    params[1] = OSSL_PARAM_construct_end();
 
     /* gen HMAC key */
     dbg_err_if(!RAND_bytes(so->hmac_key, HMAC_KEY_LEN));
 
     /* init HMAC with our key and chose hash algorithm */
-    HMAC_Init_ex(&so->hmac_ctx, so->hmac_key, HMAC_KEY_LEN, so->hash, NULL);
+    dbg_err_if(EVP_MAC_init(so->hmac_ctx, (const unsigned char *)so->hmac_key,
+        HMAC_KEY_LEN, params) != 1);
 #endif
 
 #ifdef SSL_CYASSL

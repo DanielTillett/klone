@@ -63,6 +63,15 @@ int response_del_field(response_t *rs, const char *name);
 
 int response_set_cookie(response_t *rs, const char *name, const char *value,
     time_t expire, const char *path, const char *domain, int secure);
+enum {
+    RESPONSE_COOKIE_SECURE = 1,
+    RESPONSE_COOKIE_HTTPONLY = 2,
+    RESPONSE_COOKIE_SAMESITE_LAX = 4,
+    RESPONSE_COOKIE_SAMESITE_STRICT = 8,
+    RESPONSE_COOKIE_SAMESITE_NONE = 16
+};
+int response_set_cookie_ex(response_t *rs, const char *name, const char *value,
+    time_t expire, const char *path, const char *domain, int flags);
 
 #ifdef __cplusplus
 }

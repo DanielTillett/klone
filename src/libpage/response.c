@@ -140,54 +140,66 @@ err:
 int response_set_cookie(response_t *rs, const char *name, const char *value,
     time_t expire, const char *path, const char *domain, int secure)
 {
-    enum { BUFSZ = 4096, DATESZ = 64 };
+    return response_set_cookie_ex(rs, name, value, expire, path, domain,
+        secure ? RESPONSE_COOKIE_SECURE : 0);
+}
+
+int response_set_cookie_ex(response_t *rs, const char *name, const char *value,
+    time_t expire, const char *path, const char *domain, int flags)
+{
+    enum { BUFSZ = COOKIE_MAX_SIZE, DATESZ = 64 };
     field_t *field = NULL;
     char buf[BUFSZ], date[DATESZ];
+    const unsigned char *p;
+    const char *same_site = NULL;
+    int same_flags = flags & (RESPONSE_COOKIE_SAMESITE_LAX |
+        RESPONSE_COOKIE_SAMESITE_STRICT | RESPONSE_COOKIE_SAMESITE_NONE);
 
-    if(value == NULL)
-    {   /* delete this cookie */
-        dbg_err_if(u_snprintf(buf, BUFSZ, 
-            "%s=; expires=Wed, 01-Jan-1990 10:10:10 GMT", name));
-    } else {
-        /* name */
-        dbg_err_if(u_snprintf(buf, BUFSZ, "%s=", name));
+    dbg_err_if(rs == NULL || name == NULL || *name == '\0');
+    for (p = (const unsigned char *)name; *p; ++p)
+        dbg_err_if(!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+            (*p >= '0' && *p <= '9') || strchr("!#$%&'*+-.^_`|~", *p)));
+    dbg_err_if(same_flags && (same_flags & (same_flags - 1)));
+    dbg_err_if(same_flags == RESPONSE_COOKIE_SAMESITE_NONE &&
+        !(flags & RESPONSE_COOKIE_SECURE));
+    if (same_flags == RESPONSE_COOKIE_SAMESITE_LAX) same_site = "Lax";
+    if (same_flags == RESPONSE_COOKIE_SAMESITE_STRICT) same_site = "Strict";
+    if (same_flags == RESPONSE_COOKIE_SAMESITE_NONE) same_site = "None";
+    /* Attributes must not be able to inject cookies or additional headers. */
+    if (path)
+        for (p = (const unsigned char *)path; *p; ++p)
+            dbg_err_if(*p < 32 || *p == 127 || *p == ';');
+    if (domain)
+        for (p = (const unsigned char *)domain; *p; ++p)
+            dbg_err_if(*p < 32 || *p == 127 || *p == ';');
 
-        /* encoded value */
-        dbg_err_if(u_urlncpy(buf + strlen(buf), value, strlen(value), 
-            URLCPY_ENCODE) <= 0);
-
-        /* expiration date */
-        if(expire)
-        {
-            dbg_err_if(u_tt_to_rfc822(date, expire));
-
-            dbg_err_if(u_snprintf(buf + strlen(buf), BUFSZ - strlen(buf), 
-                        "; expires=%s", date));
-        }
-
-        /* path */
-        if(path)
-            dbg_err_if(u_snprintf(buf + strlen(buf), 
-                        BUFSZ - strlen(buf), "; path=%s", path));
-
-        /* domain */
-        if(domain)
-            dbg_err_if(u_snprintf(buf + strlen(buf), 
-                        BUFSZ - strlen(buf), "; domain=%s", domain));
-        /* secure flag */
-        if(secure)
-            dbg_err_if(u_snprintf(buf + strlen(buf), 
-                        BUFSZ - strlen(buf), "; secure"));
-
+    dbg_err_if(u_snprintf(buf, sizeof(buf), "%s=", name));
+    if (value)
+        dbg_err_if(u_urlncpy_s(buf + strlen(buf), sizeof(buf) - strlen(buf),
+            value, strlen(value), URLCPY_ENCODE) < 0);
+    else
+        expire = 1; /* a date in the past; retain scope/security attributes */
+    if (expire)
+    {
+        dbg_err_if(u_tt_to_rfc822(date, expire));
+        dbg_err_if(u_snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf),
+            "; Expires=%s", date));
     }
-
+    if (path)
+        dbg_err_if(u_snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "; Path=%s", path));
+    if (domain)
+        dbg_err_if(u_snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "; Domain=%s", domain));
+    if (flags & RESPONSE_COOKIE_SECURE)
+        dbg_err_if(u_snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "; Secure"));
+    if (flags & RESPONSE_COOKIE_HTTPONLY)
+        dbg_err_if(u_snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "; HttpOnly"));
+    if (same_site)
+        dbg_err_if(u_snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "; SameSite=%s", same_site));
     dbg_err_if(field_create("Set-Cookie", buf, &field));
-
     dbg_err_if(header_add_field(rs->header, field));
-
     return 0;
 err:
-    if(field)
+    if (field)
         field_free(field);
     return ~0;
 }

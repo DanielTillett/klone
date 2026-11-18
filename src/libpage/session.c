@@ -33,6 +33,17 @@
 enum { DEFAULT_SESSION_EXPIRATION = 60*20 }; /* 20 minutes */
 static const char SID_NAME[] = "klone_sid";
 
+int session_set_cookie(session_t *ss, const char *name, const char *value,
+    time_t expire, const char *path, const char *domain, int secure)
+{
+    int flags = RESPONSE_COOKIE_HTTPONLY | RESPONSE_COOKIE_SAMESITE_LAX;
+    dbg_return_if(ss == NULL, ~0);
+    if (secure || io_is_secure(request_io(ss->rq)))
+        flags |= RESPONSE_COOKIE_SECURE;
+    return response_set_cookie_ex(ss->rs, name, value, expire,
+        path ? path : "/", domain, flags);
+}
+
 
 struct save_cb_params_s
 {
@@ -44,6 +55,10 @@ typedef struct save_cb_params_s save_cb_params_t;
 
 int session_module_term(session_opt_t *so)
 {
+#ifdef SSL_OPENSSL
+    if (so)
+        EVP_MAC_CTX_free(so->hmac_ctx);
+#endif
     U_FREE(so);
 
     return 0;
@@ -125,11 +140,11 @@ int session_module_init(u_config_t *config, session_opt_t **pso)
 
         /* key and iv for client-side session */
         dbg_err_if(!RAND_bytes(so->cipher_key, CIPHER_KEY_LEN));
-        dbg_err_if(!RAND_pseudo_bytes(so->cipher_iv, CIPHER_IV_LEN));
+        dbg_err_if(!RAND_bytes(so->cipher_iv, CIPHER_IV_LEN));
 
         /* create a random key and iv to crypt the SESSION_KEY_VAR variable */
         dbg_err_if(!RAND_bytes(so->session_key, CIPHER_KEY_LEN));
-        dbg_err_if(!RAND_pseudo_bytes(so->session_iv, CIPHER_IV_LEN));
+        dbg_err_if(!RAND_bytes(so->session_iv, CIPHER_IV_LEN));
 #endif
 
 #ifdef SSL_CYASSL
@@ -165,7 +180,7 @@ int session_module_init(u_config_t *config, session_opt_t **pso)
 
     return 0;
 err:
-    u_free(so);
+    session_module_term(so);
     return ~0;
 }
 
@@ -300,29 +315,22 @@ err:
 
 static int session_gen_id(session_t *ss)
 {
-    char buf[256 + 1];  /* handle worst case, i.e. (64bit * 4) + '\0' */
-    struct timeval tv;
+    unsigned char random[SESSION_ID_LENGTH / 2];
 
     dbg_err_if (ss == NULL);
 
     /* Initialize sid to empty string. */
     ss->id[0] = '\0';
 
-    /* SID is MD5(mix(now, process_pid, random)) */
-    dbg_err_sif (gettimeofday(&tv, NULL) == -1);
-
-    dbg_err_if (u_snprintf(buf, sizeof buf, "%lu%u%lu%d", 
-                (unsigned long) tv.tv_sec, (unsigned int) getpid(), 
-                (unsigned long) tv.tv_usec, rand()));
-
-    dbg_err_if (u_md5(buf, strlen(buf), ss->id));
+    dbg_err_if(u_random_bytes(random, sizeof(random)));
+    u_tohex(ss->id, (const char *)random, sizeof(random));
 
     /* Remove previous SID, if any. */ 
-    dbg_err_if (response_set_cookie(ss->rs, ss->so->name, NULL, 
+    dbg_err_if (session_set_cookie(ss, ss->so->name, NULL,
                 0, NULL, NULL, 0));
 
     /* Set the cookie ID. */
-    dbg_err_if (response_set_cookie(ss->rs, ss->so->name, ss->id, 
+    dbg_err_if (session_set_cookie(ss, ss->so->name, ss->id,
                 0, NULL, NULL, 0));
 
     return 0;
@@ -389,7 +397,7 @@ int session_remove(session_t *ss)
     dbg_return_if (ss->remove == NULL, ~0);
 
     /* remove the cookie */
-    response_set_cookie(ss->rs, ss->so->name, NULL, 0, NULL, NULL, 0);
+    session_set_cookie(ss, ss->so->name, NULL, 0, NULL, NULL, 0);
 
     ss->removed = 1;
 
@@ -874,7 +882,7 @@ int session_prv_save_var(var_t *v, void *vp)
         dbg_err_if((uname = u_zalloc(nsz)) == NULL);
 
     /* url encode name */
-    dbg_err_if(u_urlncpy(uname, var_get_name(v), strlen(var_get_name(v)), 
+    dbg_err_if(u_urlncpy_s(uname, nsz, var_get_name(v), strlen(var_get_name(v)),
         URLCPY_ENCODE) <= 0);
 
     if(var_get_value(v))
@@ -911,7 +919,7 @@ int session_prv_save_var(var_t *v, void *vp)
         }
 #endif
 
-        dbg_err_if(u_urlncpy(uvalue, var_get_value(v), var_get_value_size(v), 
+        dbg_err_if(u_urlncpy_s(uvalue, vsz, var_get_value(v), var_get_value_size(v),
             URLCPY_ENCODE) <= 0);
 
         dbg_err_if(io_printf(pprm->io, "%s=%s\n", uname, uvalue) < 0);

@@ -51,7 +51,7 @@ static int fs_serve(request_t *rq, response_t *rs)
     enum { BUFSZ = 4096 };
     io_t *io = NULL, *out = NULL;
     const char *mime_type, *fqn;
-    size_t c;
+    ssize_t c;
     char buf[BUFSZ];
     struct stat st;
 
@@ -87,6 +87,8 @@ static int fs_serve(request_t *rq, response_t *rs)
 
     while((c = io_read(io, buf, BUFSZ)) > 0)
         dbg_err_if(io_write(out, buf, c) < 0);
+
+    dbg_err_if(c < 0);
 
     io_free(io);
 

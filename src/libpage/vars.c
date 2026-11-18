@@ -238,11 +238,11 @@ int vars_add_urlvar(vars_t *vs, const char *cstr, var_t **pv)
         dbg_err_if ((value = u_zalloc(1 + val_len)) == NULL);
 
     /* url-decode var name */
-    dbg_err_if (u_urlncpy(name, str, nam_len, URLCPY_DECODE) <= 0);
+    dbg_err_if (u_urlncpy_s(name, nam_len + 1, str, nam_len, URLCPY_DECODE) <= 0);
 
     /* url-decode var value */
     if (val_len)
-        dbg_err_if ((vsz = u_urlncpy(value, val, val_len, URLCPY_DECODE)) <= 0);
+        dbg_err_if ((vsz = u_urlncpy_s(value, val_len + 1, val, val_len, URLCPY_DECODE)) <= 0);
     else 
     {
         /* an empty value */

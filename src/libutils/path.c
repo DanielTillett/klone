@@ -73,8 +73,8 @@ int u_uri_normalize(char *path)
         else if(!strcmp(tok, "..")) {
             /* eat last dir */
             len = u_string_len(s);
-            cs = u_string_c(s) + u_string_len(s) - 1;
-            for(; len && *cs != SLASH; --len, --cs)
+            cs = u_string_c(s);
+            for(; len && cs[len - 1] != SLASH; --len)
                 continue;
             /* crop */
             dbg_err_if(u_string_set_length(s, (len ? --len : 0) ));

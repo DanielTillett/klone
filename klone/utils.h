@@ -72,11 +72,18 @@ ssize_t u_htmlncpy(char *dst, const char *src, size_t slen, int flags);
 enum { SQLCPY_VERBATIM, SQLCPY_ENCODE, SQLCPY_DECODE };
 ssize_t u_sqlncpy(char *dst, const char *src, size_t slen, int flags);
 
+/* Capacity-aware variants: capacity includes the final NUL. */
+ssize_t u_urlncpy_s(char *dst, size_t capacity, const char *src, size_t slen, int flags);
+ssize_t u_hexncpy_s(char *dst, size_t capacity, const char *src, size_t slen, int flags);
+ssize_t u_htmlncpy_s(char *dst, size_t capacity, const char *src, size_t slen, int flags);
+ssize_t u_sqlncpy_s(char *dst, size_t capacity, const char *src, size_t slen, int flags);
+
 int u_printf_ccstr(io_t *o, const char *buf, size_t sz);
 
 int u_file_open(const char *file, int flags, io_t **pio);
 int u_tmpfile_open(const char *tmpdir, io_t **pio);
 int u_getline(io_t *io, u_string_t *ln);
+int u_getline_limit(io_t *io, u_string_t *ln, size_t limit);
 int u_fgetline(FILE *in, u_string_t *ln);
 
 int u_io_unzip_copy(io_t *out, const char *data, size_t size);
@@ -91,6 +98,7 @@ typedef void (*u_sig_t)(int);
 int u_signal(int sig, u_sig_t handler);
 int u_sig_block(int sig);
 int u_sig_unblock(int sig);
+int u_random_bytes(unsigned char *buf, size_t size);
 
 const char* u_guess_mime_type(const char *file_name);
 const mime_map_t* u_get_mime_map(const char *file_name);

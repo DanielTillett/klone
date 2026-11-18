@@ -81,7 +81,7 @@ err:
     return ~0;
 }
 
-static int rf_flush(codec_t *codec, char *dst, size_t *dcount)
+static ssize_t rf_flush(codec_t *codec, char *dst, size_t *dcount)
 {
     response_filter_t *rf = (response_filter_t*)codec;
     ssize_t c;

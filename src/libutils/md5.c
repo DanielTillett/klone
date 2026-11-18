@@ -145,45 +145,15 @@ md5_process(md5_state_t *pms, const md5_byte_t *data /*[64]*/)
         a = pms->abcd[0], b = pms->abcd[1],
         c = pms->abcd[2], d = pms->abcd[3];
     md5_word_t t;
-    /* Define storage for little-endian or both types of CPUs. */
+    /* Modified from the original: decode bytes without alignment, aliasing,
+     * null-pointer arithmetic or signed-shift assumptions. */
     md5_word_t xbuf[16];
-    const md5_word_t *X;
+    const md5_word_t *X = xbuf;
+    int i;
 
-        /*
-         * Determine dynamically whether this is a big-endian or
-         * little-endian machine, since we can use a more efficient
-         * algorithm on the latter.
-         */
-        static const int w = 1;
-
-        if (*((const md5_byte_t *)&w)) /* dynamic little-endian */
-        {
-            /*
-             * On little-endian machines, we can process properly aligned
-             * data without copying it.
-             */
-            if (!((data - (const md5_byte_t *)0) & 3)) {
-                /* data are properly aligned */
-                X = (const md5_word_t *)data;
-            } else {
-                /* not aligned */
-                memcpy(xbuf, data, 64);
-                X = xbuf;
-            }
-        }
-        else                        /* dynamic big-endian */
-        {
-            /*
-             * On big-endian machines, we must arrange the bytes in the
-             * right order.
-             */
-            const md5_byte_t *xp = data;
-            int i;
-
-            X = xbuf;                /* (dynamic only) */
-            for (i = 0; i < 16; ++i, xp += 4)
-                xbuf[i] = xp[0] + (xp[1] << 8) + (xp[2] << 16) + (xp[3] << 24);
-        }
+    for (i = 0; i < 16; ++i, data += 4)
+        xbuf[i] = (md5_word_t)data[0] | ((md5_word_t)data[1] << 8) |
+            ((md5_word_t)data[2] << 16) | ((md5_word_t)data[3] << 24);
 
 #define ROTATE_LEFT(x, n) (((x) << (n)) | ((x) >> (32 - (n))))
 

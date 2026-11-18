@@ -12,7 +12,6 @@
 #include <unistd.h>
 #include <u/libu.h>
 #include <klone/io.h>
-#include <klone/io.h>
 #include <klone/ioprv.h>
 
 struct io_mem_s
@@ -44,7 +43,7 @@ static ssize_t io_mem_seek(io_mem_t *im, size_t off)
 {
     dbg_return_if (im == NULL, -1);
     
-    if(off >= im->size)
+    if(off > im->size)
         return -1;
 
     im->off = off;

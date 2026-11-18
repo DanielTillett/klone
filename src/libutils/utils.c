@@ -26,6 +26,13 @@
 #include <klone/mime_map.h>
 #include <klone/version.h>
 #include <klone/utils.h>
+#ifdef SSL_ON
+#include <openssl/rand.h>
+#endif
+#ifdef OS_WIN
+#include <windows.h>
+#include <bcrypt.h>
+#endif
 #ifdef HAVE_STRINGS
 #include <strings.h>
 #endif
@@ -36,6 +43,36 @@
 #endif
 
 enum { LF = 0xA, CR = 0xD };
+
+/* Fail closed if the operating system cannot supply cryptographic entropy. */
+int u_random_bytes(unsigned char *buf, size_t size)
+{
+    dbg_return_if(buf == NULL || size > INT_MAX, ~0);
+#ifdef SSL_ON
+    return RAND_bytes(buf, (int)size) == 1 ? 0 : ~0;
+#elif defined(OS_WIN)
+    return BCryptGenRandom(NULL, buf, (ULONG)size,
+        BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0 ? 0 : ~0;
+#else
+    int fd = open("/dev/urandom", O_RDONLY);
+    ssize_t n;
+    dbg_return_if(fd < 0, ~0);
+    while (size)
+    {
+        n = read(fd, buf, size);
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n <= 0)
+        {
+            close(fd);
+            return ~0;
+        }
+        buf += n;
+        size -= (size_t)n;
+    }
+    return close(fd) == 0 ? 0 : ~0;
+#endif
+}
 
 static struct html_entities_s
 {
@@ -51,7 +88,7 @@ static struct html_entities_s
 };
 
 #ifdef OS_UNIX
-inline int u_sig_block(int sig)
+int u_sig_block(int sig)
 {
     sigset_t sset;
 
@@ -64,7 +101,7 @@ err:
     return ~0;
 }
 
-inline int u_sig_unblock(int sig)
+int u_sig_unblock(int sig)
 {
     sigset_t sset;
 
@@ -197,24 +234,19 @@ const char *u_addr_fmt (const char *ip, const char *port, char *d, size_t dlen)
  */
 char *u_strnstr(const char *buf, const char *sub, size_t buflen)
 {
-    ssize_t len = strlen(sub);
-    ssize_t plen;
-    char *p;
+    size_t len, i;
 
-    if (*sub == 0)
+    dbg_return_if (buf == NULL || sub == NULL, NULL);
+    len = strlen(sub);
+    if (len == 0)
         return (char *)buf;
+    if (len > buflen)
+        return NULL;
 
-    plen = buflen;
-    for (p = (char *)buf; p != NULL; p = memchr(p + 1, *sub, plen - 1))
-    {
-        plen = buflen - (p - buf);
-
-        if (plen < len)
-            return NULL;
-
-        if (strncmp(p, sub, len) == 0)
-            return (p);
-    }
+    /* Never form a search range beyond the caller's buffer. */
+    for (i = 0; i <= buflen - len && buf[i] != '\0'; ++i)
+        if (strncmp(buf + i, sub, len) == 0)
+            return (char *)(buf + i);
 
     return NULL;
 }
@@ -339,17 +371,13 @@ static ssize_t u_sqlncpy_encode(char *d, const char *s, size_t slen)
         wr++;
         if(c == '\'') 
         {
-            dbg_err_if(slen < 2);
             *d++ = '\'';
             wr++;
-            --slen;
         } 
     }
     *d = 0;
 
     return wr;
-err:
-    return -1;
 }
 
 static ssize_t u_sqlncpy_decode(char *d, const char *s, size_t slen)
@@ -406,11 +434,73 @@ ssize_t u_sqlncpy(char *d, const char *s, size_t slen, int flags)
     case SQLCPY_DECODE:
         return u_sqlncpy_decode(d, s, slen);
     default:
-        u_strlcpy(d, s, slen + 1);
+        memmove(d, s, slen);
+        d[slen] = '\0';
         return slen;
     }
 
     return -1;
+}
+
+ssize_t u_urlncpy_s(char *dst, size_t capacity, const char *src, size_t slen, int flags)
+{
+    size_t i, needed = 0, n;
+    unsigned char c;
+    dbg_return_if(dst == NULL || src == NULL || capacity == 0, -1);
+    for (i = 0; i < slen; ++i)
+    {
+        c = (unsigned char)src[i];
+        n = flags == URLCPY_ENCODE && c != ' ' && !isalnum(c) &&
+            c != '_' && c != '-' && c != '.' ? 3 : 1;
+        dbg_return_if(n >= capacity - needed, -1);
+        needed += n;
+    }
+    return u_urlncpy(dst, src, slen, flags);
+}
+
+ssize_t u_hexncpy_s(char *dst, size_t capacity, const char *src, size_t slen, int flags)
+{
+    size_t needed;
+    dbg_return_if(dst == NULL || src == NULL || capacity == 0, -1);
+    if (flags == HEXCPY_ENCODE)
+    {
+        dbg_return_if(slen > (capacity - 1) / 2, -1);
+        needed = 2 * slen;
+    }
+    else
+        needed = flags == HEXCPY_DECODE ? slen / 2 : slen;
+    dbg_return_if(needed >= capacity, -1);
+    return u_hexncpy(dst, src, slen, flags);
+}
+
+ssize_t u_htmlncpy_s(char *dst, size_t capacity, const char *src, size_t slen, int flags)
+{
+    size_t i, j, needed = 0, n;
+    dbg_return_if(dst == NULL || src == NULL || capacity == 0, -1);
+    for (i = 0; i < slen; ++i)
+    {
+        n = 1;
+        if (flags == HTMLCPY_ENCODE)
+            for (j = 0; entities[j].entity; ++j)
+                if ((unsigned char)src[i] == entities[j].s_char)
+                    n = strlen(entities[j].entity);
+        dbg_return_if(n >= capacity - needed, -1);
+        needed += n;
+    }
+    return u_htmlncpy(dst, src, slen, flags);
+}
+
+ssize_t u_sqlncpy_s(char *dst, size_t capacity, const char *src, size_t slen, int flags)
+{
+    size_t i, needed = 0, n;
+    dbg_return_if(dst == NULL || src == NULL || capacity == 0, -1);
+    for (i = 0; i < slen; ++i)
+    {
+        n = flags == SQLCPY_ENCODE && src[i] == '\'' ? 2 : 1;
+        dbg_return_if(n >= capacity - needed, -1);
+        needed += n;
+    }
+    return u_sqlncpy(dst, src, slen, flags);
 }
 
 static ssize_t u_urlncpy_encode(char *d, const char *s, size_t slen)
@@ -456,7 +546,8 @@ static ssize_t u_urlncpy_decode(char *d, const char *s, size_t slen)
         c = *s++;
         if(c == '%')
         {
-            dbg_err_if(slen < 2 || !isxdigit(s[0]) || !isxdigit(s[1]));
+            dbg_err_if(slen < 3 || !isxdigit((unsigned char)s[0]) ||
+                !isxdigit((unsigned char)s[1]));
             c = htoi(s[0]) << 4 | htoi(s[1]);
             //dbg_err_if(c == 0);
             *d++ = (char)c;
@@ -482,7 +573,8 @@ err:
  *
  * Copy an URL escaped/unescaped version of string \p s, depending on 
  * \p flags value, into \p d.  The destination string is NULL terminated.
- * The destination string \p d must be at least \p slen + 1 bytes long.
+ * For decoding or verbatim copying, \p d must hold at least \p slen + 1
+ * bytes. Encoding requires up to 3 * \p slen + 1 bytes.
  *
  * \param   d       the encoded/decoded string
  * \param   s       string to process
@@ -504,14 +596,15 @@ ssize_t u_urlncpy(char *d, const char *s, size_t slen, int flags)
     case URLCPY_DECODE:
         return u_urlncpy_decode(d, s, slen);
     default:
-        u_strlcpy(d, s, slen + 1);
+        memmove(d, s, slen);
+        d[slen] = '\0';
         return slen;
     }
 
     return -1;
 }
 
-inline char u_tochex(int n)
+char u_tochex(int n)
 {
 	if(n > 15)
 		return '?';
@@ -520,9 +613,9 @@ inline char u_tochex(int n)
 
 static int u_hex2ch(char c)
 {
-    if(c >= 'a' && c <= 'z') 
+    if(c >= 'a' && c <= 'f')
         return c - 'a' + 10;
-    else if(c >= 'A' && c <= 'Z')
+    else if(c >= 'A' && c <= 'F')
         return c - 'A' + 10;
     else if(c >= '0' && c <= '9') 
         return c - '0';
@@ -544,6 +637,7 @@ void u_print_version_and_exit(void)
 static ssize_t u_hexncpy_decode(char *d, const char *s, size_t slen)
 {
 	size_t i, t;
+    int hi, lo;
 
     dbg_return_if (d == NULL, -1);
     dbg_return_if (s == NULL, -1);
@@ -552,7 +646,12 @@ static ssize_t u_hexncpy_decode(char *d, const char *s, size_t slen)
     dbg_err_if((slen % 2) != 0);
 
 	for(i = 0, t = 0; i < slen; ++t, i += 2)
-        d[t] = (u_hex2ch(s[i]) << 4) | u_hex2ch(s[i+1]); 
+    {
+        hi = u_hex2ch(s[i]);
+        lo = u_hex2ch(s[i+1]);
+        dbg_err_if(hi < 0 || lo < 0);
+        d[t] = (char)((hi << 4) | lo);
+    }
 
     d[t] = 0; /* zero-term */
 
@@ -585,7 +684,8 @@ static ssize_t u_hexncpy_encode(char *d, const char *s, size_t slen)
  *
  * Copy an HEX encoded/decoded version of string \p s, depending on 
  * \p flags value, into \p d.  The destination string \p d, which must be
- * at least \p slen + 1 bytes long, is NULL terminated.
+ * at least \p slen + 1 bytes long for decoding or verbatim copying, is
+ * NULL terminated. Encoding requires 2 * \p slen + 1 bytes.
  *
  * \param   d       the encoded/decoded string
  * \param   s       string to process
@@ -607,7 +707,8 @@ ssize_t u_hexncpy(char *d, const char *s, size_t slen, int flags)
     case HEXCPY_DECODE:
         return u_hexncpy_decode(d, s, slen);
     default:
-        u_strlcpy(d, s, slen + 1);
+        memmove(d, s, slen);
+        d[slen] = '\0';
         return slen;
     }
 
@@ -660,7 +761,8 @@ static ssize_t u_htmlncpy_decode(char *d, const char *s, size_t slen)
     dbg_return_if (d == NULL, -1);
     dbg_return_if (s == NULL, -1);
 
-    u_strlcpy(d, s, slen + 1);
+    memmove(d, s, slen);
+    d[slen] = '\0';
 
     for(p = entities; p->s_char; ++p)
     {
@@ -703,7 +805,8 @@ ssize_t u_htmlncpy(char *d, const char *s, size_t slen, int flags)
     case HTMLCPY_DECODE:
         return u_htmlncpy_decode(d, s, slen);
     default:
-        u_strlcpy(d, s, slen + 1);
+        memmove(d, s, slen);
+        d[slen] = '\0';
         return slen;
     }
 err:
@@ -886,6 +989,23 @@ err:
  * - \c 0   successful
  * - \c ~0  error
  */
+int u_getline_limit(io_t *io, u_string_t *ln, size_t limit)
+{
+    char c;
+    size_t n = 0;
+    dbg_return_if(io == NULL || ln == NULL, ~0);
+    dbg_err_if(u_string_clear(ln));
+    while (io_getc(io, &c) == 1)
+    {
+        dbg_err_if(++n > limit || c == '\0');
+        if (c == '\n')
+            return 0;
+        dbg_err_if(u_string_append(ln, &c, 1));
+    }
+err:
+    return ~0; /* EOF or a read error before a complete line */
+}
+
 int u_getline(io_t *io, u_string_t *ln)
 {
     enum { BUFSZ = 1024 };
@@ -1103,7 +1223,7 @@ int u_md5io(io_t *io, char out[MD5_DIGEST_BUFSZ])
     md5_state_t md5ctx;
     md5_byte_t md5_digest[16]; /* binary digest */
     char buf[page_sz];
-    size_t cnt;
+    ssize_t cnt;
 
     dbg_err_if (io == NULL);
     dbg_err_if (out == NULL);
@@ -1112,6 +1232,8 @@ int u_md5io(io_t *io, char out[MD5_DIGEST_BUFSZ])
 
     while((cnt = io_read(io, buf, page_sz)) > 0)
         md5_append(&md5ctx, (md5_byte_t*)buf, cnt);
+
+    dbg_err_if(cnt < 0);
 
     md5_finish(&md5ctx, md5_digest);
 
@@ -1284,7 +1406,7 @@ err:
 int u_cipher_encrypt(const EVP_CIPHER *cipher, unsigned char *key, 
     unsigned char *iv, char *dst, size_t *dcount, const char *src, size_t ssz)
 {
-    EVP_CIPHER_CTX ctx;
+    EVP_CIPHER_CTX *ctx = NULL;
     ssize_t dlen = 0;  /* dst buffer length */
     int wr;
 
@@ -1295,28 +1417,30 @@ int u_cipher_encrypt(const EVP_CIPHER *cipher, unsigned char *key,
     dbg_return_if (src == NULL, ~0);
     dbg_return_if (dst == NULL, ~0);
     
+    dbg_return_if (ssz > INT_MAX, ~0);
+
     /* init the context */
-    EVP_CIPHER_CTX_init(&ctx);
+    dbg_err_if((ctx = EVP_CIPHER_CTX_new()) == NULL);
 
     /* be sure that the cipher has been loaded */
     EVP_add_cipher(cipher);
     
-    dbg_err_if(!EVP_EncryptInit_ex(&ctx, cipher, NULL, key, iv));
+    dbg_err_if(!EVP_EncryptInit_ex(ctx, cipher, NULL, key, iv));
 
-    dbg_err_if(!EVP_EncryptUpdate(&ctx, dst, &wr, src, ssz));
+    dbg_err_if(!EVP_EncryptUpdate(ctx, (unsigned char *)dst, &wr, (const unsigned char *)src, (int)ssz));
     dlen += wr;
     dst += wr;
 
-    dbg_err_if(!EVP_EncryptFinal_ex(&ctx, dst, &wr));
+    dbg_err_if(!EVP_EncryptFinal_ex(ctx, (unsigned char *)dst, &wr));
     dlen += wr;
 
     *dcount = dlen; /* # of bytes written to dst */
 
-    EVP_CIPHER_CTX_cleanup(&ctx);
+    EVP_CIPHER_CTX_free(ctx);
 
     return 0;
 err:
-    EVP_CIPHER_CTX_cleanup(&ctx);
+    EVP_CIPHER_CTX_free(ctx);
     return ~0;
 }
 
@@ -1343,7 +1467,7 @@ err:
 int u_cipher_decrypt(const EVP_CIPHER *cipher, unsigned char *key, 
     unsigned char *iv, char *dst, size_t *dcount, const char *src, size_t ssz)
 {
-    EVP_CIPHER_CTX ctx;
+    EVP_CIPHER_CTX *ctx = NULL;
     ssize_t dlen = 0;  /* dst buffer length */
     int wr;
 
@@ -1354,28 +1478,30 @@ int u_cipher_decrypt(const EVP_CIPHER *cipher, unsigned char *key,
     dbg_return_if (src == NULL, ~0);
     dbg_return_if (dst == NULL, ~0);
 
+    dbg_return_if (ssz > INT_MAX, ~0);
+
     /* init the context */
-    EVP_CIPHER_CTX_init(&ctx);
+    dbg_err_if((ctx = EVP_CIPHER_CTX_new()) == NULL);
 
     /* be sure that the cipher has been loaded */
     EVP_add_cipher(cipher);
     
-    dbg_err_if(!EVP_DecryptInit_ex(&ctx, cipher, NULL, key, iv));
+    dbg_err_if(!EVP_DecryptInit_ex(ctx, cipher, NULL, key, iv));
 
-    dbg_err_if(!EVP_DecryptUpdate(&ctx, dst, &wr, src, ssz));
+    dbg_err_if(!EVP_DecryptUpdate(ctx, (unsigned char *)dst, &wr, (const unsigned char *)src, (int)ssz));
     dlen += wr;
     dst += wr;
 
-    dbg_err_if(!EVP_DecryptFinal_ex(&ctx, dst, &wr));
+    dbg_err_if(!EVP_DecryptFinal_ex(ctx, (unsigned char *)dst, &wr));
     dlen += wr;
 
     *dcount = dlen; /* # of bytes written to dst */
 
-    EVP_CIPHER_CTX_cleanup(&ctx);
+    EVP_CIPHER_CTX_free(ctx);
 
     return 0;
 err:
-    EVP_CIPHER_CTX_cleanup(&ctx);
+    EVP_CIPHER_CTX_free(ctx);
     return ~0;
 }
 

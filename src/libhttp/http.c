@@ -39,7 +39,9 @@
 enum {
     HTTP_KEEP_ALIVE_TIMEOUT = 5,        /* secs to wait for the next request  */
     HTTP_KEEP_ALIVE_MAX = 100,          /* max requests per connection        */
-    HTTP_KEEP_ALIVE_DRAIN_MAX = 65536   /* max unread body bytes to skip      */
+    HTTP_KEEP_ALIVE_DRAIN_MAX = 65536,  /* max unread body bytes to skip      */
+    HTTP_CONN_WBUFSZ = 65536            /* connection write buffer: large
+                                           responses go out in large blocks */
 };
 
 struct http_status_map_s
@@ -768,6 +770,10 @@ static int http_serve(http_t *h, int fd, int keep_alive)
     /* create the connection io */
     dbg_err_if(io_fd_create(fd, IO_FD_CLOSE, &conn));
 #endif
+
+    /* write large responses in large blocks: 4 KB writes are several times
+       slower (more system calls, partial TCP segments) */
+    dbg_err_if(io_set_write_buffer_size(conn, HTTP_CONN_WBUFSZ));
 
     /* the response goes to the same connection, or to stdout for a CGI */
     if(cgi)

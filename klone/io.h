@@ -84,6 +84,7 @@ int io_codecs_discard(io_t *io);
 int io_has_codecs(io_t *io);
 void io_set_write_codecs(io_t *io, int on);
 void io_set_read_limit(io_t *io, ssize_t limit);
+int io_set_write_buffer_size(io_t *io, size_t size);
 size_t io_get_read_count(io_t *io);
 int io_is_secure(io_t *io);
 

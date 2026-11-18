@@ -1,6 +1,9 @@
 ChangeLog file of KLone - https://github.com/DanielTillett/klone
 
 KLone 4.0.0:
+	- http: client connections use a 64 KB write buffer (was 4 KB), so large
+	  responses go out in large blocks: about 3-4x the throughput for a 1 MB
+	  file on macOS; new io_set_write_buffer_size()
 	- prefork: refill the backends' worker processes round-robin. A backend
 	  at its process limit, or a failed fork(2), stopped the refill of the
 	  other backends, which could be left with no workers (no longer

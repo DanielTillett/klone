@@ -230,7 +230,9 @@ static int io_wbuf_alloc(io_t *io)
 {
     dbg_err_if (io == NULL);
 
-    io->wbsz = IO_WR_BUFSZ; /* set the buffer size */
+    /* set the buffer size (unless chosen with io_set_write_buffer_size) */
+    if(io->wbsz == 0)
+        io->wbsz = IO_WR_BUFSZ;
 
     /* if a dup'd io_t already alloc'd a buffer then use it */
     io->wbuf = (char*)u_malloc(io->wbsz);
@@ -1098,6 +1100,32 @@ void io_set_read_limit(io_t *io, ssize_t limit)
 
     io->rlimited = (limit >= 0);
     io->rlimit = io->rlimited ? (size_t) limit : 0;
+}
+
+/**
+ * \ingroup basic
+ * \brief  Set the size of the write buffer
+ *
+ * Data written to \p io is buffered and sent to the device in blocks of
+ * \p size bytes. Larger blocks mean fewer system calls and, on sockets,
+ * full-sized TCP segments (e.g. for large responses). Must be called
+ * before the first write.
+ *
+ * \param io    the \c io_t object
+ * \param size  write buffer size in bytes
+ *
+ * \return \c 0 on success, non-zero if the buffer already exists or
+ *         \p size is zero
+ */
+int io_set_write_buffer_size(io_t *io, size_t size)
+{
+    dbg_return_if (io == NULL, ~0);
+    dbg_return_if (size == 0, ~0);
+    dbg_return_if (io->wbuf != NULL, ~0);
+
+    io->wbsz = size;
+
+    return 0;
 }
 
 /**

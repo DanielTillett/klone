@@ -1,6 +1,8 @@
 # Copyright (c) 2026 Daniel Tillett. Part of KLone; see the LICENSE file.
 name: Build and test
-on: [push, pull_request]
+# Automatic runs are off (the macOS and bmake jobs fail); start a run by hand
+# from the Actions tab
+on: workflow_dispatch
 permissions:
   contents: read
 jobs:

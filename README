@@ -270,6 +270,29 @@ HTTP request handling
 * The query string is split off before the path is URL-decoded, so an
   escaped '?' (%3F) and a literal '+' in the path are preserved.
 
+Persistent connections (keep-alive)
+
+* Connections stay open for further requests (HTTP/1.1 by default, HTTP/1.0
+  with "Connection: keep-alive"), including pipelined requests. Settings:
+  keep_alive, keep_alive_timeout (5 s) and keep_alive_max (100 requests),
+  see kloned.conf(5). Off in the iterative model (-d) and in CGI mode.
+* Responses to HTTP/1.1 requests use an HTTP/1.1 status line. Every body is
+  delimited: pages that fit the 4 KB response buffer get a Content-Length,
+  longer ones use chunked transfer coding (HTTP/1.1) or end with the close
+  (HTTP/1.0). A Content-Length set by a page or CGI is enforced and any
+  Transfer-Encoding it sets is replaced.
+* HEAD, 204 and 304 responses never carry a body; empty pages no longer
+  send a stray newline; the built-in error page has a Content-Length and is
+  never appended to a response already under way; a CGI "Status:" line is
+  no longer passed to the client; HEAD on an embedded static file works.
+* Reading a request body (forms, uploads, pages, CGIs) stops at its end,
+  and an unread body is skipped before the next request. Chunked request
+  bodies are still rejected. Over TLS, connections end with close_notify.
+* In the prefork model a worker holding an idle kept-alive connection counts
+  as busy, so a further worker may be started; lower keep_alive_timeout (or
+  set keep_alive no) to limit this. prefork.max_requests_per_child counts
+  connections, not requests.
+
 Utility APIs
 
 * New capacity-aware u_urlncpy_s(), u_hexncpy_s(), u_htmlncpy_s() and
@@ -302,7 +325,10 @@ KNOWN LIMITATIONS
   LibU's SCTP support is off by default (LIBU_ENABLE_SCTP).
 * Client-side sessions still use encrypt-then-MAC around AES-CBC. Moving
   that versioned wire format to an AEAD cipher is planned follow-up work.
-* Some compiler warnings remain in legacy code and the pinned dependencies.
+* The pinned LibU dependency still has some compiler warnings; KLone's own
+  code builds without warnings (GCC, Clang, Apple Clang).
+* "Expect: 100-continue" is not answered; clients send the body after their
+  own timeout.
 * Fuzzing is a short smoke test; longer campaigns are still worthwhile.
 
 

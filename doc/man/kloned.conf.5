@@ -88,6 +88,15 @@ at present this directive is inhibited, and a default of 300 is assumed.
 \fBidle_timeout\fR
 Set the maximum number of seconds the server waits for an HTTP request on an already connected socket. The default value is 10 seconds.
 .TP
+\fBkeep_alive\fR
+Keep connections open for further requests (HTTP persistent connections): \fIyes\fR (default) or \fIno\fR. A connection stays open after a response if the client asks for it (HTTP/1.1 by default, HTTP/1.0 with \fIConnection: keep\-alive\fR) and the response body is delimited by a Content\-Length or, for HTTP/1.1, chunked transfer coding. Always off in the iterative server model (and so with \fB\-d\fR), where an idle client would block the server.
+.TP
+\fBkeep_alive_timeout\fR
+Seconds to wait for the next request on a kept-alive connection before closing it. The default value is 5 seconds.
+.TP
+\fBkeep_alive_max\fR
+Maximum number of requests served on one connection. The default value is 100.
+.TP
 \fBpost_timeout\fR
 Set the maximum number of seconds the server waits for an HTTP POST request on an already connected socket. The default value is 10 minutes.
 .TP

@@ -25,9 +25,13 @@ PLANNED: SECURITY AND CORRECTNESS
 
 PLANNED: FEATURES AND TESTING
 
-* HTTP/1.1: persistent connections (keep-alive) and chunked request bodies.
-  Requests already accept HTTP/1.1 but every connection is closed and chunked
-  bodies are rejected. Needs careful tests: it touches the hardened parser.
+* HTTP/1.1 request side: chunked request bodies (now rejected with 400) and
+  answering "Expect: 100-continue". Persistent connections are done; needs
+  careful tests, as it touches the hardened parser.
+* Prefork and keep-alive: a worker idle on a kept-alive connection counts as
+  busy and may cause another worker to start; consider scoping the busy
+  timer to request processing and counting requests (not connections) in
+  prefork.max_requests_per_child.
 * Streaming file uploads: a per-chunk upload callback, so large uploads do
   not have to be held in memory or a temporary file (important on small
   devices).

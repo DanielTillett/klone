@@ -31,6 +31,10 @@ struct http_s
     /* session options struct                        */
     session_opt_t *sess_opt;
     vhost_list_t *vhosts;
+    /* persistent connections (keep-alive) */
+    int keep_alive;         /* !0 if enabled                                 */
+    int ka_timeout;         /* secs to wait for the next request             */
+    int ka_max;             /* max requests per connection                   */
 };
 
 #endif

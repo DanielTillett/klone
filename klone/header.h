@@ -42,6 +42,7 @@ field_t* header_get_field(header_t *h, const char *name);
 int header_clear(header_t *h);
 
 const char* header_get_field_value(header_t *h, const char *name);
+int header_has_token(header_t *h, const char *name, const char *token);
 
 int header_set_field(header_t *h, const char *name, const char *value);
 

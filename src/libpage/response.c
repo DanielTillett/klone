@@ -25,6 +25,11 @@ struct response_s
     int status;             /* http status code                 */
     int method;             /* HTTP request method              */
     int cgi;                /* if we're running in cgi context  */
+    int http11;             /* client speaks HTTP/1.1           */
+    int keep_alive;         /* keep the connection open         */
+    int framed;             /* body framing has been decided    */
+    int chunked;            /* body sent with chunked encoding  */
+    int header_sent;        /* header has been printed          */
 };
 
 /**
@@ -219,8 +224,8 @@ err:
  */
 static int response_print_status(response_t *rs, io_t *io)
 {
-    dbg_err_if(io_printf(io, "HTTP/1.0 %d %s\r\n", rs->status, 
-        http_get_status_desc(rs->status)) < 0);
+    dbg_err_if(io_printf(io, "HTTP/1.%d %d %s\r\n", rs->http11 ? 1 : 0,
+        rs->status, http_get_status_desc(rs->status)) < 0);
 
     return 0;
 err:
@@ -342,6 +347,11 @@ int response_print_header_to_io(response_t *rs, io_t *io)
     int i, n;
 
     dbg_err_if(io == NULL);
+
+    /* the caller writes the body itself: its length must already be in
+     * Content-Length for the connection to stay open */
+    dbg_err_if(response_set_body_framing(rs, -1, 0));
+    rs->header_sent = 1;
 
     /* print status line */
     if(!rs->cgi)
@@ -524,7 +534,7 @@ int response_set_content_length(response_t *rs, size_t sz)
     enum { BUFSZ = 64 };
     char buf[BUFSZ];
 
-    dbg_err_if(u_snprintf(buf, BUFSZ, "%u", sz));
+    dbg_err_if(u_snprintf(buf, BUFSZ, "%lu", (unsigned long) sz));
 
     dbg_err_if(header_set_field(rs->header, "Content-Length", buf));
 
@@ -705,6 +715,173 @@ int response_free(response_t *rs)
     return 0;
 }
 
+
+/**
+ * \ingroup response
+ * \brief   Set the connection persistence of a response
+ *
+ * Called by the server before the response header is printed: \p keep_alive
+ * asks for the connection to stay open after this response, \p http11 tells
+ * that the client speaks HTTP/1.1 (so the body may be sent chunked).
+ *
+ * \param rs          response object
+ * \param keep_alive  !0 to keep the connection open
+ * \param http11      !0 if the request is HTTP/1.1
+ *
+ * \return nothing
+ */
+void response_set_keep_alive(response_t *rs, int keep_alive, int http11)
+{
+    rs->keep_alive = keep_alive ? 1 : 0;
+    rs->http11 = http11 ? 1 : 0;
+}
+
+/**
+ * \ingroup response
+ * \brief   Tell if the connection may be kept open after a response
+ *
+ * \param rs  response object
+ *
+ * \return !0 if the response header has been sent and its body is delimited
+ *         (Content-Length, chunked encoding or no body at all)
+ */
+int response_get_keep_alive(response_t *rs)
+{
+    return rs->keep_alive && rs->header_sent && rs->framed;
+}
+
+/**
+ * \ingroup response
+ * \brief   Tell if the response header has already been printed
+ *
+ * \param rs  response object
+ *
+ * \return !0 once the header has been printed
+ */
+int response_header_sent(response_t *rs)
+{
+    return rs->header_sent;
+}
+
+/**
+ * \ingroup response
+ * \brief   Tell if the response body is sent with chunked encoding
+ *
+ * \param rs  response object
+ *
+ * \return !0 if the body is chunked
+ */
+int response_is_chunked(response_t *rs)
+{
+    return rs->chunked;
+}
+
+/**
+ * \ingroup response
+ * \brief   Close the connection after this response
+ *
+ * Used when the response turns out not to be correctly delimited (e.g.
+ * fewer bytes than its Content-Length could be sent).
+ *
+ * \param rs  response object
+ *
+ * \return nothing
+ */
+void response_close_connection(response_t *rs)
+{
+    rs->keep_alive = 0;
+}
+
+/**
+ * \ingroup response
+ * \brief   Tell if a response carries a body
+ *
+ * 1xx, 204 and 304 responses and replies to HEAD have no body.
+ *
+ * \param rs  response object
+ *
+ * \return !0 if the response has a body
+ */
+int response_has_body(response_t *rs)
+{
+    if(rs->method == HM_HEAD)
+        return 0;
+
+    return !((rs->status >= 100 && rs->status < 200) || 
+            rs->status == HTTP_STATUS_NO_CONTENT || 
+            rs->status == HTTP_STATUS_NOT_MODIFIED);
+}
+
+/**
+ * \ingroup response
+ * \brief   Decide how the end of the response body is signalled
+ *
+ * Called once, just before the header is printed. A persistent connection
+ * needs a delimited body: \p len (if >= 0) is the exact body length and
+ * becomes the Content-Length; otherwise, if \p can_chunk, an HTTP/1.1 body
+ * is sent with chunked encoding. When neither applies the connection is
+ * closed after the response. The Connection field is set accordingly.
+ *
+ * \param rs         response object
+ * \param len        body length, or -1 if not known
+ * \param can_chunk  !0 if the caller can chunk-encode the body
+ *
+ * \return
+ *  - \c 0  if successful
+ *  - \c ~0 on error
+ */
+int response_set_body_framing(response_t *rs, ssize_t len, int can_chunk)
+{
+    dbg_return_if (rs == NULL, ~0);
+
+    if(rs->framed)
+        return 0;
+    rs->framed = 1;
+
+    if(rs->cgi)
+        return 0;   /* the web server running us frames the response */
+
+    /* the page asked to close the connection */
+    if(header_has_token(rs->header, "Connection", "close"))
+        rs->keep_alive = 0;
+
+    /* the server owns the framing: drop any coding set by a page or CGI */
+    while(response_get_field(rs, "Transfer-Encoding"))
+        dbg_err_if(response_del_field(rs, "Transfer-Encoding"));
+
+    if(!response_has_body(rs))
+    {
+        /* no body is sent (see rsfilter); 1xx and 204 must not even
+         * announce one (a 304 or HEAD may report the size of the GET body) */
+        if(rs->method != HM_HEAD && rs->status != HTTP_STATUS_NOT_MODIFIED)
+            while(response_get_field(rs, "Content-Length"))
+                dbg_err_if(response_del_field(rs, "Content-Length"));
+    } else if(len >= 0) {
+        /* the whole body is known: its measured length wins */
+        while(response_get_field(rs, "Content-Length"))
+            dbg_err_if(response_del_field(rs, "Content-Length"));
+        dbg_err_if(response_set_content_length(rs, (size_t) len));
+    } else if(header_get_field(rs->header, "Content-Length") == NULL) {
+        /* streamed body of unknown length */
+        if(rs->http11 && can_chunk) {
+            dbg_err_if(response_set_field(rs, "Transfer-Encoding", "chunked"));
+            rs->chunked = 1;
+        } else
+            rs->keep_alive = 0;     /* the end of the body is the close */
+    }
+
+    if(rs->keep_alive)
+    {
+        /* HTTP/1.1 connections are persistent by default */
+        if(!rs->http11)
+            dbg_err_if(response_set_field(rs, "Connection", "keep-alive"));
+    } else if(rs->http11)
+        dbg_err_if(response_set_field(rs, "Connection", "close"));
+
+    return 0;
+err:
+    return ~0;
+}
 
 /* return a field obj of the field named 'name' or NULL if the field does not 
    exist */

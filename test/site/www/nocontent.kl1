@@ -1,0 +1,5 @@
+<%
+    /* a 204 response has no body: this output must not be sent */
+    response_set_status(response, 204);
+    io_printf(out, "must not be sent\n");
+%>

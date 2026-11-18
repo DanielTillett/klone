@@ -36,6 +36,12 @@
 #include <klone/supplier.h>
 #include "http_s.h"
 
+enum {
+    HTTP_KEEP_ALIVE_TIMEOUT = 5,        /* secs to wait for the next request  */
+    HTTP_KEEP_ALIVE_MAX = 100,          /* max requests per connection        */
+    HTTP_KEEP_ALIVE_DRAIN_MAX = 65536   /* max unread body bytes to skip      */
+};
+
 struct http_status_map_s
 {
     int status;
@@ -406,7 +412,10 @@ static int http_print_error_page(http_t *h, request_t *rq, response_t *rs,
     const char *err_page;
     char s[URI_MAX], *sp = NULL;
     char buf[BUFSZ], *pp = NULL;
+    char page[URI_MAX + 512];
     vhost_t *vhost;
+    size_t len;
+    int n;
 
     dbg_err_if (h == NULL);
     dbg_err_if (rq == NULL);
@@ -454,108 +463,149 @@ static int http_print_error_page(http_t *h, request_t *rq, response_t *rs,
     /* be sure that the status code is properly set */
     response_set_status(rs, http_status);
 
+    /* format the default error page (truncated if the URI is too long) so
+       its length can be sent and the connection kept open */
+    n = snprintf(page, sizeof page,
+        "<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">"
+        "<html><head><title>%d %s</title></head>\n"
+        "<body><h1>%s</h1><p>URL: %s</p><hr>"
+        "<address>KLone/%s web server</address>"
+        "</body></html>",
+        http_status, http_get_status_desc(http_status),
+        http_get_status_desc(http_status),
+        (request_get_uri(rq) ? request_get_uri(rq) : ""),
+        KLONE_VERSION);
+    dbg_err_if(n < 0);
+    len = U_MIN((size_t) n, sizeof page - 1);
+
+    dbg_err_if(response_set_content_length(rs, len));
+
     response_print_header(rs);
 
     if(request_get_method(rq) == HM_HEAD)
         return 0; /* just the header is requested */
 
     /* print default error page */
-    dbg_err_if(io_printf(response_io(rs), 
-        "<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">"
-        "<html><head><title>%d %s</title></head>\n"
-        "<body><h1>%s</h1><p>URL: %s</p><hr>"
-        "<address>KLone/%s web server</address>"
-        "</body></html>", 
-        http_status, http_get_status_desc(http_status), 
-        http_get_status_desc(http_status), 
-        (request_get_uri(rq) ? request_get_uri(rq) : ""),
-        KLONE_VERSION
-        ) < 0);
+    dbg_err_if(io_write(response_io(rs), page, len) < 0);
 
     return 0;
 err:
     return ~0;
 }
 
-static int http_serve(http_t *h, int fd)
+/* local and peer address of a connection, set into each of its requests */
+typedef struct http_conn_addr_s
 {
-    request_t *rq = NULL;
-    response_t *rs = NULL;
-    io_t *in = NULL, *out = NULL;
-    int cgi = 0, rc = HTTP_STATUS_INTERNAL_SERVER_ERROR;
-    const char *gwi = NULL, *cstr;
-    talarm_t *al = NULL;
-    char addr[128] = { '\0' };
-    vhost_t *vhost;
+    char local[128];
+    char peer[128];
+} http_conn_addr_t;
+
+static int http_get_conn_addr(int fd, int cgi, http_conn_addr_t *ca)
+{
     struct sockaddr_storage ss;
     socklen_t slen;
-    const char *uri;
-    char nuri[URI_MAX];
     const char *port;
-    supplier_t *sup;
 
-    u_unused_args(al);
+    dbg_err_if (ca == NULL);
 
-    dbg_err_if (h == NULL);
-    dbg_err_if (fd < 0);
-    
-    if(fd == 0 && (gwi = getenv("GATEWAY_INTERFACE")) != NULL)
-        cgi++; /* klone is being used as a CGI */
+    ca->local[0] = ca->peer[0] = '\0';
 
-    /* create a request object */
-    dbg_err_if(request_create(h, &rq));
-    request_set_cgi(rq, cgi);
-
-    /* save local and peer address into the request object */
     if (cgi)
     {
         if (getenv("REMOTE_ADDR") && getenv("REMOTE_PORT"))
-        {
-            (void) u_addr_fmt(getenv("REMOTE_ADDR"), getenv("REMOTE_PORT"), 
-                    addr, sizeof addr);
-
-            dbg_err_if(request_set_addr(rq, addr));
-        }
+            (void) u_addr_fmt(getenv("REMOTE_ADDR"), getenv("REMOTE_PORT"),
+                    ca->local, sizeof ca->local);
 
         if (getenv("SERVER_ADDR"))
         {
             if ((port = getenv("SERVER_PORT")) == NULL)
                 port = "80";
 
-            (void) u_addr_fmt(getenv("SERVER_ADDR"), port, addr, sizeof addr);
-
-            dbg_err_if(request_set_peer_addr(rq, addr));
+            (void) u_addr_fmt(getenv("SERVER_ADDR"), port, ca->peer,
+                    sizeof ca->peer);
         }
     }
-    else 
+    else
     {
         slen = sizeof ss;
 
         /* set local addr */
         dbg_err_if(getsockname(fd, (struct sockaddr *) &ss, &slen) == -1);
-        dbg_err_if(request_set_addr(rq, 
-                    u_sa_ntop((struct sockaddr *) &ss, addr, sizeof addr)));
+        dbg_err_if(u_sa_ntop((struct sockaddr *) &ss, ca->local,
+                    sizeof ca->local) == NULL);
 
         /* set peer addr */
+        slen = sizeof ss;
         dbg_err_if(getpeername(fd, (struct sockaddr *) &ss, &slen) == -1);
-        dbg_err_if(request_set_peer_addr(rq, 
-                    u_sa_ntop((struct sockaddr *) &ss, addr, sizeof addr)));
+        dbg_err_if(u_sa_ntop((struct sockaddr *) &ss, ca->peer,
+                    sizeof ca->peer) == NULL);
     }
 
-#ifdef SSL_ON
-    /* create input io buffer */
-    if(h->ssl && !cgi)
-        dbg_err_if(io_ssl_create(fd, IO_FD_CLOSE, 0, h->ssl_ctx, &in));
-    else
-        dbg_err_if(io_fd_create(fd, IO_FD_CLOSE, &in));
-#else
-    /* create input io buffer */
-    dbg_err_if(io_fd_create(fd, IO_FD_CLOSE, &in));
-#endif
+    return 0;
+err:
+    return ~0;
+}
 
-    /* bind the request object to the 'in' io_t */
+/* complete the response (the codecs, e.g. the response filter, print what
+ * they hold) and tell if the connection can serve another request */
+static int http_end_response(io_t *out, request_t *rq, response_t *rs)
+{
+    int keep;
+
+    /* a response may not have written a byte yet (e.g. HEAD, empty page):
+       the write buffer must exist for the codecs to be flushed */
+    keep = (io_write(out, "", 0) == 0);
+
+    keep = (io_codecs_remove(out) == 0) && keep;
+    keep = (io_flush(out) == 0) && keep;
+
+    /* the response must be complete and delimited, and the unread part of
+     * the request body skipped */
+    return keep && response_get_keep_alive(rs) &&
+        request_drain_body(rq, HTTP_KEEP_ALIVE_DRAIN_MAX) == 0;
+}
+
+/* serve one request read from 'cin' writing the response to 'cout' (the
+ * same io_t but in CGI mode); on return *keep is !0 if the connection can
+ * be used for another request */
+static int http_serve_request(http_t *h, io_t *cin, io_t *cout, int cgi,
+        const http_conn_addr_t *ca, int nreq, int keep_alive, int *keep)
+{
+    request_t *rq = NULL;
+    response_t *rs = NULL;
+    io_t *in = NULL, *out = NULL;
+    int rc = HTTP_STATUS_INTERNAL_SERVER_ERROR, committed;
+    const char *cstr, *proto;
+    vhost_t *vhost;
+    const char *uri;
+    char nuri[URI_MAX];
+    supplier_t *sup;
+
+    dbg_err_if (h == NULL);
+    dbg_err_if (cin == NULL);
+    dbg_err_if (cout == NULL);
+    dbg_err_if (keep == NULL);
+
+    *keep = 0;
+
+    /* create a request object */
+    dbg_err_if(request_create(h, &rq));
+    request_set_cgi(rq, cgi);
+
+    /* on a kept-alive connection wait for the next request a shorter time */
+    if(nreq)
+        request_set_keep_alive_wait(rq, h->ka_timeout);
+
+    /* save local and peer address into the request object */
+    if(ca->local[0])
+        dbg_err_if(request_set_addr(rq, ca->local));
+    if(ca->peer[0])
+        dbg_err_if(request_set_peer_addr(rq, ca->peer));
+
+    /* bind the request object to the connection */
+    dbg_err_if(io_dup(cin, &in));
     dbg_err_if(request_bind(rq, in));
-    in = NULL; 
+    in = NULL;
 
     /* create a response object */
     dbg_err_if(response_create(h, &rs));
@@ -565,18 +615,11 @@ static int http_serve(http_t *h, int fd)
     if(cgi)
         dbg_err_if(cgi_set_request(rq));
 
-    /* create the output io_t */
-    if(cgi)
-        dbg_err_if(io_fd_create((cgi ? 1 : dup(fd)), IO_FD_CLOSE, &out));
-    else {
-        /* create the response io_t dup'ping the request io_t object */
-        dbg_err_if(io_dup(request_io(rq), &out));
-    }
-
     /* default method used if we cannot parse the request (bad request) */
     response_set_method(rs, HM_GET);
 
-    /* bind the response to the connection c */
+    /* bind the response to the connection */
+    dbg_err_if(io_dup(cout, &out));
     dbg_err_if(response_bind(rs, out));
     out = NULL;
 
@@ -585,9 +628,20 @@ static int http_serve(http_t *h, int fd)
     rc = HTTP_STATUS_BAD_REQUEST;
 
     /* parse request. may fail on timeout */
-    dbg_err_if(request_parse_header(rq, http_is_valid_uri, rq));
+    if(request_parse_header(rq, http_is_valid_uri, rq))
+    {
+        /* the client closed (or left idle) the connection: nothing to do */
+        if(request_conn_closed(rq))
+            goto end;
+        goto err;
+    }
 
     response_set_method(rs, request_get_method(rq));
+
+    /* keep the connection open if both sides want it */
+    proto = request_get_protocol(rq);    /* NULL in CGI mode */
+    response_set_keep_alive(rs, keep_alive && request_keep_alive(rq),
+            proto && !strcmp(proto, "HTTP/1.1"));
 
     /* get and cache the vhost ptr to speed up next lookups */
     dbg_err_if((vhost = http_get_vhost(h, rq)) == NULL);
@@ -598,7 +652,7 @@ static int http_serve(http_t *h, int fd)
 
     /* if the uri end with a slash then return an index page */
     request_get_sup_info(rq, &sup, NULL, NULL);
-    if(sup == NULL && (cstr = request_get_filename(rq)) != NULL && 
+    if(sup == NULL && (cstr = request_get_filename(rq)) != NULL &&
             cstr[strlen(cstr)-1] == '/')
         dbg_if(http_set_index_request(h, rq)); /* set the index page */
 
@@ -611,7 +665,7 @@ static int http_serve(http_t *h, int fd)
     /* serve the page; on error write out a simple error page */
     rc = broker_serve(h->broker, h, rq, rs);
 
-    /* on 404 (file not found) try to find out if this is a directory request 
+    /* on 404 (file not found) try to find out if this is a directory request
        i.e. http://site:port/dir redirects to /dir/ */
     if(response_get_status(rs) == 404 && (uri = request_get_uri(rq)) != NULL &&
             uri[strlen(uri)-1] != '/')
@@ -627,7 +681,7 @@ static int http_serve(http_t *h, int fd)
             if(request_get_query_string(rq))
             {
                 (void) u_strlcat(nuri, "?", sizeof(nuri));
-                (void) u_strlcat(nuri, request_get_query_string(rq), 
+                (void) u_strlcat(nuri, request_get_query_string(rq),
                         sizeof(nuri));
             }
 
@@ -647,6 +701,7 @@ static int http_serve(http_t *h, int fd)
     nop_err_if(rc != 0);
 
     /* page successfully served */
+    *keep = http_end_response(cout, rq, rs);
 
     request_free(rq);
     response_free(rs); /* must be free'd after the request object because
@@ -660,7 +715,19 @@ err:
         hook_call(request, rq, rs);
 
     if(rc && rq && rs && response_io(rs))
-        http_print_error_page(h, rq, rs, rc); /* print the error page */
+    {
+        if(!(committed = response_header_sent(rs)))
+        {
+            /* drop what the failed page left in the codecs (e.g. output 
+               buffered by the response filter) and print the error page */
+            dbg_if(io_codecs_discard(cout));
+            http_print_error_page(h, rq, rs, rc);
+        }
+
+        /* after a partial response the connection must be closed */
+        *keep = http_end_response(cout, rq, rs) && !committed;
+    }
+end:
     if(in)
         io_free(in);
     if(out)
@@ -669,6 +736,68 @@ err:
         request_free(rq);
     if(rs)
         response_free(rs);
+    return ~0;
+}
+
+static int http_serve(http_t *h, int fd, int keep_alive)
+{
+    io_t *conn = NULL, *cout = NULL;
+    http_conn_addr_t ca;
+    const char *gwi = NULL;
+    int cgi = 0, nreq, keep = 0;
+
+    dbg_err_if (h == NULL);
+    dbg_err_if (fd < 0);
+
+    if(fd == 0 && (gwi = getenv("GATEWAY_INTERFACE")) != NULL)
+        cgi++; /* klone is being used as a CGI */
+
+    /* the web server running the CGI owns the connection */
+    if(cgi || !h->keep_alive)
+        keep_alive = 0;
+
+    dbg_err_if(http_get_conn_addr(fd, cgi, &ca));
+
+#ifdef SSL_ON
+    /* create the connection io (the TLS handshake happens here) */
+    if(h->ssl && !cgi)
+        dbg_err_if(io_ssl_create(fd, IO_FD_CLOSE, 0, h->ssl_ctx, &conn));
+    else
+        dbg_err_if(io_fd_create(fd, IO_FD_CLOSE, &conn));
+#else
+    /* create the connection io */
+    dbg_err_if(io_fd_create(fd, IO_FD_CLOSE, &conn));
+#endif
+
+    /* the response goes to the same connection, or to stdout for a CGI */
+    if(cgi)
+        dbg_err_if(io_fd_create(1, IO_FD_CLOSE, &cout));
+    else {
+        dbg_err_if(io_dup(conn, &cout));
+
+        /* the codecs of the shared connection belong to the response: 
+           reading the request (body) must bypass them */
+        io_set_write_codecs(conn, 1);
+    }
+
+    /* serve requests until the client or the server closes the connection */
+    for(nreq = 0; nreq < h->ka_max; ++nreq)
+    {
+        (void) http_serve_request(h, conn, cout, cgi, &ca, nreq,
+                keep_alive && nreq + 1 < h->ka_max, &keep);
+        if(!keep)
+            break;
+    }
+
+    io_free(cout);
+    io_free(conn);
+
+    return 0;
+err:
+    if(cout)
+        io_free(cout);
+    if(conn)
+        io_free(conn);
     return ~0;
 }
 
@@ -839,6 +968,16 @@ static int http_create(u_config_t *config, http_t **ph)
 
     h->config = config;
 
+    /* persistent connections */
+    dbg_err_if(u_config_get_subkey_value_b(config, "keep_alive", 1,
+                &h->keep_alive));
+    dbg_err_if(u_config_get_subkey_value_i(config, "keep_alive_timeout",
+                HTTP_KEEP_ALIVE_TIMEOUT, &h->ka_timeout));
+    dbg_err_if(u_config_get_subkey_value_i(config, "keep_alive_max",
+                HTTP_KEEP_ALIVE_MAX, &h->ka_max));
+    h->ka_timeout = U_MAX(1, h->ka_timeout);
+    h->ka_max = U_MAX(1, h->ka_max);
+
     dbg_err_if(vhost_list_create(&h->vhosts));
 
     /* init page broker (and page suppliers) */
@@ -871,8 +1010,9 @@ static int http_backend_serve(struct backend_s *be, int fd)
     
     h = (http_t *) be->arg;
     
-    /* new connection accepted on http listening socket, handle it */
-    rc = http_serve(h, fd);
+    /* new connection accepted on http listening socket, handle it; in the
+     * iterative model an idle kept-alive client would block the server */
+    rc = http_serve(h, fd, be->model != SERVER_MODEL_ITERATIVE);
 
     return rc;
 err:

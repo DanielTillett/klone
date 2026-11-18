@@ -45,6 +45,15 @@ int response_print_header(response_t *rs);
 int response_print_header_to_io(response_t *rs, io_t *io);
 size_t response_get_max_header_size(response_t *rs);
 
+/* connection persistence (HTTP keep-alive) */
+void response_set_keep_alive(response_t *rs, int keep_alive, int http11);
+int response_get_keep_alive(response_t *rs);
+int response_set_body_framing(response_t *rs, ssize_t len, int can_chunk);
+int response_header_sent(response_t *rs);
+int response_is_chunked(response_t *rs);
+int response_has_body(response_t *rs);
+void response_close_connection(response_t *rs);
+
 io_t* response_io(response_t *rs);
 
 header_t* response_get_header(response_t *rs);

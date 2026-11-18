@@ -67,11 +67,8 @@ int dypage_serve(dypage_args_t *args)
     /* flush the output buffer */
     io_flush(oio);
 
-    /* if nothing has been printed by the script then write a dummy byte so 
-     * the io_t calls the filter function that, in turn, will print out the 
-     * HTTP header (rsfilter will handle it) */
-    if(!response_filter_feeded(filter))
-        io_write(oio, "\n", 1);
+    /* if nothing has been printed by the script the filter prints the
+     * header (and an empty body) when the server flushes the codecs */
 
     /* save and destroy the session */
     session_free(ss); args->ss = ss = NULL;

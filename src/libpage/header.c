@@ -174,6 +174,55 @@ const char *header_get_field_value(header_t *h, const char *name)
     return f ? field_get_value(f) : NULL;
 }
 
+/**
+ * \ingroup header
+ * \brief   Tell if a list-valued field contains a token
+ *
+ * Look for \p token (case-insensitive) in the comma-separated value of the
+ * field \p name, e.g. "close" in "Connection: keep-alive, close".
+ *
+ * \param h      header object
+ * \param name   name of the field
+ * \param token  token to look for
+ *
+ * \return \c 1 if the token is found, \c 0 otherwise (or if the field is
+ *         missing)
+ */
+int header_has_token(header_t *h, const char *name, const char *token)
+{
+    const char *v;
+    field_t *f;
+    size_t i, len;
+
+    dbg_return_if (h == NULL, 0);
+    dbg_return_if (name == NULL, 0);
+    dbg_return_if (token == NULL, 0);
+
+    len = strlen(token);
+
+    /* the field may be repeated: look in every instance */
+    for(i = 0; i < header_field_count(h); ++i)
+    {
+        f = header_get_fieldn(h, i);
+        if(field_get_name(f) == NULL || strcasecmp(field_get_name(f), name))
+            continue;
+
+        for(v = field_get_value(f); v && *v; ++v)
+        {
+            while(*v == ' ' || *v == '\t' || *v == ',')
+                ++v;
+            if(!strncasecmp(v, token, len) &&
+                    (v[len] == '\0' || v[len] == ',' || v[len] == ' ' ||
+                     v[len] == '\t'))
+                return 1;
+            if((v = strchr(v, ',')) == NULL)
+                break;
+        }
+    }
+
+    return 0;
+}
+
 /** 
  * \ingroup header
  * \brief   Delete a field from a header

@@ -1,6 +1,15 @@
 ChangeLog file of KLone - https://github.com/DanielTillett/klone
 
 KLone 4.0.0:
+	- http: persistent connections (keep-alive) and pipelining for HTTP/1.1
+	  and HTTP/1.0 clients; new keep_alive, keep_alive_timeout and
+	  keep_alive_max settings. Response bodies are always delimited
+	  (Content-Length or chunked coding), HEAD/204/304 responses never carry
+	  a body, request body reads stop at the end of the body, and TLS
+	  connections end with close_notify. Fixed on the way: HEAD on embedded
+	  static files sent nothing, empty pages sent a stray newline, the error
+	  page could be appended to a partial response and a CGI "Status:" line
+	  was sent to the client
 	- build: CMake build (CMake 3.24+) replacing MaKL and GNU make for KLone
 	  and LibU; works with Ninja, BSD make or GNU make, tested on Linux and
 	  macOS. 'klone -c import' writes autogen.cmake for the site build

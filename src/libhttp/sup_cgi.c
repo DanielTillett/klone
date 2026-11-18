@@ -487,7 +487,7 @@ static int cgi_serve(request_t *rq, response_t *rs)
     const char *fqn, *filename;
     char buf[4096];
     io_t *out = NULL, *cgi_in = NULL, *cgi_out = NULL;
-    ssize_t n, tot = 0, clen;
+    ssize_t n, clen;
     int cgi_stdin = -1, cgi_stdout = -1, status;
     pid_t child;
 
@@ -553,6 +553,10 @@ static int cgi_serve(request_t *rq, response_t *rs)
                 field_get_value(field))
         {
             response_set_status(rs, atoi(field_get_value(field)));
+
+            /* "Status" is for the server, not a header field to send */
+            dbg_err_if(header_del_field(head, field));
+            field_free(field);
         } else {
             if(header_get_field(head, "Location"))
                 response_set_status(rs, HTTP_STATUS_MOVED_TEMPORARILY);
@@ -567,14 +571,10 @@ static int cgi_serve(request_t *rq, response_t *rs)
     {
         if(io_write(out, buf, n) < 0)
             break;
-        tot += n;
     }
 
-    /* if nothing has been printed by the script; write a dummy byte so 
-     * the io_t calls the filter function that, in turn, will print out the 
-     * HTTP header (rsfilter will handle it) */
-    if(tot == 0)
-        io_write(out, "\n", 1);
+    /* if nothing has been printed by the script the filter prints the
+     * header (and an empty body) when the server flushes the codecs */
 
     if(cgi_in)
         io_free(cgi_in); 

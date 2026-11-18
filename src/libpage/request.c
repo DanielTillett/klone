@@ -61,6 +61,10 @@ struct request_s
     void *si_handle;
     time_t si_mtime;
     size_t body_off;
+    /* persistent connections */
+    size_t hdr_end;             /* stream offset of the end of the header   */
+    int ka_wait;                /* waiting on a kept-alive connection       */
+    int conn_closed;            /* closed or idle before any request byte   */
 };
 
 typedef struct upload_info_s    /* uploaded file info struct         */
@@ -1589,9 +1593,19 @@ static int request_cb_close_socket(talarm_t *al, void *arg)
     u_unused_args(al);
 
     warn("[%x] connection timed out, closing", io);
-    
+
     /* close the stream (but not free it) */
     io_close(io);
+
+    return 0;
+}
+
+/* an idle kept-alive connection timed out: close it silently */
+static int request_cb_close_idle(talarm_t *al, void *arg)
+{
+    u_unused_args(al);
+
+    io_close((io_t*)arg);
 
     return 0;
 }
@@ -1696,20 +1710,30 @@ int request_parse_header(request_t *rq,
     const char WP[] = " \t\r\n";
     char ln[BUFSZ], *pp, *method, *uri, *proto;
     talarm_t *al = NULL;
-    size_t i, lengths = 0;
+    size_t i, lengths = 0, start;
     field_t *field;
-    
+
     dbg_err_if (rq == NULL);
     dbg_err_if (rq->io == NULL); /* must call rq_bind before rq_parse */
 
     /* wait at most N seconds to receive the request */
-    dbg_err_if(timerm_add(rq->idle_timeout, request_cb_close_socket, 
-        (void*)rq->io, &al));
+    dbg_err_if(timerm_add(rq->idle_timeout, rq->ka_wait ?
+        request_cb_close_idle : request_cb_close_socket, (void*)rq->io, &al));
+
+    /* the previous request on this connection limited reads to its body */
+    io_set_read_limit(rq->io, -1);
+
+    start = rq->io->rtot;
 
     if(!rq->cgi)
     {
         /* cp the first line */
-        dbg_err_if(io_gets(rq->io, ln, BUFSZ) <= 0);
+        if(io_gets(rq->io, ln, BUFSZ) <= 0)
+        {
+            /* closed (or timed out) before sending anything */
+            rq->conn_closed = (rq->io->rtot == start);
+            goto err;
+        }
         dbg_err_if(strchr(ln, '\n') == NULL);
 
         /* save the verbatim request line */
@@ -1755,6 +1779,124 @@ int request_parse_header(request_t *rq,
         dbg_err_if(request_set_content_length(rq));
 
     /* idle timeout not expired, clear it */
+    dbg_if(timerm_del(al)); al = NULL;
+
+    /* the body (if any) starts here; reading it (parsers, pages, CGIs) can
+       never go past its end, into the next request on the connection */
+    rq->hdr_end = rq->io->rtot;
+    io_set_read_limit(rq->io, (ssize_t) (rq->hdr_end + rq->content_length));
+
+    return 0;
+err:
+    if(al)
+        timerm_del(al);
+    return ~0;
+}
+
+/**
+ * \ingroup request
+ * \brief   Wait for a request on a kept-alive connection
+ *
+ * Set the idle timeout for a request that follows another one on the same
+ * connection; when it expires the connection is closed without a warning.
+ *
+ * \param rq       request object (not parsed yet)
+ * \param timeout  seconds to wait for the request
+ *
+ * \return nothing
+ */
+void request_set_keep_alive_wait(request_t *rq, size_t timeout)
+{
+    rq->idle_timeout = U_MAX(1, timeout);
+    rq->ka_wait = 1;
+}
+
+/**
+ * \ingroup request
+ * \brief   Tell if the client went away before sending a request
+ *
+ * \param rq  request object
+ *
+ * \return !0 if request_parse_header() failed because the connection was
+ *         closed (or timed out) before the first byte of the request
+ */
+int request_conn_closed(request_t *rq)
+{
+    return rq->conn_closed;
+}
+
+/**
+ * \ingroup request
+ * \brief   Tell if the client asked for a persistent connection
+ *
+ * HTTP/1.1 connections are persistent unless the client sends
+ * "Connection: close"; HTTP/1.0 ones only with "Connection: keep-alive".
+ *
+ * \param rq  request object (parsed)
+ *
+ * \return !0 if the connection may be kept open after the response
+ */
+int request_keep_alive(request_t *rq)
+{
+    dbg_return_if (rq == NULL, 0);
+
+    if(rq->cgi || rq->protocol == NULL)
+        return 0;
+
+    /* "close" wins over anything else */
+    if(header_has_token(rq->header, "Connection", "close"))
+        return 0;
+
+    if(!strcmp(rq->protocol, "HTTP/1.1"))
+        return 1;
+
+    return header_has_token(rq->header, "Connection", "keep-alive");
+}
+
+/**
+ * \ingroup request
+ * \brief   Skip the unread part of the request body
+ *
+ * Read and discard what is left of the request body (up to \p max bytes),
+ * so the next request on the same connection can be parsed.
+ *
+ * \param rq   request object
+ * \param max  max number of bytes to discard
+ *
+ * \return \c 0 if the whole body has been consumed, non-zero if the
+ *         connection cannot be reused
+ */
+int request_drain_body(request_t *rq, size_t max)
+{
+    enum { BUFSZ = 4096 };
+    char buf[BUFSZ];
+    talarm_t *al = NULL;
+    size_t done, left;
+    ssize_t c;
+
+    dbg_err_if (rq == NULL);
+    dbg_err_if (rq->io == NULL);
+
+    done = rq->io->rtot - rq->hdr_end;
+
+    /* more than the body has been read: the next request is gone */
+    nop_err_if(done > rq->content_length);
+
+    if((left = rq->content_length - done) == 0)
+        return 0;
+
+    /* the client may be waiting for "100 Continue" before sending it */
+    nop_err_if(done == 0 && header_get_field(rq->header, "Expect"));
+
+    nop_err_if(left > max);
+
+    dbg_err_if(timerm_add(rq->idle_timeout, request_cb_close_idle,
+        (void*)rq->io, &al));
+
+    /* reads stop at the end of the body (see request_parse_header) */
+    for(; left; left -= c)
+        nop_err_if((c = io_read(rq->io, buf, U_MIN(left, BUFSZ))) <= 0);
+
     dbg_if(timerm_del(al)); al = NULL;
 
     return 0;

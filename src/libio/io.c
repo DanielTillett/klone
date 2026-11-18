@@ -25,8 +25,9 @@ enum {
 #define IO_WBUF_AVAIL(io) (io->wbsz - io->wcount)
 #define IO_WBUF_FULL(io) (io->wbsz == io->wcount)
 
-static inline int io_transform_codec_buffer(io_t *, codec_t *, char *, 
+static inline int io_transform_codec_buffer(io_t *, codec_t *, char *,
         size_t *);
+static size_t io_read_room(io_t *io, size_t size);
 
 /**
  * \ingroup basic
@@ -515,9 +516,9 @@ static ssize_t io_underflow(io_t *io)
         {   /* fetch some bytes from the device and fill the rbuffer */
             dbg_err_if((c = io->read(io, io->ubuf, io->rbsz)) < 0);
             if(c == 0)
-            {   /* eof, try to get some buffered (already transformed) bytes 
+            {   /* eof, try to get some buffered (already transformed) bytes
                    from the codec */
-                if(!TAILQ_EMPTY(&io->codec_chain))
+                if(!TAILQ_EMPTY(&io->codec_chain) && !io->wr_codecs)
                 {
                     sz = io->rbsz;
                     c = io_chain_flush_chunk(io, io->rbuf, &sz);
@@ -532,10 +533,17 @@ static ssize_t io_underflow(io_t *io)
             io->ucount += c;
         }
 
-        /* transform all data in the buffer */
+        /* transform all data in the buffer (codecs of a write-only chain
+           do not apply) */
         sz = io->rbsz - io->rcount;
-        dbg_err_if((c = io_transfer(io, io->rbuf, &sz, 
-            io->ubuf + io->uoff, io->ucount)) < 0);
+        if(io->wr_codecs)
+        {
+            c = U_MIN(sz, io->ucount);
+            memcpy(io->rbuf, io->ubuf + io->uoff, c);
+            sz = c;
+        } else
+            dbg_err_if((c = io_transfer(io, io->rbuf, &sz,
+                io->ubuf + io->uoff, io->ucount)) < 0);
         dbg_err_if(c < 0);
         dbg_err_if(c == 0 && sz == 0);
         io->ucount -= c;
@@ -576,9 +584,12 @@ ssize_t io_read(io_t *io, char *buf, size_t size)
 
     dbg_err_if (io == NULL);
     dbg_err_if (buf == NULL);
-    
+
     if(io->eof)
         return 0;
+
+    /* never read past the read limit */
+    size = io_read_room(io, size);
 
     while(size)
     {
@@ -862,6 +873,13 @@ ssize_t io_get_until(io_t *io, char stop_at, char *buf, size_t size)
 
     --size; /* save a char for \0 */
 
+    /* never read past the read limit */
+    if((size = io_read_room(io, size)) == 0)
+    {
+        buf[0] = 0;
+        return 0;
+    }
+
     if(io->rcount == 0)
         dbg_err_if(io_underflow(io) < 0);
 
@@ -999,6 +1017,111 @@ int io_codecs_remove(io_t *io)
     }
 
     return rc;
+}
+
+/**
+ * \ingroup basic
+ * \brief  Tell if an \c io_t object has codecs
+ *
+ * \param io    the \c io_t object
+ *
+ * \return \c 1 if the codec chain of \p io is not empty, \c 0 otherwise
+ */
+int io_has_codecs(io_t *io)
+{
+    dbg_return_if (io == NULL, 0);
+
+    return !TAILQ_EMPTY(&io->codec_chain);
+}
+
+/**
+ * \ingroup basic
+ * \brief  Remove and free all codecs without flushing them
+ *
+ * Data held by the codecs (not yet written) is discarded.
+ *
+ * \param io    the \c io_t object
+ *
+ * \return \c 0 on success, non-zero on error
+ */
+int io_codecs_discard(io_t *io)
+{
+    codec_t *codec;
+
+    dbg_return_if (io == NULL, ~0);
+
+    while((codec = TAILQ_FIRST(&io->codec_chain)) != NULL)
+    {
+        TAILQ_REMOVE(&io->codec_chain, codec, np);
+        codec_free(codec);
+    }
+
+    return 0;
+}
+
+/**
+ * \ingroup basic
+ * \brief  Apply the codecs to written data only
+ *
+ * By default codecs transform both the data read from and written to an
+ * \c io_t. When \p on is set, reads bypass the codec chain (e.g. on a
+ * connection whose codecs only belong to the response).
+ *
+ * \param io    the \c io_t object
+ * \param on    !0 to apply codecs on writes only
+ *
+ * \return nothing
+ */
+void io_set_write_codecs(io_t *io, int on)
+{
+    dbg_ifb (io == NULL) return;
+
+    io->wr_codecs = on ? 1 : 0;
+}
+
+/**
+ * \ingroup basic
+ * \brief  Limit the bytes that can be read
+ *
+ * Reads return end-of-file once the total number of bytes read from \p io
+ * (see io_get_read_count) reaches \p limit; data after that point stays
+ * buffered for later reads. A negative \p limit removes the limit.
+ *
+ * \param io    the \c io_t object
+ * \param limit max total number of bytes read, or -1
+ *
+ * \return nothing
+ */
+void io_set_read_limit(io_t *io, ssize_t limit)
+{
+    dbg_ifb (io == NULL) return;
+
+    io->rlimited = (limit >= 0);
+    io->rlimit = io->rlimited ? (size_t) limit : 0;
+}
+
+/**
+ * \ingroup basic
+ * \brief  Return the total number of bytes read from an \c io_t object
+ *
+ * \param io    the \c io_t object
+ *
+ * \return the number of bytes returned by reads so far
+ */
+size_t io_get_read_count(io_t *io)
+{
+    dbg_return_if (io == NULL, 0);
+
+    return io->rtot;
+}
+
+/* number of bytes that may still be read before the read limit */
+static size_t io_read_room(io_t *io, size_t size)
+{
+    if(!io->rlimited)
+        return size;
+
+    return io->rtot >= io->rlimit ? 0 : U_MIN(size, io->rlimit - io->rtot);
 }
 
 /**

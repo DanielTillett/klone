@@ -50,21 +50,23 @@ static int fs_serve(request_t *rq, response_t *rs)
     enum { BUFSZ = 4096 };
     io_t *io = NULL, *out = NULL;
     const char *mime_type, *fqn;
-    ssize_t c;
+    ssize_t c = 0;
     char buf[BUFSZ];
     struct stat st;
+    off_t left;
 
     dbg_err_if (rq == NULL);
     dbg_err_if (rs == NULL);
-    
+
     /* output stream */
     out = response_io(rs);
     dbg_err_if(out == NULL);
 
     fqn = request_get_resolved_filename(rq);
 
-    /* we need file size */
-    dbg_err_if(stat(fqn, &st));
+    /* open the file first so the size sent is the size of what is read */
+    dbg_err_if(u_file_open(fqn, O_RDONLY, &io));
+    dbg_err_if(fstat(io_fd_get_d(io), &st));
     dbg_err_if(response_set_content_length(rs, st.st_size));
 
     /* guess the mime type append a Content-Type field to the response*/
@@ -79,15 +81,26 @@ static int fs_serve(request_t *rq, response_t *rs)
 
     /* if this's a HEAD request don't print the file content */
     if(response_get_method(rs) == HM_HEAD)
+    {
+        io_free(io);
         return 0;
+    }
 
-    /* open and write out the whole file */
-    dbg_err_if(u_file_open(request_get_resolved_filename(rq), O_RDONLY, &io));
-
-    while((c = io_read(io, buf, BUFSZ)) > 0)
+    /* write out the file, exactly Content-Length bytes even if it is
+       changing while being sent */
+    for(left = st.st_size; left > 0; left -= c)
+    {
+        c = io_read(io, buf, (size_t) U_MIN((off_t) BUFSZ, left));
+        if(c <= 0)
+            break;
         dbg_err_if(io_write(out, buf, c) < 0);
+    }
 
     dbg_err_if(c < 0);
+
+    /* the file shrank: the client still waits for the missing bytes */
+    if(left > 0)
+        response_close_connection(rs);
 
     io_free(io);
 

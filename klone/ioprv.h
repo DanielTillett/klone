@@ -78,6 +78,13 @@ struct io_s
     size_t wcount;  /* # of non-empty bytes in the buffer                     */
     size_t woff;    /* offset of the head of the buffer                       */
 
+    /* read limit: reads stop (EOF) when rtot reaches rlimit */
+    int rlimited;   /* !0 if rlimit is set                                    */
+    size_t rlimit;  /* max value of rtot                                      */
+
+    /* !0 if codecs only transform written data (e.g. a connection whose
+       codecs belong to the response) */
+    int wr_codecs;
 };
 
 #ifdef __cplusplus

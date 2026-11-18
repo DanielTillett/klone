@@ -95,9 +95,12 @@ int broker_serve(broker_t *b, http_t *h, request_t *rq, response_t *rs)
         if(http_status == HTTP_STATUS_EXT_KEY_NEEDED)
             return http_status;
 
-        /* if the user explicitly set the status from a kl1 then return 0 */
-        if(http_status >= 400 && sup != &sup_emb 
-                    )
+        /* if the user explicitly set the status from a kl1 then return 0;
+           an error status of another supplier gets the server error page,
+           unless the supplier has already produced its own response (e.g.
+           a CGI error page, pending in the response filter) */
+        if(http_status >= 400 && sup != &sup_emb &&
+                !response_header_sent(rs) && !io_has_codecs(response_io(rs)))
             return http_status;
     }
 

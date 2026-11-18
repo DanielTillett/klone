@@ -169,6 +169,16 @@ static ssize_t io_write(io_t *io, const char *buf, size_t n)
     written += n; return (ssize_t)n;
 }
 static void io_free(io_t *io) { (void)io; ++freed; }
+/* the size fs_serve sees for the open file, and whether it closed the
+ * connection because fewer bytes could be read */
+static off_t file_size;
+static int conn_closed;
+static int io_fd_get_d(io_t *io) { (void)io; return -1; }
+static int mock_fstat(int fd, struct stat *st)
+{ (void)fd; memset(st, 0, sizeof *st); st->st_size = file_size; return 0; }
+#define fstat(fd, st) mock_fstat(fd, st)
+static void response_close_connection(response_t *rs)
+{ (void)rs; ++conn_closed; }
 
 #include "regression_functions.inc"
 
@@ -339,12 +349,20 @@ static void test_file_supplier(void)
     response_t rs = {&output, 0};
     file_input.data = "abc"; file_input.length = 3;
     file_input.offset = 0; file_input.error = 0;
-    written = 0; freed = 0;
+    written = 0; freed = 0; file_size = 3; conn_closed = 0;
     CHECK(fs_serve(&rq, &rs) == 0 && written == 3 && freed == 1);
+    CHECK(conn_closed == 0);
     file_input.offset = 0; file_input.error = 1;
-    written = 0; freed = 0; fail_process = 0;
+    written = 0; freed = 0; fail_process = 0; file_size = 6;
     CHECK(fs_serve(&rq, &rs) != 0 && written == 3 && freed == 1);
     CHECK(fail_process == 0); /* negative reads must never reach io_write */
+    /* the file shrank after fstat(): fewer bytes than Content-Length */
+    file_input.offset = 0; file_input.error = 0;
+    written = 0; freed = 0; file_size = 6; conn_closed = 0;
+    CHECK(fs_serve(&rq, &rs) == 0 && written == 3 && conn_closed == 1);
+    /* the file grew: never more than Content-Length */
+    file_input.offset = 0; written = 0; freed = 0; file_size = 2;
+    CHECK(fs_serve(&rq, &rs) == 0 && written == 2 && freed == 1);
 }
 
 int main(void)

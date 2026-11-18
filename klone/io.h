@@ -80,6 +80,11 @@ ssize_t io_putc(io_t *io, char c);
 int io_codec_add_head(io_t *io, codec_t* codec);
 int io_codec_add_tail(io_t *io, codec_t* codec);
 int io_codecs_remove(io_t *io);
+int io_codecs_discard(io_t *io);
+int io_has_codecs(io_t *io);
+void io_set_write_codecs(io_t *io, int on);
+void io_set_read_limit(io_t *io, ssize_t limit);
+size_t io_get_read_count(io_t *io);
 int io_is_secure(io_t *io);
 
 #ifdef __cplusplus

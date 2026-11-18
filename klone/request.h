@@ -34,6 +34,12 @@ int request_parse_header(request_t *rq,
         void* arg);
 int request_parse_data(request_t *rq);
 
+/* persistent connections (HTTP keep-alive) */
+void request_set_keep_alive_wait(request_t *rq, size_t timeout);
+int request_conn_closed(request_t *rq);
+int request_keep_alive(request_t *rq);
+int request_drain_body(request_t *rq, size_t max);
+
 io_t* request_io(request_t *rq);
 http_t* request_get_http(request_t *rq);
 const char *request_get_addr(request_t *rq);

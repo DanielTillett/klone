@@ -1,0 +1,6 @@
+<%
+    /* larger than the response filter buffer: sent chunked over HTTP/1.1 */
+    int i;
+    for(i = 0; i < 2000; ++i)
+        io_printf(out, "line %04d of a long dynamic page\n", i);
+%>

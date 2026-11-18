@@ -106,6 +106,11 @@ static int io_ssl_free(io_ssl_t *io_ssl)
 {
     dbg_err_if(io_ssl == NULL);
 
+    /* tell the peer the data is complete (close_notify); not done in
+       io_ssl_close(), which also runs on timeouts from signal context */
+    if(io_ssl->ssl && io_ssl->fd != -1)
+        (void) SSL_shutdown(io_ssl->ssl);
+
     dbg_if(io_ssl_close(io_ssl));
 
     if(io_ssl->ssl)

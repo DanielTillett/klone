@@ -175,7 +175,7 @@ static int parse_opt(int argc, char **argv)
             ctx->encrypt = 1;
             break;
         case 'e': /* encrypt file pattern */
-            dbg_err_if(pm_add(ctx->enc_patt, u_strdup(optarg)));
+            dbg_err_if(pm_add(ctx->enc_patt, optarg));
             break;
         case 'k': /* encryption key filename */
             ctx->key_file = u_strdup(optarg);
@@ -186,7 +186,7 @@ static int parse_opt(int argc, char **argv)
 #ifdef HAVE_LIBZ
         case 'Z': /* compress file pattern */
             ctx->compress = 1;
-            dbg_err_if(pm_add(ctx->comp_patt, u_strdup(optarg)));
+            dbg_err_if(pm_add(ctx->comp_patt, optarg));
             break;
         case 'z': /* compress */
             ctx->compress = 1;
@@ -205,7 +205,7 @@ static int parse_opt(int argc, char **argv)
             warn_err_if(ctx->file_in == NULL);
             break;
         case 'x': /* exclude pattern */
-            dbg_err_if(pm_add(ctx->excl_patt, u_strdup(optarg)));
+            dbg_err_if(pm_add(ctx->excl_patt, optarg));
             break;
         case 'b': /* base_uri */
             ctx->base_uri = u_strdup(optarg);
@@ -611,11 +611,7 @@ static int command_import(void)
     root_dir = ctx->arg[0];
     dbg_err_if(root_dir == NULL);
 
-    if((base_uri = ctx->base_uri) == NULL)
-    {
-        base_uri = u_strdup("");
-        dbg_err_if (base_uri == NULL);
-    }
+    base_uri = ctx->base_uri ? ctx->base_uri : "";
 
     dbg_err_if(trans_site(root_dir, base_uri));
 
@@ -651,6 +647,7 @@ err:
 int main(int argc, char **argv)
 {
     context_t context;
+    int result = EXIT_FAILURE;
 
     ctx = &context;
 
@@ -668,7 +665,16 @@ int main(int argc, char **argv)
     /* run the command */
     dbg_err_if(dispatch_command());
 
-    return EXIT_SUCCESS;
+    result = EXIT_SUCCESS;
 err:
-    return EXIT_FAILURE;
+    if (ctx->comp_patt) pm_free(ctx->comp_patt);
+    if (ctx->enc_patt) pm_free(ctx->enc_patt);
+    if (ctx->excl_patt) pm_free(ctx->excl_patt);
+    U_FREE(ctx->file_in);
+    U_FREE(ctx->file_out);
+    U_FREE(ctx->depend_out);
+    U_FREE(ctx->uri);
+    U_FREE(ctx->base_uri);
+    U_FREE(ctx->key_file);
+    return result;
 }

@@ -55,6 +55,8 @@ typedef struct save_cb_params_s save_cb_params_t;
 
 int session_module_term(session_opt_t *so)
 {
+    if (so)
+        dbg_if(atoms_free(so->atoms));
 #ifdef SSL_OPENSSL
     if (so)
         EVP_MAC_CTX_free(so->hmac_ctx);

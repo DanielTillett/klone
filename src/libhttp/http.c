@@ -218,8 +218,9 @@ err:
     return ~0;
 }
 
-static int http_is_valid_uri(request_t *rq, const char *buf, size_t len)
+static int http_is_valid_uri(void *arg, const char *buf, size_t len)
 {
+    request_t *rq = (request_t *)arg;
     char resolved[U_FILENAME_MAX], uri[URI_MAX];
     http_t *h = NULL;
 
@@ -936,7 +937,7 @@ static int https_backend_init(struct backend_s *be)
     https->ssl_ctx = tls_load_init_ctx(http_get_config(https));
     warn_err_ifm (https->ssl_ctx == NULL, "bad or missing HTTPS credentials");
 
-    dbg_err_if(session_module_init(https->config, &https->sess_opt));
+    /* session options were already loaded by http_backend_init() */
 
     return 0;
 err:

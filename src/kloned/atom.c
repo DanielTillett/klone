@@ -184,6 +184,7 @@ int atoms_free(atoms_t *as)
         {
             dbg_err_if(atoms_getn(as, 0, &atom));
             dbg_err_if(atoms_remove(as, atom));
+            atom_free(atom);
         }
 
         U_FREE(as);

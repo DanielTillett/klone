@@ -34,7 +34,9 @@ int emb_init(void)
         /* no free function needed for static values */
         dbg_err_if (u_hmap_opts_set_val_freefunc(hopts, NULL));
 
+        /* the hmap keeps its own copy of the options */
         dbg_err_if (u_hmap_easy_new(hopts, &embmap));
+        u_hmap_opts_free(hopts);
         hopts = NULL;
 
         /* call autogen external function (cannot be called more then once!) */

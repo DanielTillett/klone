@@ -64,6 +64,8 @@ static int kblock_free(kblock_t *block)
     /* free children first */
     for(i = 0; (child = u_list_get_n(block->children, i)) != NULL; ++i)
         kblock_free(child);
+    if (block->children)
+        u_list_free(block->children);
 
     if(block->ancestor)
         kblock_free(block->ancestor);
@@ -934,6 +936,10 @@ err:
         u_con("%s", pti->emsg);
     if(gzip)
         codec_free(gzip);
+    if(aes)
+        codec_free(aes);
+    if(ppc)
+        ppctx_free(ppc);
     if(tmp)
         io_free(tmp);
     if(depend)

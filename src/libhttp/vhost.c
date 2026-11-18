@@ -99,7 +99,16 @@ err:
 
 int vhost_list_free(vhost_list_t *vs)
 {
+    vhost_t *item;
+
     dbg_err_if(vs == NULL);
+
+    /* the list owns its vhosts (klog may be shared, so it's not closed here) */
+    while((item = LIST_FIRST(vs)) != NULL)
+    {
+        LIST_REMOVE(item, np);
+        vhost_free(item);
+    }
 
     u_free(vs);
 

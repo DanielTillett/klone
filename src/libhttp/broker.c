@@ -18,9 +18,6 @@
 enum { MAX_SUP_COUNT = 8 }; /* max number of suppliers */
 
 extern supplier_t sup_emb;
-#ifdef ENABLE_SUP_KILT
-extern supplier_t sup_kilt;
-#endif
 #ifdef ENABLE_SUP_CGI
 extern supplier_t sup_cgi;
 #endif
@@ -101,9 +98,6 @@ int broker_serve(broker_t *b, http_t *h, request_t *rq, response_t *rs)
 
         /* if the user explicitly set the status from a kl1 then return 0 */
         if(http_status >= 400 && sup != &sup_emb 
-                    #ifdef ENABLE_SUP_KILT
-                    && sup!= &sup_kilt
-                    #endif
                     )
             return http_status;
     }
@@ -128,12 +122,6 @@ int broker_create(broker_t **pb)
 
     i = 0;
     b->sup_list[i++] = &sup_emb;
-
-#ifdef ENABLE_SUP_KILT
-    b->sup_list[i++] = &sup_kilt;
-#else
-    warn("Kilt support disabled, use --enable_kilt to enable it");
-#endif
 
 #ifdef ENABLE_SUP_CGI
     b->sup_list[i++] = &sup_cgi;

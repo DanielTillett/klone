@@ -149,18 +149,6 @@ int session_module_init(u_config_t *config, session_opt_t **pso)
         dbg_err_if(!RAND_bytes(so->session_iv, CIPHER_IV_LEN));
 #endif
 
-#ifdef SSL_CYASSL
-        /* init cipher EVP algo, the random key and IV */
-        so->cipher = EVP_aes_256_cbc(); /* use AES-256 in CBC mode */
-
-        /* key and iv for client-side session */
-        dbg_err_if(!RAND_bytes(so->cipher_key, CIPHER_KEY_LEN));
-        dbg_err_if(!RAND_bytes(so->cipher_iv, CIPHER_IV_LEN));
-
-        /* create a random key and iv to crypt the SESSION_KEY_VAR variable */
-        dbg_err_if(!RAND_bytes(so->session_key, CIPHER_KEY_LEN));
-        dbg_err_if(!RAND_bytes(so->session_iv, CIPHER_IV_LEN));
-#endif
 
 #endif
     } /* if "session" exists */

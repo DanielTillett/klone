@@ -46,9 +46,6 @@ static void tls_free_ctx_args (tls_ctx_args_t *cargs);
 static int tls_load_ctx_args (u_config_t *cfg, tls_ctx_args_t **cargs);
 static SSL_CTX *tls_init_ctx (tls_ctx_args_t *cargs);
 static int cb_vfy (int ok, X509_STORE_CTX *store_ctx);
-#ifdef SSL_OPENSSL_PSK
-static int tls_set_ctx_psk_hash (u_config_t *, tls_ctx_args_t *);
-#endif
 
 SSL_CTX *tls_load_init_ctx (u_config_t *cfg)
 {
@@ -90,12 +87,6 @@ static int tls_load_ctx_args (u_config_t *cfg, tls_ctx_args_t **pcargs)
     cargs->ca = u_config_get_subkey_value(cfg, "ca_file");
     cargs->dh = u_config_get_subkey_value(cfg, "dh_file");
     cargs->crl = u_config_get_subkey_value(cfg, "crl_file");
-#ifdef SSL_OPENSSL_PSK
-    /* handle 'pskdb_file', 'psk_hint' and 'psk_hash' keywords */
-    cargs->pskdb = u_config_get_subkey_value(cfg, "pskdb_file");
-    cargs->psk_hint = u_config_get_subkey_value(cfg, "psk_hint");
-    dbg_err_if (tls_set_ctx_psk_hash(cfg, cargs));
-#endif
     dbg_err_if (tls_set_ctx_crlopts(cfg, cargs));
     dbg_err_if (tls_set_ctx_vdepth(cfg, cargs));
     dbg_err_if (tls_set_ctx_vmode(cfg, cargs));
@@ -130,22 +121,15 @@ static SSL_CTX *tls_init_ctx (tls_ctx_args_t *cargs)
      * credentials are stored in clear text */
     SSL_CTX_set_default_passwd_cb(c, tls_no_passphrase_cb);
 
-    /* NOTE: configuration has been sanitized earlier by tls_check_ctx, 
-     * so we can be reasonably sure that one (or both) of PSK or X.509 
-     * credentials are in place. */
+    /* NOTE: configuration has been sanitized earlier by tls_check_ctx,
+     * so X.509 credentials are in place. */
 
     if (cargs->cert)
         /* set key and certs against the SSL context */
         dbg_err_if (tls_load_x509_creds(c, cargs));
 
-#ifdef SSL_OPENSSL_PSK
-    if (cargs->pskdb)
-        /* load psk DB and set psk callback */
-        dbg_err_if (tls_psk_init(c, cargs));
-#endif
-
 #ifdef SSL_OPENSSL
-    /* (possibly) generate DH parameters and load into SSL_CTX */
+    /* DH parameters: chosen by OpenSSL, or loaded from dh_file */
     dbg_err_if (tls_gendh_params(c, cargs->dh));
 #endif
 
@@ -309,7 +293,7 @@ err:
 }
 
 #ifdef SSL_OPENSSL
-/* generate DH ephemeral parameters and load'em into SSL_CTX */
+/* set ephemeral DH parameters: OpenSSL's automatic choice, or dh_file */
 static int tls_gendh_params(SSL_CTX *c, const char *dhfile)
 {
     EVP_PKEY *eph_dh = NULL;
@@ -381,9 +365,6 @@ static int tls_init_ctx_args (tls_ctx_args_t *cargs)
     cargs->ca = NULL;
     cargs->dh = NULL;
     cargs->crl = NULL;
-#ifdef SSL_OPENSSL_PSK
-    cargs->pskdb = NULL;
-#endif
     cargs->crlopts = 0;
     cargs->depth = 1;
     cargs->vmode = SSL_VERIFY_NONE;
@@ -403,21 +384,6 @@ static int tls_set_ctx_vdepth (u_config_t *cfg, tls_ctx_args_t *cargs)
     return 0;
 }
 
-#ifdef SSL_OPENSSL_PSK
-static int tls_set_ctx_psk_hash (u_config_t *cfg, tls_ctx_args_t *cargs)
-{
-    int rc; 
-
-    dbg_return_if (cfg == NULL, ~0);
-    dbg_return_if (cargs == NULL, ~0);
-
-    /* default value is 0 (i.e. cleartext) */
-    rc = u_config_get_subkey_value_b(cfg, "psk_hash", 0, &cargs->psk_is_hashed);
-    dbg_return_ifm (rc, ~0, "bad value given to psk_hash directive");
-
-    return 0;
-}
-#endif
 
 static int tls_set_ctx_crlopts (u_config_t *cfg, tls_ctx_args_t *cargs)
 {
@@ -479,27 +445,18 @@ static int tls_check_ctx (tls_ctx_args_t *cargs)
 {
     dbg_return_if (cargs == NULL, ~0);
 
-#ifdef SSL_OPENSSL_PSK
-    /* if no PSK password file is set check for certificate/key */
-    if (cargs->pskdb == NULL)
-    {
-#endif
-        /* cert_file is a MUST */
-        crit_err_ifm (!cargs->cert || strlen(cargs->cert) == 0, 
-            "missing cert_file option parameter");
+    /* cert_file is a MUST */
+    crit_err_ifm (!cargs->cert || strlen(cargs->cert) == 0,
+        "missing cert_file option parameter");
 
-        /* if private key file is missing, assume the key is inside cert_file */
-        warn_ifm (cargs->key == NULL, 
-            "missing cert key option, assuming the key is inside cert_file");
+    /* if private key file is missing, assume the key is inside cert_file */
+    warn_ifm (cargs->key == NULL,
+        "missing cert key option, assuming the key is inside cert_file");
 
-        /* if verify_mode == "required" the CA file MUST be present */
-        if (cargs->vmode & SSL_VERIFY_PEER)
-            crit_err_ifm (cargs->ca == NULL, 
-                "SSL verify is required but CA certificate file is missing");
-
-#ifdef SSL_OPENSSL_PSK
-    }
-#endif
+    /* if verify_mode == "required" the CA file MUST be present */
+    if (cargs->vmode & SSL_VERIFY_PEER)
+        crit_err_ifm (cargs->ca == NULL,
+            "SSL verify is required but CA certificate file is missing");
 
 #ifdef SSL_OPENSSL
     /* if 'crl_file' was given, set crlopts at least to verify the client

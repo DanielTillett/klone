@@ -30,13 +30,6 @@
 #include <openssl/params.h>
 #endif
 #endif
-#ifdef SSL_CYASSL
-#include <config.h>
-#include <types.h>
-#include <ctc_hmac.h>
-#include <ctc_aes.h>
-#define EVP_MAX_MD_SIZE 64
-#endif
 
 #define KL1_CLISES_DATA     "KL1_CLISES_DATA"
 #define KL1_CLISES_MTIME    "KL1_CLISES_MTIME"
@@ -73,22 +66,6 @@ static int session_client_hmac(session_opt_t *so, char *hmac, size_t hmac_sz,
     dbg_err_if(EVP_MAC_final(so->hmac_ctx, mac, &mac_len, sizeof(mac)) != 1);
 #endif
 
-#ifdef SSL_CYASSL
-    HMAC_CTX *ctx = &so->hmac_ctx;
-    HmacUpdate(ctx, (const byte*)data, strlen(data));
-    HmacUpdate(ctx, (const byte*)sid, strlen(sid));
-    HmacUpdate(ctx, (const byte*)mtime, strlen(mtime));
-    if(hex_iv)
-        HmacUpdate(ctx, (const byte*)hex_iv, strlen(hex_iv));
-    HmacFinal(ctx, (byte*)mac);
-
-    if (ctx->macType == MD5)
-        mac_len = MD5_DIGEST_SIZE;
-    else if (ctx->macType == SHA)
-        mac_len = SHA_DIGEST_SIZE;
-    else
-        crit_err("unknown hash");
-#endif
 
     /* encode the hash */
     dbg_err_if(u_hexncpy_s(hmac, hmac_sz, (const char *)mac, mac_len, HEXCPY_ENCODE) <= 0);
@@ -121,9 +98,6 @@ static int session_client_save(session_t *ss)
         dbg_err_if(RAND_bytes(ss->so->cipher_iv, CIPHER_IV_LEN) != 1);
         #endif
 
-        #ifdef SSL_CYASSL
-        dbg_err_if(!RAND_bytes(ss->so->cipher_iv, CIPHER_IV_LEN));
-        #endif
 
         /* hex encode the IV and save it in a cookie */
         dbg_err_if(u_hexncpy_s(cipher_iv_hex, sizeof(cipher_iv_hex), (const char *)ss->so->cipher_iv, CIPHER_IV_LEN,
@@ -338,15 +312,6 @@ int session_client_module_init(u_config_t *config, session_opt_t *so)
         HMAC_KEY_LEN, params) != 1);
 #endif
 
-#ifdef SSL_CYASSL
-    /* gen HMAC key */
-    dbg_err_if(!RAND_bytes(so->hmac_key, HMAC_KEY_LEN));
-
-    if(strcmp(so->hash, "MD5") == 0)
-        HmacSetKey(&so->hmac_ctx, MD5, so->hmac_key, HMAC_KEY_LEN);
-    else if(strcmp(so->hash, "SHA") == 0)
-        HmacSetKey(&so->hmac_ctx, SHA, so->hmac_key, HMAC_KEY_LEN);
-#endif
 
     return 0;
 err:

@@ -36,11 +36,6 @@
 #ifdef HAVE_STRINGS
 #include <strings.h>
 #endif
-#ifdef SSL_CYASSL
-#include <config.h>
-#include <types.h>
-#include <ctc_aes.h>
-#endif
 
 enum { LF = 0xA, CR = 0xD };
 
@@ -1507,67 +1502,3 @@ err:
 
 #endif
 
-#ifdef SSL_CYASSL
-static int u_cipher_op(int op, const EVP_CIPHER *cipher, unsigned char *key, 
-    unsigned char *iv, char *dst, size_t *dcount, const char *src, size_t ssz)
-{
-    io_t *io = NULL;
-    codec_t *codec = NULL;
-    size_t avail;
-    ssize_t rd;
-
-    dbg_return_if (cipher == NULL, ~0);
-    dbg_return_if (key == NULL, ~0);
-    dbg_return_if (iv == NULL, ~0);
-    dbg_return_if (dcount == NULL, ~0);
-    dbg_return_if (src == NULL, ~0);
-    dbg_return_if (dst == NULL, ~0);
-    dbg_return_if (*dcount < ssz, ~0);
-
-    dbg_err_if(io_mem_create(src, ssz, 0, &io));
-
-    dbg_err_if(codec_cipher_create(op, cipher, key, iv, &codec));
-    dbg_err_if(io_codec_add_tail(io, codec));
-    codec = NULL;
-
-    avail = *dcount;
-    *dcount = 0;
-
-    while(avail > 0)
-    {
-        dbg_err_if((rd = io_read(io, dst, avail)) < 0);
-
-        if(rd == 0)
-            break; /* eof */
-
-        dbg_err_if(avail < rd); /* dst too small */
-        
-        avail -= rd; 
-        dst += rd; 
-        *dcount += rd;
-    }
-
-    io_free(io);
-
-    return 0;
-err:
-    if(codec)
-        codec_free(codec);
-    if(io)
-        io_free(io);
-    return ~0;
-}
-
-int u_cipher_encrypt(const EVP_CIPHER *cipher, unsigned char *key, 
-    unsigned char *iv, char *dst, size_t *dcount, const char *src, size_t ssz)
-{
-    return u_cipher_op(CIPHER_ENCRYPT, cipher, key, iv, dst, dcount, src, ssz);
-}
-
-int u_cipher_decrypt(const EVP_CIPHER *cipher, unsigned char *key, 
-    unsigned char *iv, char *dst, size_t *dcount, const char *src, size_t ssz)
-{
-    return u_cipher_op(CIPHER_DECRYPT, cipher, key, iv, dst, dcount, src, ssz);
-}
-
-#endif

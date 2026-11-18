@@ -21,13 +21,6 @@
 extern "C" {
 #endif 
 
-#ifdef SSL_CYASSL
-#define EVP_MAX_KEY_LENGTH      32
-#define EVP_MAX_IV_LENGTH       16
-#define EVP_MAX_BLOCK_LENGTH        32
-#define EVP_aes_256_cbc()       "AES-CBC-256"
-
-#endif
 
 /* possibile values for io_gzip_create */
 enum { CIPHER_ENCRYPT, CIPHER_DECRYPT };

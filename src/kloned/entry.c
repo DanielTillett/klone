@@ -41,9 +41,6 @@ static void usage (void)
 #ifdef SSL_OPENSSL
 "(with OpenSSL)"
 #endif
-#ifdef SSL_CYASSL
-"(with CyaSSL)"
-#endif
             " - Copyright (c) 2005-2012 KoanLogic s.r.l.                     \n"
 "All rights reserved.                                                       \n"
 "\n"

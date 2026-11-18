@@ -217,9 +217,6 @@ err:
                 X509_verify_cert_error_string(vfy));
         SSL_set_shutdown(io_ssl->ssl, SSL_SENT_SHUTDOWN|SSL_RECEIVED_SHUTDOWN);
         #endif
-        #ifdef SSL_CYASSL
-        warn("SSL %s error", client_mode ? "connect" : "accept");
-        #endif
     }
     if(io_ssl)
         io_free((io_t *)io_ssl);

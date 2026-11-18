@@ -31,11 +31,6 @@ struct tls_ctx_args_s
     const char *ca;         /* Client Certification Authorities file (PEM) */
     const char *crl;        /* Certificate Revocation List (PEM) */
     const char *dh;         /* Diffie-Hellman parameters (PEM) */
-#ifdef SSL_OPENSSL_PSK
-    const char *pskdb;      /* Pre Shared Keys password file */
-    int psk_is_hashed;      /* !0 if password is hashed (MD5), 0 if cleartext */
-    const char *psk_hint;   /* PSK global hint (may be overridden locally) */
-#endif
     int crlopts;            /* CRL check mode: 'all' or 'client-only' */
     int depth;              /* max depth for the cert chain verification */
     int vmode;              /* SSL verification mode */
@@ -57,9 +52,6 @@ int tls_use_certificate_chain(SSL_CTX *, const char *, int,
 int tls_use_crls (SSL_CTX *ctx, tls_ctx_args_t *cargs);
 int tls_verify_cb (int ok, X509_STORE_CTX *ctx);
 char *tls_get_error (void);
-#ifdef SSL_OPENSSL_PSK
-int tls_psk_init (SSL_CTX *c, tls_ctx_args_t *cargs);
-#endif
 
 #ifdef __cplusplus
 }

@@ -25,12 +25,6 @@
 #include <klone/http.h>
 #include <klone/atom.h>
 #include <klone/md5.h>
-#ifdef SSL_CYASSL
-#include <config.h>
-#include <types.h>
-#include <ctc_hmac.h>
-#include <openssl/evp.h>
-#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -68,9 +62,6 @@ enum {
     #endif
  };
 
-#ifdef SSL_CYASSL
-typedef Hmac HMAC_CTX;
-#endif
 
 /* session runtime parameters */
 typedef struct session_opt_s
@@ -98,11 +89,7 @@ typedef struct session_opt_s
     unsigned char cipher_key[CIPHER_KEY_BUFSZ]; /* cipher secret key  */
     unsigned char cipher_iv[CIPHER_IV_LEN + 1]; /* hex decoder also writes NUL */
     /* client-side options/structs                                   */
-    #ifdef SSL_OPENSSL
     EVP_MAC_CTX *hmac_ctx; /* owned OpenSSL 3 MAC context */
-    #else
-    HMAC_CTX hmac_ctx;
-    #endif
     const EVP_MD *hash; /* client-side session HMAC hash algorithm   */
     char hmac_key[HMAC_KEY_LEN]; /* session HMAC secret key         */
     #endif

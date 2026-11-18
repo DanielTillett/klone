@@ -39,6 +39,9 @@
 #include "child.h"
 
 #define SERVER_MAX_BACKENDS 8
+#ifdef OS_UNIX
+static volatile sig_atomic_t server_children_changed = 0;
+#endif
 
 enum watch_fd_e
 {
@@ -180,11 +183,9 @@ static void server_sigterm(int sig)
 #ifdef OS_UNIX
 static void server_sigchld(int sig)
 {
-    server_t *s = ctx->server;
-
     u_unused_args(sig);
-
-    s->reap_children = 1;
+    /* Signals can arrive before ctx->server is assigned or after it is freed. */
+    server_children_changed = 1;
 }
 
 static void server_waitpid(server_t *s)
@@ -209,7 +210,7 @@ static void server_waitpid(server_t *s)
         server_reap_child(s, pid);
     }
 
-    s->reap_children = 0;
+    server_children_changed = 0;
 
     u_sig_unblock(SIGCHLD);
 }
@@ -923,7 +924,7 @@ int server_loop(server_t *s)
         dbg_err_if(rc == -1); /* select error */
 
 #ifdef OS_UNIX
-        if(s->reap_children)
+        if(server_children_changed)
             server_waitpid(s);
 #endif
 

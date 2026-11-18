@@ -44,7 +44,6 @@ struct server_s
     int stop;               /* >0 will stop the loop                        */
     int model;              /* server model                                 */
     int klog_flush;         /* >0 will flush the klog                       */
-    int reap_children;      /* >0 will reap children (waitpid)              */
     int allow_root;         /* >0 allow root as the owner of kloned process */
     int blind_chroot;       /* if blind chroot mode is enabled or disabled  */
 };

@@ -16,11 +16,12 @@ static inline const char *value_or_dash(const char *v)
 static long get_timezone(struct tm *tm)
 {
 #ifdef HAVE_STRUCT_TM_TM_GMTOFF
-    long int h, m, sign;
+    long int off, h, m, sign;
 
-    sign = (tm->tm_gmtoff > 0 ? 1 : -1);
-    h = abs(tm->tm_gmtoff) / 3600;
-    m = (h % 3600) / 60;
+    sign = (tm->tm_gmtoff < 0 ? -1 : 1);
+    off = labs(tm->tm_gmtoff);
+    h = off / 3600;
+    m = (off % 3600) / 60;  /* minutes of half-hour zones, e.g. +1030 */
 
     return sign * (h * 100 + m);
 #else

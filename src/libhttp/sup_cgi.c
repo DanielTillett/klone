@@ -448,8 +448,9 @@ static int cgi_exec(request_t *rq, response_t *rs, pid_t *pchild,
             argv[1] = cgi_file;
         }
 
-        /* run the cgi (never returns) */
-        crit_err_sif(execve(argv[0], argv, cgi_env.env));
+        /* run the cgi (never returns); execve() does not modify argv, its
+         * prototype is just not const-qualified */
+        crit_err_sif(execve(argv[0], (char * const *) argv, cgi_env.env));
 
         /* never reached */
 

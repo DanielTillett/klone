@@ -608,13 +608,16 @@ int request_set_uri(request_t *rq, const char *uri,
         void* arg)
 {
     char *p, *fn, *pi;
-    size_t uri_len = strlen(uri);
+    size_t uri_len, path_len;
+    ssize_t decoded;
     char cp[4096];
 
     dbg_err_if (rq == NULL);
     dbg_err_if (uri == NULL);
     /* is_valid_uri may be NULL */
     /* arg may be NULL */
+
+    uri_len = strlen(uri);
  
     request_clear_uri(rq);
 
@@ -628,11 +631,23 @@ int request_set_uri(request_t *rq, const char *uri,
     if((p = strchr(uri, '?')) != NULL)
         dbg_err_if(request_set_query_string(rq, ++p));
 
-    /* copy decoded url */
-    dbg_err_if(u_urlncpy(cp, rq->uri, uri_len, URLCPY_DECODE) <= 0);
-
-    if((p = strchr(cp, '?')) != NULL)
-        *p++ = 0; /* remove query string from the uri copy */
+    /* Split before decoding, so %3f remains part of the path. A '+' in a
+     * URI path is literal; form/query decoding has different rules. */
+    p = strchr(rq->uri, '?');
+    path_len = p ? (size_t)(p - rq->uri) : uri_len;
+    dbg_err_if((decoded = u_urlncpy_s(cp, sizeof(cp), rq->uri, path_len, URLCPY_DECODE)) <= 0);
+    dbg_err_if(memchr(cp, '\0', (size_t)decoded) != NULL);
+    /* Restore literal '+' characters changed by the form decoder. */
+    {
+        size_t src, dst = 0;
+        for (src = 0; src < path_len; ++src, ++dst)
+        {
+            if (rq->uri[src] == '%')
+                src += 2;
+            else if (rq->uri[src] == '+')
+                cp[dst] = '+';
+        }
+    }
 
     /* normalize the URI (remove /../, /./, ecc) */
     dbg_err_if(u_uri_normalize(cp));
@@ -670,7 +685,7 @@ static int request_set_proto(request_t *rq, const char *proto)
     dbg_err_if (proto == NULL);
 
     /* be sure that the requested protocol is http */
-    if(strncasecmp(proto, "http", 4))
+    if(strcmp(proto, "HTTP/1.0") && strcmp(proto, "HTTP/1.1"))
         return ~0; /* unknown or unsupported protocol */
 
     REQUEST_SET_STRING_FIELD(rq->protocol, proto);
@@ -760,12 +775,28 @@ int request_set_method(request_t *rq, const char *method)
 static int request_set_content_length(request_t *rq)
 {
     const char *clen;
-    size_t len;
+    size_t len = 0;
+    unsigned int digit;
 
     dbg_err_if (rq == NULL);
 
     clen = header_get_field_value(rq->header, "Content-Length");
-    dbg_err_if(clen == NULL || (len = atoi(clen)) < 0);
+    dbg_err_if(clen == NULL);
+    while (*clen == ' ' || *clen == '\t')
+        ++clen;
+    dbg_err_if(*clen < '0' || *clen > '9');
+
+    /* Accept decimal digits only and check before multiplying. atoi() can
+     * overflow and its negative result was converted to unsigned size_t. */
+    for (; *clen >= '0' && *clen <= '9'; ++clen)
+    {
+        digit = (unsigned int)(*clen - '0');
+        dbg_err_if(len > ((size_t)-1 - digit) / 10);
+        len = len * 10 + digit;
+    }
+    while (*clen == ' ' || *clen == '\t')
+        ++clen;
+    dbg_err_if(*clen != '\0');
 
     rq->content_length = len;
 
@@ -1671,6 +1702,8 @@ int request_parse_header(request_t *rq,
     const char WP[] = " \t\r\n";
     char ln[BUFSZ], *pp, *method, *uri, *proto;
     talarm_t *al = NULL;
+    size_t i, lengths = 0;
+    field_t *field;
     
     dbg_err_if (rq == NULL);
     dbg_err_if (rq->io == NULL); /* must call rq_bind before rq_parse */
@@ -1683,6 +1716,7 @@ int request_parse_header(request_t *rq,
     {
         /* cp the first line */
         dbg_err_if(io_gets(rq->io, ln, BUFSZ) <= 0);
+        dbg_err_if(strchr(ln, '\n') == NULL);
 
         /* save the verbatim request line */
         dbg_err_if(request_set_client_request(rq, ln));
@@ -1696,11 +1730,25 @@ int request_parse_header(request_t *rq,
         /* HTTP/0.9 not supported yet */ 
         proto = strtok_r(NULL, WP, &pp);
         dbg_err_if(!proto || request_set_proto(rq, proto)); 
+        dbg_err_if(strtok_r(NULL, WP, &pp) != NULL);
 
         dbg_err_if(header_load(rq->header, rq->io));
     } else {
         dbg_err_if(header_load_from_cgienv(rq->header));
     }
+
+    /* Chunked transfer coding is not implemented. Reject it explicitly, and
+     * reject every duplicate Content-Length, even equal values. */
+    dbg_err_if(header_get_field(rq->header, "Transfer-Encoding") != NULL);
+    for (i = 0; i < header_field_count(rq->header); ++i)
+    {
+        field = header_get_fieldn(rq->header, i);
+        if (!strcasecmp(field_get_name(field), "Content-Length"))
+            ++lengths;
+    }
+    dbg_err_if(lengths > 1);
+    if (lengths)
+        dbg_err_if(request_set_content_length(rq));
 
     /* set if-modified-since time_t value */
     dbg_err_if(request_parse_ims(rq));

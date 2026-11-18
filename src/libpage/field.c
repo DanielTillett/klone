@@ -34,10 +34,18 @@ const char* field_get_value(field_t *f);
 int field_set(field_t *f, const char *name, const char *value)
 {
     char *n = NULL, *v = NULL;
+    const unsigned char *p;
 
     dbg_err_if (f == NULL);
     dbg_err_if (name == NULL);
     dbg_err_if (value == NULL);
+    dbg_err_if (*name == '\0');
+    for (p = (const unsigned char *)name; *p; ++p)
+        dbg_err_if(!((*p >= 'a' && *p <= 'z') ||
+            (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') ||
+            strchr("!#$%&'*+-.^_`|~", *p) != NULL));
+    for (p = (const unsigned char *)value; *p; ++p)
+        dbg_err_if((*p < 32 && *p != '\t') || *p == 127);
 
     n = u_strdup(name);
     dbg_err_if(n == NULL);
@@ -156,6 +164,12 @@ int field_create(const char *name, const char *value, field_t **pf)
     f = u_zalloc(sizeof(field_t));
     dbg_err_if(f == NULL);
 
+    if (name && value)
+    {
+        dbg_err_if(field_set(f, name, value));
+        *pf = f;
+        return 0;
+    }
     if(name)
         dbg_err_if((f->name = u_strdup(name)) == NULL);
 

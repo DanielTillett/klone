@@ -306,60 +306,36 @@ int header_load_from_cgienv(header_t *h)
     return 0;
 }
 
-int header_load_ex(header_t *h , io_t *io, int mode)
+int header_load_ex(header_t *h, io_t *io, int mode)
 {
-    enum { HEADER_MAX_FIELD_COUNT = 256 }; /* max num of header fields */
-    u_string_t *line = NULL, *unfolded = NULL;
-    const char *ln;
-    size_t len, c;
+    enum { MAX_FIELDS = 256, MAX_LINE = 8192, MAX_TOTAL = 65536 };
+    u_string_t *line = NULL;
+    size_t count = 0, total = 0, len;
+    const char *text;
 
-    dbg_err_if (h == NULL);
-    dbg_err_if (io == NULL);
-
+    dbg_err_if(h == NULL || io == NULL);
     dbg_err_if(u_string_create(NULL, 0, &line));
-    dbg_err_if(u_string_create(NULL, 0, &unfolded));
-
-    for(c = HEADER_MAX_FIELD_COUNT; u_getline(io, line) == 0; --c)
+    for (;;)
     {
-        warn_err_ifm(c == 0, "too much header fields");
-
-        ln = u_string_c(line);
+        dbg_err_if(u_getline_limit(io, line, MAX_LINE));
         len = u_string_len(line);
-
-        /* remove trailing nl(s) */
-        while(len && u_isnl(ln[len-1]))
-            u_string_set_length(line, --len);
-
-        if(u_string_len(line) == 0)
-            break; /* empty line */
-
-        if(u_isblank(ln[0])) 
-        {   /* this is a chunk of a folded line */
-            dbg_err_if(u_string_append(unfolded, ln, u_string_len(line)));
-        } else {
-            if(u_string_len(unfolded))
-            {
-                /* go process this (already unfolded) line */
-                header_process_line(h, unfolded, mode);
-                u_string_clear(unfolded);
-            }
-            /* this may be the first line of a folded line so wait next lines */
-            u_string_copy(unfolded, line);
-        }
+        dbg_err_if(len + 1 > MAX_TOTAL - total);
+        total += len + 1;
+        text = u_string_c(line);
+        if (len && text[len - 1] == '\r')
+            dbg_err_if(u_string_set_length(line, --len));
+        if (len == 0)
+            break;
+        /* Obsolete line folding and embedded CR are ambiguous to proxies. */
+        dbg_err_if(u_isblank(text[0]) || memchr(text, '\r', len) != NULL);
+        dbg_err_if(++count > MAX_FIELDS);
+        dbg_err_if(header_process_line(h, line, mode));
     }
-
-    if(u_string_len(unfolded))
-        header_process_line(h, unfolded, mode);
-
-    u_string_free(unfolded);
     u_string_free(line);
-
     return 0;
 err:
-    if(line)
+    if (line)
         u_string_free(line);
-    if(unfolded)
-        u_string_free(unfolded);
     return ~0;
 }
 

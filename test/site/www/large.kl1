@@ -1,0 +1,21 @@
+<%!
+    #include <string.h>
+
+    /* a body large enough to bypass the write buffer (see io_write) */
+    static char block[150000];
+%><%
+    const char *mode = request_get_arg(request, "m");
+    size_t i, n = sizeof(block), clen = n;
+
+    for(i = 0; i < n; ++i)
+        block[i] = (char) ('a' + i % 26);
+
+    /* announce more, or fewer, bytes than are written */
+    if(mode && !strcmp(mode, "short"))
+        clen = n + 10;
+    else if(mode && !strcmp(mode, "long"))
+        clen = n - 10;
+
+    response_set_content_length(response, clen);
+    io_write(out, block, n);
+%>

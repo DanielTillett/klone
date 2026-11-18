@@ -253,6 +253,33 @@ def run_keep_alive_checks(args, check, plain, secure, request):
         check(body == hello and headers.get("connection") == "close" and conn.closed(),
               f"Connection: close not honoured: {headers}")
 
+    # bodies larger than the connection's write buffer skip it (passthru),
+    # still within the announced Content-Length
+    large = bytes(ord("a") + i % 26 for i in range(150000))
+    for port, context in [(plain, None), (secure, client_context(ssl.TLSVersion.TLSv1_3))]:
+        with Connection(port, context) as conn:
+            for _ in range(2):
+                conn.send(get(b"/large.kl1") + get(b"/static/hello.txt"))
+                status, headers, body = conn.response()
+                check(headers.get("content-length") == "150000" and body == large,
+                      f"Large body on port {port}: {status} {headers} {len(body)}")
+                status, headers, body = conn.response()
+                check(body == hello, f"Request after a large body on port {port}: {status}")
+        with Connection(port, context) as conn:
+            conn.send(get(b"/large.kl1?m=long"))
+            status, headers, body = conn.response()
+            check(headers.get("content-length") == "149990" and body == large[:149990] and
+                  conn.closed(),
+                  f"Large body longer than Content-Length on port {port}: {headers} {len(body)}")
+        with Connection(port, context) as conn:
+            conn.send(get(b"/large.kl1?m=short"))
+            try:
+                status, headers, body = conn.response()
+                short = False
+            except EOFError:
+                short = len(conn.buf) == 150000
+            check(short, f"Large body shorter than Content-Length not ended by a close on port {port}")
+
     # HTTP/1.0: closed unless the client asks for keep-alive
     with Connection(plain) as conn:
         conn.send(b"GET /static/hello.txt HTTP/1.0\r\n\r\n")

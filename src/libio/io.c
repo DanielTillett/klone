@@ -754,6 +754,37 @@ err:
     return -1;
 }
 
+/* write the part of buf that the only codec of io passes through unchanged
+ * (see codec_passthru_t) straight to the sink, after the buffered bytes;
+ * return the number of bytes written, 0 if the codec can't pass them, -1 on
+ * error */
+static ssize_t io_write_passthru(io_t *io, const char *buf, size_t size)
+{
+    codec_t *codec = TAILQ_FIRST(&io->codec_chain);
+    size_t n, off;
+    ssize_t c;
+
+    if(codec == NULL || codec != TAILQ_LAST(&io->codec_chain, codec_chain_s) ||
+            codec->passthru == NULL || codec->ccount)
+        return 0;
+
+    /* what the codec output so far goes first */
+    dbg_err_if(io_flush(io) < 0 || io->wcount);
+
+    if((n = codec->passthru(codec, size)) == 0)
+        return 0;
+
+    for(off = 0; off < n; off += (size_t) c)
+    {
+        c = io->write(io, buf + off, n - off);
+        dbg_err_if(c <= 0);
+    }
+
+    return (ssize_t) n;
+err:
+    return -1;
+}
+
 /**
  * \ingroup basic
  * \brief  Write a block of data to an \c io_t object
@@ -779,6 +810,15 @@ ssize_t io_write(io_t *io, const char *buf, size_t size)
 
     while(rem)
     {
+        /* a large block the codec leaves unchanged: skip the copy */
+        if(rem >= io->wbsz && (c = io_write_passthru(io, buf, rem)) != 0)
+        {
+            dbg_err_if(c < 0);
+            buf += c;
+            rem -= (size_t) c;
+            continue;
+        }
+
         if(IO_WBUF_FULL(io)) /* if there's no more free space */
             dbg_err_if(io_flush(io));
 

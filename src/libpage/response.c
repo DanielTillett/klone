@@ -208,55 +208,6 @@ err:
     return ~0;
 }
 
-/*
- * \ingroup response
- * \brief   Print the status of a response object.
- *
- * A string representing the status of a response object \p rs is printed to \p
- * io. 
- *
- * \param rs      response object
- * \param io      output I/O object
- *
- * \return
- *  - \c 0 if successful
- *  - \c ~0 on error
- */
-static int response_print_status(response_t *rs, io_t *io)
-{
-    dbg_err_if(io_printf(io, "HTTP/1.%d %d %s\r\n", rs->http11 ? 1 : 0,
-        rs->status, http_get_status_desc(rs->status)) < 0);
-
-    return 0;
-err:
-    return ~0;
-}
-
-/*
- * \ingroup response
- * \brief   Print a response field.
- *
- * Print the name and value of a \p field of \p response to \p io.
- *
- * \param rs      response object
- * \param io      output I/O object
- * \param field   field to be printed
- *
- * \return
- *  - \c 0 if successful
- *  - \c ~0 on error
- */
-static int response_print_field(response_t *rs, io_t *io, field_t *field)
-{
-    u_unused_args(rs);
-
-    dbg_err_if(io_printf(io, "%s: %s\r\n", field->name, field->value) < 0);
-    
-    return 0;
-err:
-    return ~0;
-}
-
 /** 
  * \ingroup response
  * \brief   Set the response method
@@ -344,29 +295,100 @@ size_t response_get_max_header_size(response_t *rs)
  */
 int response_print_header_to_io(response_t *rs, io_t *io)
 {
-    int i, n;
+    char *buf = NULL;
+    size_t len;
 
     dbg_err_if(io == NULL);
+
+    dbg_err_if(response_format_header(rs, 0, &buf, &len));
+    dbg_err_if(io_write(io, buf, len) != (ssize_t) len);
+
+    U_FREE(buf);
+
+    return 0;
+err:
+    U_FREE(buf);
+    return ~0;
+}
+
+/*
+ * \ingroup response
+ * \brief   Format a response header
+ *
+ * Format the header of \p rs (status line, fields and the empty line that
+ * ends it) into a new buffer, leaving \p extra spare bytes after it (e.g.
+ * for the start of the body). The header is final once formatted.
+ *
+ * \param rs        response object
+ * \param extra     spare bytes allocated after the header
+ * \param pbuf      the new buffer, to be freed with u_free()
+ * \param plen      the length of the header in \p *pbuf
+ *
+ * \return
+ *  - \c 0 if successful
+ *  - \c ~0 on error
+ */
+int response_format_header(response_t *rs, size_t extra, char **pbuf,
+        size_t *plen)
+{
+    enum { STATUSSZ = 128 };
+    char status[STATUSSZ], *buf = NULL, *p;
+    size_t sz, slen = 0, nlen, vlen;
+    field_t *f;
+    int i, n, rc;
+
+    dbg_err_if(rs == NULL);
+    dbg_err_if(pbuf == NULL);
+    dbg_err_if(plen == NULL);
 
     /* the caller writes the body itself: its length must already be in
      * Content-Length for the connection to stay open */
     dbg_err_if(response_set_body_framing(rs, -1, 0));
     rs->header_sent = 1;
 
-    /* print status line */
+    /* status line (none in CGI mode) */
     if(!rs->cgi)
-        dbg_err_if(response_print_status(rs, io));
+    {
+        rc = snprintf(status, sizeof(status), "HTTP/1.%d %d %s\r\n",
+                rs->http11 ? 1 : 0, rs->status,
+                http_get_status_desc(rs->status));
+        dbg_err_if(rc < 0 || (size_t) rc >= sizeof(status));
+        slen = (size_t) rc;
+    }
 
-    /* print field list */
+    /* "name: value\r\n" per field and the final "\r\n" */
     n = header_field_count(rs->header);
-    for(i = 0; i < n; ++i)
-        dbg_err_if(response_print_field(rs, io,
-            header_get_fieldn(rs->header, i)));
+    for(i = 0, sz = slen + 2; i < n; ++i)
+    {
+        f = header_get_fieldn(rs->header, i);
+        sz += strlen(f->name) + strlen(f->value) + 4;
+    }
 
-    dbg_err_if(io_printf(io, "\r\n") < 0);
+    dbg_err_if((buf = u_malloc(sz + extra)) == NULL);
+
+    memcpy(buf, status, slen);
+    for(i = 0, p = buf + slen; i < n; ++i)
+    {
+        f = header_get_fieldn(rs->header, i);
+        nlen = strlen(f->name);
+        vlen = strlen(f->value);
+        memcpy(p, f->name, nlen);
+        p += nlen;
+        memcpy(p, ": ", 2);
+        p += 2;
+        memcpy(p, f->value, vlen);
+        p += vlen;
+        memcpy(p, "\r\n", 2);
+        p += 2;
+    }
+    memcpy(p, "\r\n", 2);
+
+    *pbuf = buf;
+    *plen = sz;
 
     return 0;
 err:
+    U_FREE(buf);
     return ~0;
 }
 
@@ -832,6 +854,19 @@ int response_has_body(response_t *rs)
             rs->status == HTTP_STATUS_NOT_MODIFIED);
 }
 
+/* number of fields called 'name' in the header of rs */
+static size_t response_count_fields(response_t *rs, const char *name)
+{
+    size_t i, n, count = 0;
+
+    n = header_field_count(rs->header);
+    for(i = 0; i < n; ++i)
+        if(!strcasecmp(field_get_name(header_get_fieldn(rs->header, i)), name))
+            ++count;
+
+    return count;
+}
+
 /**
  * \ingroup response
  * \brief   Decide how the end of the response body is signalled
@@ -852,6 +887,9 @@ int response_has_body(response_t *rs)
  */
 int response_set_body_framing(response_t *rs, ssize_t len, int can_chunk)
 {
+    char clen[32];
+    int rc;
+
     dbg_return_if (rs == NULL, ~0);
 
     if(rs->framed)
@@ -877,10 +915,17 @@ int response_set_body_framing(response_t *rs, ssize_t len, int can_chunk)
             while(response_get_field(rs, "Content-Length"))
                 dbg_err_if(response_del_field(rs, "Content-Length"));
     } else if(len >= 0) {
-        /* the whole body is known: its measured length wins */
-        while(response_get_field(rs, "Content-Length"))
-            dbg_err_if(response_del_field(rs, "Content-Length"));
-        dbg_err_if(response_set_content_length(rs, (size_t) len));
+        /* the whole body is known: its measured length wins (it is usually
+         * what the page set already, e.g. for a static file) */
+        rc = snprintf(clen, sizeof(clen), "%lu", (unsigned long) len);
+        dbg_err_if(rc < 0 || (size_t) rc >= sizeof(clen));
+        if(response_count_fields(rs, "Content-Length") != 1 ||
+                strcmp(response_get_field_value(rs, "Content-Length"), clen))
+        {
+            while(response_get_field(rs, "Content-Length"))
+                dbg_err_if(response_del_field(rs, "Content-Length"));
+            dbg_err_if(response_set_field(rs, "Content-Length", clen));
+        }
     } else if(header_get_field(rs->header, "Content-Length") == NULL) {
         /* streamed body of unknown length */
         if(rs->http11 && can_chunk) {

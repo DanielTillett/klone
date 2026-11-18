@@ -34,6 +34,11 @@ typedef ssize_t (*codec_flush_t) (struct codec_s *codec,
 
 typedef int (*codec_free_t) (struct codec_s *codec);
 
+/* optional: of the next 'src_sz' input bytes, tell how many the codec would
+ * output unchanged (and count them as transformed), so that the io can write
+ * them out directly; 0 when they must go through transform() */
+typedef size_t (*codec_passthru_t) (struct codec_s *codec, size_t src_sz);
+
 typedef struct codec_s
 {
     codec_transform_t transform;
@@ -45,7 +50,9 @@ typedef struct codec_s
     size_t ccount, coff;
 
     /* chain next & prev pointer */
-    TAILQ_ENTRY(codec_s) np; 
+    TAILQ_ENTRY(codec_s) np;
+
+    codec_passthru_t passthru;  /* optional (NULL): see codec_passthru_t */
 } codec_t;
 
 int codec_free(codec_t *codec);

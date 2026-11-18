@@ -51,7 +51,8 @@ struct response_filter_s
     int state, feeded;
     char *ptr;
     size_t off;
-    io_t *iob;              /* header and buffered body, ready to be sent */
+    char *head;             /* header and buffered body, ready to be sent */
+    size_t hlen, hoff;      /* ... its length and the bytes already sent  */
     int chunked;            /* chunk-encode the body                      */
     int last_chunk;         /* the terminating chunk has been queued      */
     int no_body;            /* HEAD, 1xx, 204, 304: the body is dropped   */
@@ -64,42 +65,38 @@ struct response_filter_s
     char cbuf[RF_CHUNK_MAX + RF_CHUNK_EXTRA];  /* pending encoded chunk    */
 };
 
-static int rf_init_iob(response_filter_t *rf)
+/* queue the header followed by the buffered body (if any) */
+static int rf_init_head(response_filter_t *rf)
 {
-    char *h;
-    size_t hsz, htell;
+    size_t body;
+    char *p;
+    int n;
 
     dbg_err_if (rf == NULL);
 
-    hsz = response_get_max_header_size(rf->rs) + rf->off + RF_CHUNK_EXTRA;
+    body = (!rf->no_body && rf->off) ? rf->off + RF_CHUNK_EXTRA : 0;
 
-    h = (char *)u_zalloc(hsz);
-    dbg_err_if(h == NULL);
+    dbg_err_if(response_format_header(rf->rs, body, &rf->head, &rf->hlen));
+    rf->hoff = 0;
 
-    dbg_err_if(io_mem_create(h, hsz, 0, &rf->iob));
-
-    /* write the header to the memory io_t */
-    response_print_header_to_io(rf->rs, rf->iob);
-
-    if(!rf->no_body && rf->off)
+    if(body)
     {
-        /* append the rf->buf to the iob */
+        p = rf->head + rf->hlen;
         if(rf->chunked)
-            dbg_err_if(io_printf(rf->iob, "%lx\r\n", (unsigned long) rf->off)
-                    < 0);
-        dbg_err_if(io_write(rf->iob, rf->buf, rf->off) < 0);
+        {
+            n = snprintf(p, RF_CHUNK_EXTRA, "%lx\r\n", (unsigned long) rf->off);
+            dbg_err_if(n < 0 || n >= RF_CHUNK_EXTRA - 2);
+            p += n;
+        }
+        memcpy(p, rf->buf, rf->off);
+        p += rf->off;
         if(rf->chunked)
-            dbg_err_if(io_write(rf->iob, "\r\n", 2) < 0);
+        {
+            memcpy(p, "\r\n", 2);
+            p += 2;
+        }
+        rf->hlen = (size_t) (p - rf->head);
     }
-    dbg_err_if(io_flush(rf->iob));
-
-    htell = io_tell(rf->iob);
-
-    dbg_if(io_free(rf->iob));
-    rf->iob = NULL;
-
-    /* create another in-memory io to read from it */
-    dbg_err_if(io_mem_create(h, htell, IO_MEM_FREE_BUF, &rf->iob));
 
     return 0;
 err:
@@ -137,8 +134,8 @@ static int rf_start(response_filter_t *rf, int final)
         rf->sent = rf->off;
     }
 
-    /* create a in-memory io_t and fill it with header and rf->buf */
-    dbg_err_if(rf_init_iob(rf));
+    /* queue the header and rf->buf */
+    dbg_err_if(rf_init_head(rf));
 
     return 0;
 err:
@@ -164,20 +161,23 @@ static size_t rf_queue_chunk(response_filter_t *rf, const char *src, size_t sz)
 }
 
 /* copy queued output (header block first, then the pending chunk) to dst;
- * return the number of bytes copied (0 if nothing is queued) or -1 */
+ * return the number of bytes copied (0 if nothing is queued) */
 static ssize_t rf_drain(response_filter_t *rf, char *dst, size_t dsz)
 {
     ssize_t c;
 
-    if(rf->iob)
+    if(rf->head)
     {
-        dbg_err_if((c = io_read(rf->iob, dst, dsz)) < 0);
-        if(c > 0)
+        if(rf->hoff < rf->hlen)
+        {
+            c = U_MIN(dsz, rf->hlen - rf->hoff);
+            memcpy(dst, rf->head + rf->hoff, c);
+            rf->hoff += c;
             return c;
+        }
 
-        /* eof */
-        io_free(rf->iob);
-        rf->iob = NULL;
+        /* all sent */
+        U_FREE(rf->head);
     }
 
     if(rf->coff < rf->clen)
@@ -189,8 +189,6 @@ static ssize_t rf_drain(response_filter_t *rf, char *dst, size_t dsz)
     }
 
     return 0;
-err:
-    return -1;
 }
 
 static ssize_t rf_flush(codec_t *codec, char *dst, size_t *dcount)
@@ -310,6 +308,31 @@ err:
     return -1;
 }
 
+/* once the header (and any pending chunk) is out, plain body bytes go to
+ * the connection unchanged: the io can write them directly */
+static size_t rf_passthru(codec_t *codec, size_t src_sz)
+{
+    response_filter_t *rf = (response_filter_t*)codec;
+    size_t n = src_sz;
+
+    if(rf->state != RFS_FLUSHING || rf->chunked || rf->no_body ||
+            response_get_method(rf->rs) == HM_HEAD ||
+            (rf->head && rf->hoff < rf->hlen) || rf->coff < rf->clen)
+        return 0;
+
+    if(rf->limited)
+    {
+        if(rf->sent >= rf->limit)
+            return 0;   /* rf_transform() drops the excess */
+        n = U_MIN(n, rf->limit - rf->sent);
+        rf->sent += n;
+    }
+
+    rf->feeded = 1;
+
+    return n;
+}
+
 static int rf_free(codec_t *codec)
 {
     response_filter_t *rf;
@@ -318,9 +341,7 @@ static int rf_free(codec_t *codec)
 
     rf = (response_filter_t*)codec;
 
-    if(rf->iob)
-        io_free(rf->iob);
-
+    U_FREE(rf->head);
     U_FREE(rf);
 
     return 0;
@@ -356,8 +377,8 @@ int response_filter_create(request_t *rq, response_t *rs, session_t *ss,
     rf->codec.transform = rf_transform;
     rf->codec.flush = rf_flush;
     rf->codec.free = rf_free;
+    rf->codec.passthru = rf_passthru;
     rf->ptr = rf->buf;
-    rf->iob = NULL;
 
     *prf = (codec_t*)rf;
 

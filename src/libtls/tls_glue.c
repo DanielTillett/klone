@@ -101,10 +101,10 @@ int tls_load_verify_locations (SSL_CTX *c, const char *res_name)
         X509_INFO   *tmp = sk_X509_INFO_value(info, i);
 
         if (tmp->x509)
-            X509_STORE_add_cert(c->cert_store, tmp->x509); 
+            X509_STORE_add_cert(SSL_CTX_get_cert_store(c), tmp->x509);
 
         if (tmp->crl)
-            X509_STORE_add_crl(c->cert_store, tmp->crl); 
+            X509_STORE_add_crl(SSL_CTX_get_cert_store(c), tmp->crl);
     }
 
     sk_X509_INFO_pop_free(info, X509_INFO_free);
@@ -119,19 +119,24 @@ err:
     return ~0;
 } 
 
-/* reads certificates from file and returns a STACK_OF(X509_NAME) with 
+static int tls_name_cmp(const X509_NAME *const *a, const X509_NAME *const *b)
+{
+    return X509_NAME_cmp(*a, *b);
+}
+
+/* reads certificates from file and returns a STACK_OF(X509_NAME) with
  * the subject names found */
 STACK_OF(X509_NAME) *tls_load_client_CA_file (const char *res_name)
 {
     BIO *b = NULL;
     X509 *x = NULL;
     X509_NAME *xn = NULL;
-    STACK_OF(X509_NAME) *ret, *sk;
+    STACK_OF(X509_NAME) *ret = NULL, *sk = NULL;
 
     dbg_return_if (!res_name, NULL);
     
     dbg_err_if (!(ret = sk_X509_NAME_new_null()));
-    dbg_err_if (!(sk = sk_X509_NAME_new(X509_NAME_cmp)));
+    dbg_err_if (!(sk = sk_X509_NAME_new(tls_name_cmp)));
     dbg_err_if (!(b = tls_get_file_bio(res_name)));
 
     for (;;)
@@ -310,17 +315,14 @@ int tls_use_certificate_chain (SSL_CTX *ctx, const char *res_name,
     }
 
     /* free a perhaps already configured extra chain */
-    if (!ctx->extra_certs)
-    {
-        sk_X509_pop_free(ctx->extra_certs, X509_free);
-        ctx->extra_certs = NULL;
-    }
+    SSL_CTX_clear_extra_chain_certs(ctx);
 
     /* create new extra chain by loading the certs */
     n = 0;
     while ((x = PEM_read_bio_X509(b, NULL, cb, NULL))) 
     {
         dbg_err_if (!SSL_CTX_add_extra_chain_cert(ctx, x));
+        x = NULL; /* ownership transferred to ctx */
         n++;
     }
 

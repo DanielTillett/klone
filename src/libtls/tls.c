@@ -31,12 +31,10 @@ static int tls_inited = 0;
 /* private methods */
 static int tls_context (SSL_CTX **);
 static int tls_load_x509_creds (SSL_CTX *, tls_ctx_args_t *);
-static void tls_rand_seed (void);
 static int tls_sid_context (SSL_CTX *, int *);
 #ifdef SSL_OPENSSL
-static int tls_gen_eph_rsa (SSL_CTX *);
 static int tls_gendh_params (SSL_CTX *, const char *);
-static DH *tls_load_dh_param (const char *);
+static EVP_PKEY *tls_load_dh_param (const char *);
 #endif
 static int tls_no_passphrase_cb (char *, int, int, void *);
 static int tls_init_ctx_args (tls_ctx_args_t *);
@@ -147,9 +145,6 @@ static SSL_CTX *tls_init_ctx (tls_ctx_args_t *cargs)
 #endif
 
 #ifdef SSL_OPENSSL
-    /* generate RSA ephemeral parameters and load into SSL_CTX */
-    dbg_err_if (tls_gen_eph_rsa(c));
-
     /* (possibly) generate DH parameters and load into SSL_CTX */
     dbg_err_if (tls_gendh_params(c, cargs->dh));
 #endif
@@ -188,13 +183,17 @@ static int tls_context (SSL_CTX **pc)
 
     dbg_return_if (pc == NULL, ~0);
 
-    c = SSL_CTX_new(TLSv1_server_method());
+    c = SSL_CTX_new(TLS_server_method());
     dbg_err_ifm (c == NULL, "error creating SSL CTX: %s", tls_get_error());
+    dbg_err_if (SSL_CTX_set_min_proto_version(c, TLS1_2_VERSION) != 1);
+    SSL_CTX_set_options(c, SSL_OP_NO_COMPRESSION);
 
     *pc = c;
 
     return 0;
 err:
+    if (c)
+        SSL_CTX_free(c);
     return ~0;
 }
 
@@ -279,7 +278,7 @@ static int cb_vfy (int ok, X509_STORE_CTX *store_ctx)
         return ok;
 
     e = X509_STORE_CTX_get_error(store_ctx);
-    x = store_ctx->current_cert;
+    x = X509_STORE_CTX_get_current_cert(store_ctx);
 
     /* at present just put a note in the log.
      * the idea is that here we can catch CRL specific errors and, based 
@@ -299,7 +298,7 @@ int tls_init (void)
 
     SSL_load_error_strings();
     dbg_err_if (!SSL_library_init());
-    tls_rand_seed(); 
+    dbg_err_if (RAND_status() != 1);
     tls_inited++;
 
     return 0;
@@ -309,58 +308,22 @@ err:
     return ~0;
 }
 
-static void tls_rand_seed (void)
-{
-#ifdef SSL_OPENSSL
-    struct timeval tv;
-    tls_rand_seed_t seed;
-
-    (void) gettimeofday(&tv, NULL);
-    
-    seed.pid = getpid();
-    seed.t1 = tv.tv_sec; 
-    seed.t2 = tv.tv_usec;
-    seed.stack = (void *) &seed;
-
-    RAND_seed((const void *) &seed, sizeof seed);
-#endif
-}
-
-#ifdef SSL_OPENSSL
-/* generate RSA ephemeral parameters and load'em into SSL_CTX */
-static int tls_gen_eph_rsa(SSL_CTX *c)
-{
-    RSA *eph_rsa = NULL;
-
-    dbg_return_if (c == NULL, ~0);
-
-    dbg_err_if (!(eph_rsa = RSA_generate_key(512, RSA_F4, 0, NULL)));
-    dbg_err_if (!SSL_CTX_set_tmp_rsa(c, eph_rsa));
-    RSA_free(eph_rsa); /* eph_rsa is dup'ed by SSL_CTX_set_tmp_rsa() */
-
-    return 0;
-err:
-    u_dbg("%s", tls_get_error());
-    if (eph_rsa)
-        RSA_free(eph_rsa);    
-
-    return ~0;
-}
-#endif
-
 #ifdef SSL_OPENSSL
 /* generate DH ephemeral parameters and load'em into SSL_CTX */
 static int tls_gendh_params(SSL_CTX *c, const char *dhfile)
 {
-    DH *eph_dh = NULL;
+    EVP_PKEY *eph_dh = NULL;
 
     dbg_return_if (c == NULL, ~0);
 
-    eph_dh = dhfile ? tls_load_dh_param(dhfile) : get_dh1024(); 
+    if (!dhfile)
+        return SSL_CTX_set_dh_auto(c, 1) == 1 ? 0 : ~0;
+
+    eph_dh = tls_load_dh_param(dhfile);
     dbg_err_if (!(eph_dh));
 
-    dbg_err_if (!SSL_CTX_set_tmp_dh(c, eph_dh));
-    DH_free(eph_dh);
+    dbg_err_if (SSL_CTX_set0_tmp_dh_pkey(c, eph_dh) != 1);
+    eph_dh = NULL; /* ownership transferred */
 
 #if 0
     /* Avoid small subgroup attacks (if p and g are strong primes
@@ -373,14 +336,14 @@ static int tls_gendh_params(SSL_CTX *c, const char *dhfile)
 err:
     u_dbg("%s", tls_get_error());
     if (eph_dh)
-        DH_free(eph_dh);
+        EVP_PKEY_free(eph_dh);
 
     return ~0;
 }
 
-static DH *tls_load_dh_param (const char *res_name)
+static EVP_PKEY *tls_load_dh_param (const char *res_name)
 {
-    DH *dh = NULL;
+    EVP_PKEY *dh = NULL;
     BIO *bio = NULL;
 
     dbg_return_if (res_name == NULL, NULL);
@@ -388,7 +351,7 @@ static DH *tls_load_dh_param (const char *res_name)
     /* say return_if here instead of err_if because bio_from_emb()
      * could have failed for a non-openssl error */
     dbg_return_if (!(bio = tls_get_file_bio(res_name)), NULL);
-    dbg_err_if (!(dh = PEM_read_bio_DHparams(bio, NULL, NULL, NULL)));
+    dbg_err_if (!(dh = PEM_read_bio_Parameters(bio, NULL)));
 
     BIO_free(bio);
 

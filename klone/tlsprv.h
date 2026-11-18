@@ -18,16 +18,6 @@
 extern "C" {
 #endif
 
-/* (pseudo) unique data to feed the PRNG */
-struct tls_rand_seed_s 
-{
-    pid_t pid;
-    long t1, t2;
-    void *stack;
-};
-
-typedef struct tls_rand_seed_s tls_rand_seed_t;
-
 /* SSL_CTX initialization parameters.  Mapping of "verify_client" configuration
  * directive to vmode is done in the following way:
  *  "none"      -> SSL_VERIFY_NONE
@@ -55,7 +45,6 @@ typedef struct tls_ctx_args_s tls_ctx_args_t;
 
 /* used by tls.c */
 #ifdef SSL_OPENSSL
-DH *get_dh1024 (void);
 BIO *bio_from_emb (const char *);
 BIO *tls_get_file_bio(const char *res_name);
 STACK_OF(X509_NAME) *tls_load_client_CA_file(const char *);

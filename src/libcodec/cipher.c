@@ -25,7 +25,7 @@ struct codec_cipher_s
 {
     codec_t codec;
     const EVP_CIPHER *cipher;   /* encryption cipher algorithm */
-    EVP_CIPHER_CTX cipher_ctx;  /* encrypt context */
+    EVP_CIPHER_CTX *cipher_ctx; /* owned OpenSSL context */
     char *cbuf;
     size_t coff, ccount, cbuf_size;
     EVP_Update_t update;        /* EVP_{Encrypt,Decrypt}Update func ptr */
@@ -71,7 +71,7 @@ static ssize_t cipher_flush(codec_t *codec, char *dst, size_t *dcount)
         if(cc->final)
         {
             wr = -1; /* just used to return an int value */
-            dbg_err_if(!cc->final(&cc->cipher_ctx, cc->cbuf, &wr));
+            dbg_err_if(!cc->final(cc->cipher_ctx, (unsigned char *)cc->cbuf, &wr));
 
             cc->ccount += wr;
             cc->final = NULL; /* can be called just once */
@@ -118,7 +118,8 @@ static ssize_t cipher_transform(codec_t *codec, char *dst, size_t *dcount,
         c = U_MIN(src_sz, CODEC_CIPHER_MAX_INPUT);
 
         wr = -1; /* just used to return an int value */
-        dbg_err_if(!cc->update(&cc->cipher_ctx, cc->cbuf, &wr, src, c));
+        dbg_err_if(!cc->update(cc->cipher_ctx, (unsigned char *)cc->cbuf, &wr,
+            (const unsigned char *)src, c));
         cc->ccount += wr;
 
         if(wr == 0)
@@ -142,6 +143,7 @@ static int cipher_free(codec_t *codec)
         
     cc = (codec_cipher_t*)codec;
 
+    EVP_CIPHER_CTX_free(cc->cipher_ctx);
     U_FREE(cc->cbuf);
     U_FREE(cc);
 
@@ -191,7 +193,8 @@ int codec_cipher_create(int op, const EVP_CIPHER *cipher,
     /* be sure that the cipher stuff is loaded */
     EVP_add_cipher(cc->cipher);
 
-    EVP_CIPHER_CTX_init(&cc->cipher_ctx);
+    cc->cipher_ctx = EVP_CIPHER_CTX_new();
+    dbg_err_if(cc->cipher_ctx == NULL);
 
     cc->cbuf_size = CODEC_CIPHER_MAX_INPUT + 
         EVP_CIPHER_block_size(cc->cipher) -1;
@@ -202,13 +205,13 @@ int codec_cipher_create(int op, const EVP_CIPHER *cipher,
     switch(op)
     {
     case CIPHER_ENCRYPT:
-        dbg_err_if(!EVP_EncryptInit_ex(&cc->cipher_ctx, cc->cipher, NULL, 
+        dbg_err_if(!EVP_EncryptInit_ex(cc->cipher_ctx, cc->cipher, NULL,
             key, iv));
         cc->update = EVP_EncryptUpdate;
         cc->final = EVP_EncryptFinal_ex;
         break;
     case CIPHER_DECRYPT:
-        dbg_err_if(!EVP_DecryptInit_ex(&cc->cipher_ctx, cc->cipher, NULL, 
+        dbg_err_if(!EVP_DecryptInit_ex(cc->cipher_ctx, cc->cipher, NULL,
             key, iv));
         cc->update = EVP_DecryptUpdate;
         cc->final = EVP_DecryptFinal_ex;
@@ -222,7 +225,8 @@ int codec_cipher_create(int op, const EVP_CIPHER *cipher,
 
     return 0;
 err:
-    U_FREE(cc);
+    if (cc)
+        cipher_free((codec_t *)cc);
     return ~0;
 }
 

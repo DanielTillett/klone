@@ -11,7 +11,7 @@ SRCS = tls.c cyassl.c
 endif
 
 ifdef SSL_OPENSSL
-SRCS = tls_glue.c tls.c tls_dh_autogen.c
+SRCS = tls_glue.c tls.c
 endif
 
 ifdef SSL_OPENSSL_PSK

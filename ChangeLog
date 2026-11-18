@@ -3,6 +3,32 @@ $Id: ChangeLog,v 1.85 2010/06/01 20:20:51 tho Exp $
 ChangeLog file of KLone - http://koanlogic.com
 
 KLone X.Y.Z:
+	- build: reproducible Linux/WSL build (build/build.py) with MaKL and
+	  LibU pinned in build/dependencies.json; requires OpenSSL 3
+	- tls: port to OpenSSL 3; require TLS 1.2 or newer and disable TLS
+	  compression; drop ephemeral 512-bit RSA and the built-in 1024-bit DH
+	  group (DH parameters are now chosen automatically unless dh_file is
+	  set)
+	- session: 128-bit cryptographically random session IDs; client-side
+	  session HMAC defaults to SHA-256 via EVP_MAC with constant-time tag
+	  comparison and bounds-checked IV and data lengths
+	- session: cookies sent with Path=/, HttpOnly, SameSite=Lax, and Secure
+	  on TLS connections; new response_set_cookie_ex() with explicit flags
+	- http: reject duplicate or overflowing Content-Length, any
+	  Transfer-Encoding, invalid field names, control characters, folded
+	  or unterminated headers and decoded NULs in URI paths; limit headers
+	  to 256 fields, 8192 bytes per line and 65536 bytes in total
+	- http: split the query string before URL-decoding the path, so %3F and
+	  '+' in paths are preserved
+	- utils: capacity-aware u_{url,hex,html,sql}ncpy_s(); fix out-of-bounds
+	  reads in URL decoding and substring search, invalid hex handling,
+	  undefined behavior in MD5 and path normalization, memory-stream EOF
+	  seek and negative read lengths; SQL encoding handles the whole input
+	- kloned: SIGCHLD handler no longer touches the server object
+	- fix memory leaks at kloned shutdown, in the page translator and in the
+	  klone tool
+	- test: regression, full-server (single-process and prefork) and
+	  parser fuzz tests; CI in release and sanitizer modes
 	- tls: force usage of TLSv1+ [CVE-2014-3566 POODLE]
 	- webapp: fix background and update copyright
 	- reponse: missing response_del_field() declaration in header (patch

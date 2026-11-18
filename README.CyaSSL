@@ -1,4 +1,8 @@
 
+NOTE: the CyaSSL backend is legacy and is not built or tested by the modern
+build (build/build.py), which requires OpenSSL 3. These instructions are
+kept for reference only.
+
 CyaSSL:
 
     env CFLAGS=-DNO_FILESYSTEM ./configure --enable-opensslExtra  \

@@ -1,8 +1,235 @@
-QUICKSTART
-----------
+KLONE
+-----
 
-NOTE: KLone needs GNU make in order to be built, which is not the default 'make'
-      on most *BSD systems (usually you will find it as 'gmake' or 'gnumake').
+KLone is a web application development framework for embedded systems. It
+compiles a web server, its configuration and the site's static and dynamic
+(C-scripted) pages into a single executable, kloned.
+
+This branch modernizes KLone 3.1.0 for current toolchains: a reproducible
+Linux build against OpenSSL 3, TLS 1.2 or newer, hardened HTTP parsing and
+sessions, and automated regression, full-server and fuzz tests. See SECURITY
+AND COMPATIBILITY CHANGES below before upgrading an existing deployment.
+
+Original project documentation: http://www.koanlogic.com/klone
+
+
+QUICK START (LINUX / WSL)
+-------------------------
+
+Supported baseline: Linux, Python 3.9 or newer, GNU make, GCC or Clang,
+OpenSSL 3 and zlib. On Ubuntu:
+
+    sudo apt-get update
+    sudo apt-get install build-essential clang libclang-rt-dev libssl-dev \
+        zlib1g-dev python3 git patch
+    python3 build/build.py --test
+
+On Windows, run the same commands inside WSL from PowerShell in this
+repository, for example:
+
+    wsl -d Ubuntu -- python3 build/build.py --test
+
+The daemon is built at .build/release/source/src/kloned/kloned. Build logs
+and build-info.json are in .build/release.
+
+
+BUILD OPTIONS
+-------------
+
+    python3 build/build.py [--sanitize] [--test] [--offline] [--incremental]
+                           [--jobs N]
+
+    --sanitize     Build with AddressSanitizer and UndefinedBehaviorSanitizer
+                   into .build/sanitize instead of .build/release.
+    --test         Run the regression suite and the full-server tests after
+                   building (see TESTING).
+    --offline      Use already downloaded dependencies; fail if missing.
+    --incremental  Reuse generated build files during development. Omit it
+                   for clean, release-quality checks.
+    --jobs N       Parallel make jobs (default 2).
+
+How the build works:
+
+* MaKL and LibU are cloned at the exact commits pinned in
+  build/dependencies.json. Existing checkouts must match those commits and
+  have no tracked modifications (CRLF-only differences are tolerated).
+* Sources are copied, with line endings normalized, into
+  .build/<mode>/source, and build/makl-modern.patch is applied there. Your
+  checkout is never configured or compiled in place, and nothing is
+  installed on the system.
+* Only one build may use a given .build/<mode> directory at a time; a
+  second concurrent build of the same mode is refused.
+* build-info.json records the dependency commits, a normalized source
+  fingerprint, compiler and OpenSSL versions, and C flags. This reproduces
+  the source inputs; identical binaries across different compilers or
+  distributions are not guaranteed.
+* The build fails rather than silently disabling TLS if OpenSSL 3 is not
+  found.
+
+
+BUILDING AND RUNNING A SITE
+---------------------------
+
+KLone embeds your site at build time. build.py produces a daemon with an
+empty site; to embed your own pages, import the site directory into the
+generated tree and rebuild kloned. For example, with the bundled example
+site:
+
+    S=$PWD/.build/release/source
+    export MAKL_DIR=$S/makl MAKEFLAGS=-I$S/makl/mk
+    cd $S/site
+    ../src/tools/klone/klone -c import ../../../../doc/example-site
+    make && make depend
+    make -C ../src/kloned
+
+Then run the daemon in the foreground with a configuration file:
+
+    ../src/kloned/kloned -F -f /path/to/kloned.conf
+
+-F keeps kloned attached to the terminal and serves requests iteratively;
+omit it to run as a forking daemon. -f overrides values in the embedded
+configuration. See kloned(8) and kloned.conf(5) in doc/man for all options.
+The next clean build discards the imported site, so keep your site sources
+outside .build.
+
+HTTPS: the certificate in doc/example-site/etc/kloned.pem is a 1024-bit RSA
+key with an MD5 signature that expired in 2006. OpenSSL 3 at the default
+security level of common distributions (tested on Ubuntu) refuses it, so
+an HTTPS server using it will not start. Generate your own certificate
+instead, for example:
+
+    openssl req -x509 -newkey rsa:3072 -nodes -keyout key.pem \
+        -out cert.pem -days 365 -subj /CN=localhost
+
+and point cert_file and key_file at the new files. Use a certificate from
+a trusted CA in production.
+
+
+TESTING
+-------
+
+    python3 build/build.py --test
+    python3 build/build.py --sanitize --test
+
+--test runs, in order:
+
+1. The regression suite (95 checks), which compiles selected production
+   functions verbatim as C99, with warnings treated as errors, and runs them
+   under the sanitizers. LibU and network collaborators are test doubles;
+   production MD5 is linked directly.
+2. The full-server tests (81 checks), run twice: once in single-process
+   mode and once in the normal prefork model. They import a small test-only
+   page into the generated build, start kloned on temporary localhost ports
+   and check static and HEAD responses, dynamic pages, malformed headers and
+   URIs, TLS 1.2 and 1.3 negotiation and rejection of TLS 1.0 and 1.1, cookie
+   flags, and memory and client-side session persistence over HTTP and
+   HTTPS. Under --sanitize, any AddressSanitizer, LeakSanitizer or UBSan
+   report fails the run.
+
+The test-enabled binary contains the test page; never deploy or publish it.
+Test certificates and listeners are temporary.
+
+The regression suite also runs without a full build, on Windows or Linux,
+with Python 3 and Clang:
+
+    python test/run_regressions.py --sanitize
+
+After a release build, run a bounded libFuzzer test of the real header,
+field and utility parsers:
+
+    python3 test/run_fuzz.py --source .build/release/source --runs 10000
+
+Fuzz logs, the corpus and any crash inputs are kept in the build folder.
+
+Continuous integration (.github/workflows/build.yml) runs the build and
+tests in release and sanitizer modes, plus the fuzz test, on every push and
+pull request, and uploads the build logs.
+
+
+SECURITY AND COMPATIBILITY CHANGES
+----------------------------------
+
+TLS
+
+* TLS 1.2 is the minimum protocol version; TLS 1.0 and 1.1 are rejected.
+  TLS compression is disabled. The minimum is fixed in code, not
+  configurable.
+* OpenSSL 3 is required. Contexts are owned opaque objects accessed through
+  public APIs.
+* Ephemeral 512-bit RSA and the built-in 1024-bit DH group are gone. Without
+  dh_file, OpenSSL selects suitable DH parameters automatically.
+
+Sessions and cookies
+
+* Session IDs carry 128 bits from a cryptographic random source, replacing
+  MD5(time, pid, rand()).
+* Client-side session MACs default to HMAC-SHA256 (previously SHA-1), use
+  checked OpenSSL EVP_MAC calls and compare tags in constant time.
+  Client-side session IV and encoded-data lengths are bounds-checked.
+  Existing client-side sessions may need to be renewed after upgrading.
+  The digest can still be chosen with client.hash_function (kloned.conf(5)).
+* Session cookies are sent with Path=/, HttpOnly and SameSite=Lax, plus
+  Secure on direct TLS connections. Deletion cookies keep the same scope and
+  attributes. Third-party login or embedding flows may need a different
+  SameSite policy. TLS terminated by a proxy is not inferred from forwarded
+  headers, which are untrusted.
+* response_set_cookie() keeps its previous behavior for application cookies.
+  The new response_set_cookie_ex() takes explicit RESPONSE_COOKIE_* flags
+  (SECURE, HTTPONLY, SAMESITE_LAX, SAMESITE_STRICT, SAMESITE_NONE).
+
+HTTP request handling
+
+* Rejected: duplicate or overflowing Content-Length, any Transfer-Encoding
+  (chunked request bodies are not supported), invalid field names, control
+  characters in field values, folded headers, unterminated headers, and
+  decoded NUL bytes in URI paths.
+* Limits: 256 header fields, 8192 bytes per header line, 65536 bytes of
+  headers in total.
+* The query string is split off before the path is URL-decoded, so an
+  escaped '?' (%3F) and a literal '+' in the path are preserved.
+
+Utility APIs
+
+* New capacity-aware u_urlncpy_s(), u_hexncpy_s(), u_htmlncpy_s() and
+  u_sqlncpy_s() reject undersized destinations. Internal callers use them;
+  the legacy functions remain for compatibility and still require correctly
+  sized caller buffers.
+* SQL quote encoding now processes the whole input instead of truncating
+  after quotes.
+* Fixed out-of-bounds reads in URL decoding and substring search, invalid
+  hex input handling, undefined behavior in MD5 and path normalization,
+  seeking to the end of memory streams, and negative read results being
+  treated as large lengths.
+
+Reliability
+
+* The SIGCHLD handler no longer touches the server object, which may be
+  unset during startup or shutdown.
+* Memory leaks found by LeakSanitizer in kloned shutdown, the page
+  translator and the klone tool are fixed.
+
+
+KNOWN LIMITATIONS
+-----------------
+
+* Only Linux (including WSL) is built and tested. Native Windows, *BSD and
+  the CyaSSL backend (README.CyaSSL) are not covered by the modern build.
+* C++ pages are disabled in the modern build.
+* Client-side sessions still use encrypt-then-MAC around AES-CBC. Moving
+  that versioned wire format to an AEAD cipher is planned follow-up work.
+* Some compiler warnings remain in legacy code and the pinned dependencies.
+* Fuzzing is a short smoke test; longer campaigns are still worthwhile.
+
+
+LEGACY QUICK START
+------------------
+
+The original KLone build is kept for reference. It predates OpenSSL 3 and
+current compilers, and is not maintained or tested on this branch.
+
+NOTE: KLone needs GNU make in order to be built, which is not the default
+      'make' on most *BSD systems (usually you will find it as 'gmake' or
+      'gnumake').
 
 1) Configure and build KLone:
 
@@ -10,7 +237,7 @@ NOTE: KLone needs GNU make in order to be built, which is not the default 'make'
 
 2) Import the example web-application
 
-    [ on Windows edit doc/example-site/etc/kloned.conf and remove syslog 
+    [ on Windows edit doc/example-site/etc/kloned.conf and remove syslog
       logging paragraph ]
 
     $ ${GNUMAKE} depend
@@ -26,98 +253,4 @@ NOTE: KLone needs GNU make in order to be built, which is not the default 'make'
 
     $ kloned
 
-4) Start your web browser:
-
-    [ start your web browser and go to http://localhost:8080/ ]
-
-
-For further info and documentation, see http://www.koanlogic.com/klone
-
-MODERN LINUX / WSL BUILD
------------------------
-
-Supported baseline: Linux, Python 3, GNU make/GCC, OpenSSL 3 and zlib. On Ubuntu:
-
-    sudo apt-get update
-    sudo apt-get install build-essential clang libclang-rt-dev libssl-dev zlib1g-dev python3 git patch
-    python3 build/build.py --test
-    python3 build/build.py --sanitize --test
-
-On Windows, open PowerShell in this repository and run the Python commands
-through WSL, for example:
-
-    wsl -d Ubuntu -- python3 build/build.py --test
-
-The runner downloads MaKL and LibU at the exact commits in
-build/dependencies.json. Existing dependency checkouts must match those commits
-and have no tracked modifications (CRLF-only changes are normalized). It copies
-source files into .build/release/source or .build/sanitize/source and applies the
-reviewable build/makl-modern.patch there. Your checkout is not reconfigured or
-compiled in place. --offline uses already downloaded dependencies; --incremental
-reuses generated files during development. Omit --incremental for clean checks.
-
-The resulting daemon is .build/<mode>/source/src/kloned/kloned. Logs and
-build-info.json are in .build/<mode>. The metadata records dependency commits,
-a normalized source fingerprint, compiler and OpenSSL versions, and C flags.
-These reproduce the source inputs; identical binaries across different compiler
-or distribution versions are not guaranteed. No system service is installed.
-
---test imports a small test-only dynamic page into the generated build, starts
-the daemon on temporary localhost ports, and checks static/HEAD responses,
-malformed headers and URIs, TLS negotiation, cookie flags, and memory/client-side
-session persistence. The test page is not added to the normal build. Test
-certificates and listeners are temporary. Never publish the test-enabled binary.
-
-The build currently disables C++ pages. Native Windows and the old CyaSSL backend
-are not covered by the full build; Windows uses the tested WSL path. Some warnings
-remain in legacy code and pinned dependencies. CI runs the Linux build and tests
-in normal and sanitizer configurations.
-
-REGRESSION AND FUZZ TESTS
-------------------------
-
-With Python 3 and Clang, the dependency-free utility suite runs on Windows/Linux:
-
-    python test/run_regressions.py --sanitize
-
-It compiles selected production functions verbatim as C99 with warnings treated
-as errors. LibU and network collaborators are test doubles; production MD5 is
-linked directly. This complements the full-server tests, not replaces them.
-
-After a full build, run a bounded libFuzzer test of actual parser/utility code:
-
-    python3 test/run_fuzz.py --source .build/release/source --runs 10000
-
-Fuzz logs, corpus and any crash inputs are kept inside the selected build folder.
-Longer fuzz campaigns and platform coverage remain useful follow-up work.
-
-SECURITY AND COMPATIBILITY CHANGES
-----------------------------------
-
-* OpenSSL contexts use owned opaque objects and public accessors. TLS negotiates
-  TLS 1.2 or newer; ephemeral 512-bit RSA and the default 1024-bit DH group are no
-  longer used. OpenSSL selects suitable DH parameters automatically unless an
-  explicit dh_file is configured.
-* Session IDs contain 128 bits of cryptographic randomness. Client-session MACs
-  default to HMAC-SHA256, use checked OpenSSL EVP_MAC calls, and compare tags in
-  constant time. Client-session IV and encoded-data bounds are checked.
-* Session cookies use Path=/, HttpOnly and SameSite=Lax, plus Secure on direct
-  TLS connections. The old response_set_cookie API preserves application-cookie
-  behavior; response_set_cookie_ex exposes explicit security flags. Deletion
-  cookies retain their scope and security attributes. Third-party login/embedding
-  flows may need an explicit SameSite policy; proxy TLS is not inferred from
-  untrusted forwarded headers.
-* HTTP input rejects duplicate Content-Length, unsupported Transfer-Encoding,
-  invalid field names/control characters, folded headers, unterminated headers,
-  numeric overflow, and decoded NULs in URI paths. Limits: 256 fields, 8192 bytes
-  per header line, 65536 aggregate bytes. URL path '+' and escaped '?' are preserved.
-  Chunked request bodies remain unsupported and are rejected explicitly.
-* Capacity-aware u_{url,hex,html,sql}ncpy_s APIs reject insufficient destinations.
-  Internal URL/hex callers use them; legacy public APIs remain available for
-  compatibility and still require correctly sized caller buffers. SQL quote
-  encoding now processes the complete input instead of truncating after quotes.
-
-Existing client-side sessions may need renewal when the default MAC changes.
-The client-session format still uses encrypt-then-MAC around AES-CBC; migrating
-that versioned wire format to AEAD, replacing MaKL, and extending native-platform
-coverage are larger follow-up changes, rather than claims of this update.
+4) Start your web browser and go to http://localhost:8080/

@@ -211,11 +211,21 @@ for storing data on the client. The default value is
 Set the inactivity threshold timeout for the session. The default value is 60*20 seconds (20 minutes).
 .TP
 \fBsid_name\fR
-Set a custom cookie name.
+Set a custom cookie name. Session cookies are always sent with the
+\fIPath=/\fR,
+\fIHttpOnly\fR
+and
+\fISameSite=Lax\fR
+attributes, plus
+\fISecure\fR
+when the connection to
+\fBkloned\fR
+uses TLS. Session identifiers contain 128 bits from a cryptographic random source.
 .TP
 \fBencrypt\fR
-A boolean specifying whether the session data should be encrypted before being sent to the client. The default is
-\fIyes\fR.
+A boolean specifying whether the session data should be encrypted before being sent to the client. Encryption is always enabled for
+\fIclient\fR
+sessions, whatever this directive says.
 .TP
 \fBcompress\fR
 A boolean specifying whether the session data should be compressed before being pushed to the client. The default is
@@ -243,13 +253,21 @@ the system temporary path.
 .TP
 \fBclient.hash_function\fR
 The hash function that should be used in the HMAC calculation over the cookies. The available values are:
-\fImd5\fR,
+\fIsha256\fR,
 \fIsha1\fR,
+\fImd5\fR
+and, with OpenSSL only,
 \fIripemd160\fR. The default is
-\fIsha1\fR.
+\fIsha256\fR. The weaker
+\fIsha1\fR
+and
+\fImd5\fR
+are kept for compatibility only.
 .SS "SSL/TLS"
 .PP
 All the cryptographic material examined in this section MUST not be password protected. This is because on unattended devices such as appliances or similar, password protection is useless if not harmful.
+.PP
+OpenSSL 3 is required. HTTPS servers accept TLS 1.2 or newer only; TLS 1.0 and 1.1 are rejected and TLS compression is disabled. The minimum protocol version is fixed and has no configuration directive. OpenSSL 3 also enforces minimum key sizes and signature algorithms according to the system's security level; on common distributions such as Ubuntu, 1024\-bit RSA keys and MD5\-signed certificates are refused. Use certificates with at least 2048\-bit RSA (or equivalent) keys.
 .TP
 \fBcert_file\fR
 PEM\-encoded certificate file for the server and optionally also its corresponding RSA or DSA Private Key file (contained in the same file). The certificate should be configured with the Common Name matching the fully qualified domain name of the server. This parameter is
@@ -276,7 +294,7 @@ is
 \fIrequired\fR.
 .TP
 \fBdh_file\fR
-PEM\-encoded file containing Diffie\-Hellman parameters to be used on session data negotiation phase. When missing a default set of 1024\-bit DH parameters is used. Note that RSA ephemeral parameters are always created automatically.
+PEM\-encoded file containing Diffie\-Hellman parameters to be used on session data negotiation phase. When missing, OpenSSL selects suitable DH parameters automatically. Ephemeral RSA keys are no longer used.
 .TP
 \fBverify_depth\fR
 This directive sets how deeply openssl should verify before deciding that the clients don't have a valid certificate. The depth actually is the maximum number of intermediate certificate issuers, i.e. the max number of CA certificates which are allowed to be followed while verifying the client certificate. A depth of 0 means that only self\-signed client certificates are accepted, the default depth of 1 means the client certificate can be self\-signed or has to be signed by a CA which is directly known to the server, i.e. the CA's certificate is under

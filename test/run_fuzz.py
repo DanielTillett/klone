@@ -10,21 +10,25 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--build", type=Path, required=True, help="CMake build directory")
     parser.add_argument("--runs", type=int, default=10000)
     args = parser.parse_args()
-    source = args.source.resolve()
-    if not source.is_relative_to(ROOT / ".build"):
+    tree = args.build.resolve()
+    if not tree.is_relative_to(ROOT / ".build"):
         parser.error("Use a generated build inside .build")
-    output = source.parent
+    output = tree.parent
     executable = output / "fuzz-parsers"
     # Compile the relevant complete translation units with fuzzer coverage.
     # Remaining collaborators come from the corresponding full build archives.
     sources = ["src/libpage/header.c", "src/libpage/field.c", "src/libutils/utils.c"]
-    libraries = sorted(source.glob("src/lib*/*.a")) + [source / "site/libsite.a", source / "libu/srcs/libu.a"]
-    command = ["clang", "-std=gnu99", "-fgnu89-inline", "-g", "-O1",
+    source = Path(next(line.split("=", 1)[1]
+                       for line in (tree / "CMakeCache.txt").read_text().splitlines()
+                       if line.startswith("KLone_SOURCE_DIR:")))
+    libraries = sorted((tree / "lib").glob("*.a"))
+    includes = [tree / "include", tree / "libu/include", source]
+    command = ["clang", "-std=gnu99", "-fgnu89-inline", "-g", "-O1", "-DHAVE_CONF_H",
                "-fsanitize=fuzzer,address,undefined", "-fno-omit-frame-pointer",
-               "-I", str(source), "-I", str(source / "libu/include"),
+               *[f"-I{path}" for path in includes],
                str(ROOT / "test/fuzz_parsers.c")]
     command += [str(source / name) for name in sources]
     command += ["-Wl,--start-group", *map(str, libraries), "-Wl,--end-group",

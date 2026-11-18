@@ -139,14 +139,14 @@ int broker_create(broker_t **pb)
     b->sup_list[i++] = &sup_cgi;
 #else
 #ifndef OS_WIN
-    warn("CGI support disabled, use --enable_cgi to enable it");
+    warn("CGI support disabled, build with -DKLONE_ENABLE_SUP_CGI=ON to enable it");
 #endif
 #endif
 
 #ifdef ENABLE_SUP_FS
     b->sup_list[i++] = &sup_fs;
 #else
-    warn("File system support disabled, use --enable_fs to enable it");
+    warn("File system support disabled, build with -DKLONE_ENABLE_SUP_FS=ON to enable it");
 #endif
 
     b->sup_list[i++] = NULL;

@@ -48,31 +48,56 @@ def client_context(version):
     return context
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", type=Path, required=True, help="generated build source tree")
-    parser.add_argument("--prefork", action="store_true", help="exercise the normal multiprocess server model")
-    args = parser.parse_args()
-    source = args.source.resolve()
-    if not source.is_relative_to(ROOT / ".build"):
-        parser.error("Tests modify only generated builds inside this repository's .build")
-    env = os.environ.copy()
-    env["MAKL_DIR"] = str(source / "makl")
-    env["MAKEFLAGS"] = "-I" + str(source / "makl/mk")
-    output = source.parent
-    with (output / "test-build.log").open("w") as log:
-        commands = [
-            ([str(source / "src/tools/klone/klone"), "-c", "import", str(ROOT / "test/site")], source / "site"),
-            (["make"], source / "site"),
-            (["make", "depend"], source / "site"),
-            (["make"], source / "src/kloned"),
-        ]
+def run_build_steps(commands, env, log_path):
+    with log_path.open("a") as log:
         for command, cwd in commands:
             result = subprocess.run(command, cwd=cwd, env=env, stdout=log, stderr=subprocess.STDOUT)
             if result.returncode:
                 log.flush()
-                raise RuntimeError((output / "test-build.log").read_text()[-6000:])
+                raise RuntimeError(log_path.read_text()[-6000:])
 
+
+def cmake_cache_value(build, name):
+    for line in (build / "CMakeCache.txt").read_text().splitlines():
+        if line.startswith(name + ":"):
+            return line.split("=", 1)[1]
+    return ""
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--build", type=Path, required=True, help="CMake build directory")
+    parser.add_argument("--prefork", action="store_true", help="exercise the normal multiprocess server model")
+    args = parser.parse_args()
+    tree = args.build.resolve()
+    if not tree.is_relative_to(ROOT / ".build"):
+        parser.error("Tests modify only generated builds inside this repository's .build")
+    env = os.environ.copy()
+    output = tree.parent
+    log_path = output / "test-build.log"
+    log_path.write_text("")
+    restore = None
+    try:
+        # Embed the test site (with no import options) for this run only.
+        # The original settings are restored afterwards, even if the
+        # fixture fails to build, so the test page never stays in kloned.
+        settings = {name: cmake_cache_value(tree, name)
+                    for name in ("KLONE_SITE_DIR", "KLONE_IMPORT_ARGS")}
+        rebuild = ["cmake", "--build", str(tree), "--target", "kloned"]
+        # 'cmake -D... <existing build dir>' reconfigures with the cached source
+        restore = [(["cmake", *[f"-D{k}={v}" for k, v in settings.items()], str(tree)], tree),
+                   (rebuild, tree)]
+        run_build_steps([(["cmake", f"-DKLONE_SITE_DIR={ROOT / 'test/site'}",
+                           "-DKLONE_IMPORT_ARGS=", str(tree)], tree),
+                         (rebuild, tree)], env, log_path)
+        daemon = tree / "bin" / cmake_cache_value(tree, "KLONE_DAEMON_NAME")
+        run_server_checks(args, env, output, daemon)
+    finally:
+        if restore:
+            run_build_steps(restore, env, log_path)
+
+
+def run_server_checks(args, env, output, daemon):
     checks = 0
 
     def check(condition, message):
@@ -116,7 +141,7 @@ def main():
         config.write_text("server_list plain client secure\nallow_root yes\n" + "\n".join(blocks))
         log_path = output / ("server-prefork-test.log" if args.prefork else "server-test.log")
         with log_path.open("w") as log:
-            command = [str(source / "src/kloned/kloned"), "-F", "-f", str(config)]
+            command = [str(daemon), "-F", "-f", str(config)]
             if not args.prefork:
                 command.append("-d")
             process = subprocess.Popen(command,

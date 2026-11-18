@@ -1,24 +1,14 @@
+# pinned LibU checkout fetched by build/build.py
+libu
+# build/build.py output, and common CMake build directories
+.build/
+build-*/
+out/
+# in-tree artefacts (e.g. from running klone by hand)
 *.o
 *.a
-.depend
 pg_*.c
-pg_*.o
-pg_*.d
 pg_*.kld
-libu
-makl
-src/kloned/kloned
-contrib/iocat/iocat
-contrib/iowc/iowc
-doc/doxy/kl1.doxy
-doc/doxy/html
-Makefile.conf
-autogen.*
-site/register.c
-src/tools/klone/klone
+autogen.cmake
 tags
-skin/default/Makefile
-klone_conf.h
-.build/
 __pycache__/
-

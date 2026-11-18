@@ -1,8 +1,4 @@
 {
-  "makl": {
-    "url": "https://github.com/koanlogic/makl.git",
-    "commit": "beea4802a30e584135a57b4c501db7f85383aa9d"
-  },
   "libu": {
     "url": "https://github.com/koanlogic/libu.git",
     "commit": "3ea1f2748a3d2fe2f56f9243c73e69785f983822"

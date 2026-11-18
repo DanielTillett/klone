@@ -60,14 +60,15 @@ typedef struct
     pm_t *enc_patt;             /* encrypt file pattern             */
     pm_t *excl_patt;            /* exclude file pattern             */
     char *key_file;             /* encryption key file name         */
-    io_t *iom, *iod, *ior;      /* io makefile, io deps             */
+    io_t *ior;                  /* io register.c                    */
+    io_t *ioc;                  /* io CMake page list               */
+    int import_err;             /* >0 if a file or dir failed import */
     size_t ndir, nfile;         /* dir and file count               */
     size_t nexcl;               /* # of excluded files (-x)         */
 } context_t;
 
 context_t *ctx;
 
-#define KL1_FILE_FMT "pg_%s.%s"
 
 #define usage_if(expr)  if(expr) usage(); 
 
@@ -385,15 +386,48 @@ err:
     return 0;
 }
 
+/* !0 if s can be wrapped in a bracket argument closed by 'close': it must
+ * not contain 'close', nor end with its prefix (e.g. "x]" + "]]" -> "x]]]") */
+static int cmake_bracket_safe(const char *s, const char *close)
+{
+    size_t slen = strlen(s), plen = strlen(close) - 1;
+
+    if(strstr(s, close))
+        return 0;
+
+    return !(slen >= plen && strncmp(s + slen - plen, close, plen) == 0);
+}
+
+/* return the '=' run of a CMake bracket argument ([=[...]=]) that is safe
+ * for all three strings, so any file name can be quoted verbatim */
+static const char *cmake_bracket_eq(const char *a, const char *b,
+        const char *c)
+{
+    enum { MAX_EQ = 16 };
+    static char eq[MAX_EQ + 1];
+    char close[MAX_EQ + 3];
+    size_t n;
+
+    for(n = 0; n <= MAX_EQ; ++n)
+    {
+        memset(eq, '=', n);
+        eq[n] = '\0';
+        (void) u_snprintf(close, sizeof close, "]%s]", eq);
+        if(cmake_bracket_safe(a, close) && cmake_bracket_safe(b, close) &&
+                cmake_bracket_safe(c, close))
+            return eq;
+    }
+
+    return NULL;
+}
 
 static int cb_file(struct dirent *de, const char *path , void *arg)
 {
-    static const char *prefix = "$(srcdir)";
     const mime_map_t *mm;
     char uri_md5[MD5_DIGEST_BUFSZ];
-    char file_in[U_FILENAME_MAX], uri[URI_BUFSZ], *base_uri = (char*)arg;
+    char uri[URI_BUFSZ], *base_uri = (char*)arg;
     char fullpath[U_FILENAME_MAX];
-    const char *ext;
+    const char *ext, *key, *eq;
     int is_a_script, enc = 0, zip = 0;
 
     dbg_err_if (de == NULL);
@@ -401,10 +435,6 @@ static int cb_file(struct dirent *de, const char *path , void *arg)
     dbg_err_if (arg == NULL);
 
     dbg_err_if(u_snprintf(fullpath, U_FILENAME_MAX, "%s/%s", path, de->d_name));
-
-    /* input filename (makefile-style) */
-    dbg_err_if(translate_makefile_filepath(fullpath, prefix, file_in, 
-        sizeof(file_in)));
 
     /* base uri */
     dbg_err_if(u_snprintf(uri, URI_BUFSZ, "%s/%s", base_uri, de->d_name));
@@ -448,43 +478,27 @@ static int cb_file(struct dirent *de, const char *path , void *arg)
         u_con("%s (encrypted: %s, compressed: %s)", 
             uri, enc ? "yes" : "no", zip ? "yes" : "no");
     else if(ctx->verbose > 1)
-        u_con("%s -> %s (encrypted: %s, compressed: %s)", 
-            file_in + strlen(prefix), uri, 
-            enc ? "yes" : "no", zip ? "yes" : "no");
+        u_con("%s -> %s (encrypted: %s, compressed: %s)",
+            fullpath, uri, enc ? "yes" : "no", zip ? "yes" : "no");
 
-    ext = u_match_ext(file_in, "klx") ? "cc" : "c";
-
-    dbg_err_if(io_printf(ctx->iom, " \\\n" KL1_FILE_FMT, uri_md5, ext) < 0);
+    ext = u_match_ext(fullpath, "klx") ? "cc" : "c";
 
     dbg_err_if(io_printf(ctx->ior, "KLONE_REGISTER(action,%s);\n", uri_md5) <0);
 
-    /* we're adding a '/' before the uri (that will be removed by klone.exe) 
-     * to avoid MSYS (win32) automatic path translation oddity */
-    dbg_err_if(io_printf(ctx->iod, 
-            "\n" KL1_FILE_FMT 
-            ": %s\n\t$(KLONE) -c translate -i $< -o $@ %s -u /%s %s %s %s %s\n"
-            "%s", /* compiler depend-file generation command */
-            uri_md5, ext, file_in, 
-            is_a_script ? "-d $@.kld" : "",
-            uri, 
-            zip ? "-z" : "",
-            enc ? "-E" : "", 
-            enc && ctx->key_file ? "-k" : "", 
-            enc && ctx->key_file ? ctx->key_file  : "",
-            is_a_script ? "\t$(MKDEP) -f $@.d $(CFLAGS) -a $@\n" : ""
-            ) < 0);
-
-    /* include depend files */
-    if(is_a_script)
-    {
-        dbg_err_if(io_printf(ctx->iod, "\n-include " KL1_FILE_FMT ".kld\n", 
-            uri_md5, ext) < 0);
-        dbg_err_if(io_printf(ctx->iod, "\n-include " KL1_FILE_FMT ".d\n", 
-            uri_md5, ext) < 0);
-    }
+    /* page entry for cmake/site/CMakeLists.txt:
+     * md5 ext file uri script zip enc key */
+    key = enc && ctx->key_file ? ctx->key_file : "";
+    eq = cmake_bracket_eq(fullpath, uri, key);
+    dbg_err_if(eq == NULL);
+    dbg_err_if(io_printf(ctx->ioc,
+            "klone_site_page(%s %s [%s[%s]%s] [%s[%s]%s] %d %d %d [%s[%s]%s])\n",
+            uri_md5, ext, eq, fullpath, eq, eq, uri, eq, is_a_script ? 1 : 0,
+            zip, enc, eq, key, eq) < 0);
 
     return 0;
 err:
+    /* u_foreach_dir_item() stops on error but does not report it */
+    ctx->import_err = 1;
     return ~0;
 }
 
@@ -502,12 +516,13 @@ static int cb_dir(struct dirent *de, const char *path , void *arg)
 
     dbg_err_if(u_snprintf(base_uri, URI_BUFSZ, "%s/%s", cur_uri, de->d_name));
 
-    u_foreach_dir_item(dir, S_IFREG, cb_file, (void*)base_uri);
+    dbg_err_if(u_foreach_dir_item(dir, S_IFREG, cb_file, (void*)base_uri));
 
-    u_foreach_dir_item(dir, S_IFDIR, cb_dir, (void*)base_uri);
+    dbg_err_if(u_foreach_dir_item(dir, S_IFDIR, cb_dir, (void*)base_uri));
 
-    return 0;
+    return ctx->import_err ? ~0 : 0;
 err:
+    ctx->import_err = 1;
     return ~0;
 }
 
@@ -565,39 +580,36 @@ static int trans_site(char *root_dir, char *base_uri)
     dbg_err_if (root_dir == NULL);
     dbg_err_if (base_uri == NULL);
     
-    /* makefile */
-    dbg_err_if(u_file_open("autogen.mk", O_CREAT | O_TRUNC | O_WRONLY, 
-                &ctx->iom));
-    dbg_err_if(u_file_open("autogen.dps", O_CREAT | O_TRUNC | O_WRONLY, 
-                &ctx->iod));
-
-    dbg_err_if(u_file_open("register.c", O_CREAT | O_TRUNC | O_WRONLY, 
+    dbg_err_if(u_file_open("register.c", O_CREAT | O_TRUNC | O_WRONLY,
                 &ctx->ior));
+
+    /* page list read by cmake/site/CMakeLists.txt */
+    dbg_err_if(u_file_open("autogen.cmake", O_CREAT | O_TRUNC | O_WRONLY,
+                &ctx->ioc));
 
     dbg_err_if(print_register_header(ctx->ior));
 
-    dbg_err_if(io_printf(ctx->iom, "embfs_rootdir=%s\n", root_dir) < 0);
-    dbg_err_if(io_printf(ctx->iom, "autogen_src= ") < 0);
-
     /* for each file call cb_file */
-    u_foreach_dir_item(root_dir, S_IFREG, cb_file, base_uri);
+    dbg_err_if(u_foreach_dir_item(root_dir, S_IFREG, cb_file, base_uri));
     /* for each directory call cb_dir */
-    u_foreach_dir_item(root_dir, S_IFDIR, cb_dir, base_uri);
+    dbg_err_if(u_foreach_dir_item(root_dir, S_IFDIR, cb_dir, base_uri));
+    con_err_ifm(ctx->import_err, "import failed");
 
     dbg_err_if(print_register_footer(ctx->ior));
 
+    /* write errors (e.g. a full disk) may only show up when flushing */
+    con_err_ifm(io_flush(ctx->ioc) || io_flush(ctx->ior),
+        "error writing import files");
+
+    io_free(ctx->ioc);
     io_free(ctx->ior);
-    io_free(ctx->iod);
-    io_free(ctx->iom);
 
     return 0;
 err:
+    if(ctx->ioc)
+        io_free(ctx->ioc);
     if(ctx->ior)
         io_free(ctx->ior);
-    if(ctx->iod)
-        io_free(ctx->iod);
-    if(ctx->iom)
-        io_free(ctx->iom);
     return ~0;
 }
 

@@ -159,6 +159,25 @@ err:
     return ~0;
 }
 
+/* print a path in make depend syntax, escaping spaces and '#' (understood by
+ * make, bmake, ninja and CMake depfiles); '$' is kept for $(srcdir) */
+static int print_depend_path(io_t *depend, const char *path, const char *sep)
+{
+    const char *p;
+
+    for(p = path; *p; ++p)
+    {
+        if(*p == ' ' || *p == '#')
+            dbg_err_if(io_putc(depend, '\\') < 0);
+        dbg_err_if(io_putc(depend, *p) < 0);
+    }
+    dbg_err_if(io_printf(depend, "%s", sep) < 0);
+
+    return 0;
+err:
+    return ~0;
+}
+
 static int ppctx_print_depend(ppctx_t *ppc, io_t *in, io_t *out, io_t *depend)
 {
     char infile[U_FILENAME_MAX], outfile[U_FILENAME_MAX];
@@ -181,13 +200,15 @@ static int ppctx_print_depend(ppctx_t *ppc, io_t *in, io_t *out, io_t *depend)
     dbg_err_if(translate_makefile_filepath(infile, "$(srcdir)", fullpath, 
         sizeof(fullpath)));
 
-    io_printf(depend, "%s %s.kld: %s ", outfile, outfile, fullpath);
+    dbg_err_if(print_depend_path(depend, outfile, " "));
+    dbg_err_if(print_depend_path(depend, outfile, ".kld: "));
+    dbg_err_if(print_depend_path(depend, fullpath, " "));
 
     for(i = 0; (dfile = u_list_get_n(ppc->depend, i)) != NULL; ++i)
     {
-        dbg_err_if(translate_makefile_filepath(dfile, "$(srcdir)", fullpath, 
+        dbg_err_if(translate_makefile_filepath(dfile, "$(srcdir)", fullpath,
             sizeof(fullpath)));
-        io_printf(depend, "%s ", fullpath);
+        dbg_err_if(print_depend_path(depend, fullpath, " "));
     }
     io_printf(depend, "\n");
 

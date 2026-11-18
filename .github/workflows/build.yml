@@ -5,7 +5,7 @@ permissions:
 jobs:
   linux:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -15,12 +15,15 @@ jobs:
         with:
           persist-credentials: false
       - name: Install build tools
-        run: sudo apt-get update && sudo apt-get install -y build-essential clang libclang-rt-dev libssl-dev zlib1g-dev python3 git patch
-      - name: Build and test
+        run: sudo apt-get update && sudo apt-get install -y build-essential clang libclang-rt-dev libssl-dev zlib1g-dev python3 git cmake ninja-build
+      - name: Build and test (CMake + Ninja)
         run: python3 build/build.py --test ${{ matrix.mode == 'sanitize' && '--sanitize' || '' }}
       - name: Fuzz parser smoke test
         if: matrix.mode == 'release'
-        run: python3 test/run_fuzz.py --source .build/release/source --runs 10000
+        run: python3 test/run_fuzz.py --build .build/release/cmake --runs 10000
+      - name: Build-system checks (site names, includes, flags, install)
+        if: matrix.mode == 'release'
+        run: python3 test/run_build_checks.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
@@ -28,3 +31,62 @@ jobs:
           path: |
             .build/${{ matrix.mode }}/*.log
             .build/${{ matrix.mode }}/build-info.json
+
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [release, sanitize]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install build tools
+        run: |
+          brew install cmake ninja openssl@3
+          echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+      - name: Build and test (CMake + Ninja, Apple Clang)
+        run: python3 build/build.py --test ${{ matrix.mode == 'sanitize' && '--sanitize' || '' }}
+      - name: Build-system checks
+        if: matrix.mode == 'release'
+        run: python3 test/run_build_checks.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: build-logs-macos-${{ matrix.mode }}
+          path: |
+            .build/${{ matrix.mode }}/*.log
+            .build/${{ matrix.mode }}/build-info.json
+
+  # Proves the build needs no GNU make: BSD make drives the generated
+  # makefiles while any 'make'/'gmake' on PATH fails if invoked.
+  bsd-make:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y gcc clang libclang-rt-dev libssl-dev zlib1g-dev python3 git cmake bmake
+      - name: Block GNU make
+        run: |
+          mkdir -p "$RUNNER_TEMP/nogmake"
+          for m in make gmake; do
+            printf '#!/bin/sh\necho "GNU make invoked: $0 $*" >&2\nexit 99\n' > "$RUNNER_TEMP/nogmake/$m"
+            chmod +x "$RUNNER_TEMP/nogmake/$m"
+          done
+          echo "$RUNNER_TEMP/nogmake" >> "$GITHUB_PATH"
+      - name: Build and test (CMake + bmake)
+        run: python3 build/build.py --test --generator "Unix Makefiles" --make-program "$(command -v bmake)"
+      - name: Build-system checks (bmake)
+        run: python3 test/run_build_checks.py --generator "Unix Makefiles" --make-program "$(command -v bmake)"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: build-logs-bsd-make
+          path: |
+            .build/release/*.log
+            .build/release/build-info.json

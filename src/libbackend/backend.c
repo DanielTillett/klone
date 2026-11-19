@@ -104,6 +104,11 @@ int backend_create(const char *proto, u_config_t *config, backend_t **pbe)
             "prefork.max_requests_per_child", SERVER_PREFORK_MAX_RQ_CHILD, 
             (int *)&be->max_rq_xchild));
 
+        /* a worker started beyond start_child (e.g. for a burst of clients)
+           exits after waiting this long for a connection (0: never) */
+        dbg_err_if(u_config_get_subkey_value_i(config, "prefork.idle_timeout",
+            SERVER_PREFORK_IDLE_TIMEOUT, &be->idle_timeout));
+
         /* never more than the backend may run at once */
         if(be->start_child > be->max_child)
             be->start_child = be->max_child;

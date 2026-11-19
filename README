@@ -288,9 +288,11 @@ Persistent connections (keep-alive)
 * Reading a request body (forms, uploads, pages, CGIs) stops at its end,
   and an unread body is skipped before the next request. Chunked request
   bodies are still rejected. Over TLS, connections end with close_notify.
-* In the prefork model a worker holding an idle kept-alive connection counts
-  as busy, so a further worker may be started; lower keep_alive_timeout (or
-  set keep_alive no) to limit this. prefork.max_requests_per_child counts
+* In the prefork model a worker holding a kept-alive connection counts as
+  busy: while clients wait, the pool doubles every second up to
+  prefork.max_child. A worker started beyond prefork.start_child exits after
+  prefork.idle_timeout seconds (default 10, 0 = never) without a client, so
+  the pool shrinks back after a burst. prefork.max_requests_per_child counts
   connections, not requests.
 
 Utility APIs

@@ -1,6 +1,17 @@
 ChangeLog file of KLone - https://github.com/DanielTillett/klone
 
 KLone 4.0.0:
+	- prefork: a worker started beyond prefork.start_child (e.g. for a
+	  burst of clients) exits after waiting prefork.idle_timeout seconds
+	  (default 10, 0 = never) for a client, so the pool and its memory
+	  shrink back; the pool stayed at its peak size before
+	- TLS: SSL_MODE_RELEASE_BUFFERS frees a connection's OpenSSL read and
+	  write buffers (~34 KB) while it waits for the next request (~1% CPU
+	  per TLS request on macOS). Measured on Linux, a worker's own memory
+	  is ~64 KB idle, ~160 KB after plain HTTP and ~400 KB after TLS; summed
+	  RSS counts the shared code once per process and overstates the total
+	  about 10x. The 64 KB connection write buffer stays: 16 KB cost 10%
+	  CPU on a 200 KB chunked dynamic page
 	- prefork: the 1 s watchdog that asks for a new worker no longer drops
 	  kept-alive connections or retires workers that only wait for the next
 	  request. It asks for a new worker once when a request is slow, and

@@ -285,8 +285,7 @@ static int server_be_accept(server_t *s, backend_t *be, int *pfd)
     socklen_t sa_len = sizeof(struct sockaddr);
     int ad;
 
-    u_unused_args(s);
-
+    dbg_return_if (s == NULL, ~0);
     dbg_return_if (be == NULL, ~0);
     dbg_return_if (pfd == NULL, ~0);
 
@@ -300,7 +299,7 @@ again:
 
     return 0;
 err:
-    if(ad < 0)
+    if(ad < 0 && !s->stop)  /* not an idle spare worker leaving */
         warn_strerror(errno);
     return ~0;
 }
@@ -331,6 +330,9 @@ static int server_backend_detach(server_t *s, backend_t *be)
 static talarm_t *server_watchdog_al = NULL;
 static int server_watchdog_enabled = 0;
 static volatile sig_atomic_t server_watchdog_busy = 0;   /* read by the alarm */
+
+/* prefork: this worker was started beyond start_child (a spare) */
+static int server_spare = 0;
 
 #ifdef OS_UNIX
 static int server_chroot_to(server_t *s, const char *dir)
@@ -568,7 +570,7 @@ static int server_child_serve(server_t *s, backend_t *be, int ad)
     {   /* child */
 
         /* close this be listening descriptor */
-        close(be->ld);
+        U_CLOSE(be->ld);
 
         hook_call(child_init);
 
@@ -742,7 +744,7 @@ int server_stop(server_t *s)
         dbg_err_if(ctx->backend == NULL);
 
         /* close child listening sockets to force accept(2) to exit */
-        close(ctx->backend->ld);
+        U_CLOSE(ctx->backend->ld);
     }
 
     /* stop the parent process */
@@ -834,9 +836,22 @@ err:
     return ~0;
 }
 
+#if defined(OS_UNIX) && defined(HAVE_FORK)
+/* a spare prefork worker waited idle_timeout seconds for a client: exit, so
+ * that the pool shrinks back after a burst (closing the listening socket
+ * ends the accept(2), which SIGALRM does not interrupt) */
+static int server_cb_spare_idle(talarm_t *al, void *arg)
+{
+    u_unused_args(al);
+
+    return server_stop((server_t*)arg);
+}
+#endif
+
 static int server_dispatch(server_t *s, int fd)
 {
     backend_t *be;
+    talarm_t *al = NULL;
     int ad = -1, rc;
 
     dbg_err_if (s == NULL);
@@ -849,8 +864,18 @@ static int server_dispatch(server_t *s, int fd)
     if(be == NULL) /* a child is ppc-calling */
         return server_process_ppc(s, fd);
 
+#if defined(OS_UNIX) && defined(HAVE_FORK)
+    /* a spare worker exits if no client comes for a while */
+    if(server_spare && be->idle_timeout > 0)
+        dbg_err_if(timerm_add(be->idle_timeout, server_cb_spare_idle, 
+                    (void*)s, &al));
+#endif
+
     /* accept the pending connection */
-    dbg_err_if(server_be_accept(s, be, &ad));
+    rc = server_be_accept(s, be, &ad);
+    if(al)
+        timerm_del(al);
+    dbg_err_if(rc);
 
     /* Disable Nagle on the socket. Note that this may fail if the socket is 
      * in the UNIX family or it is using the SCTP transport instead of TCP. */
@@ -885,14 +910,19 @@ int server_cb_klog_flush(talarm_t *a, void *arg)
 int server_spawn_child(server_t *s, backend_t *be)
 {
     size_t c;
-    int rc;
+    int rc, spare;
 
     dbg_err_if (s == NULL);
     dbg_err_if (be == NULL);
 
+    /* a worker beyond start_child is a spare (see server_cb_spare_idle) */
+    spare = (be->nchild >= be->start_child);
+
     dbg_err_if((rc = server_fork_child(s, be)) < 0);
     if(rc > 0)
         return 0; /* parent */
+
+    server_spare = spare;
 
     /* call the hook that runs the on-child user code */
     hook_call(child_init);
@@ -903,7 +933,12 @@ int server_spawn_child(server_t *s, backend_t *be)
     for(c = 0; !s->stop && c < be->max_rq_xchild; ++c)
     {
         /* wait for a new client (will block on accept(2)) */
-        dbg_err_if(server_dispatch(s, be->ld));
+        rc = server_dispatch(s, be->ld);
+
+        /* stopped while waiting (e.g. an idle spare worker): not an error */
+        if(s->stop)
+            break;
+        dbg_err_if(rc);
     }
 
     /* before child shutdowns call the term hook */

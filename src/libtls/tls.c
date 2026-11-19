@@ -171,6 +171,10 @@ static int tls_context (SSL_CTX **pc)
     dbg_err_if (SSL_CTX_set_min_proto_version(c, TLS1_2_VERSION) != 1);
     SSL_CTX_set_options(c, SSL_OP_NO_COMPRESSION);
 
+    /* free the read/write buffers (~34 KB) of a connection while it is idle,
+       e.g. between requests on a kept-alive connection */
+    (void) SSL_CTX_set_mode(c, SSL_MODE_RELEASE_BUFFERS);
+
     *pc = c;
 
     return 0;

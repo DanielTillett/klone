@@ -320,7 +320,7 @@ def run_keep_alive_checks(args, check, plain, secure, request):
 
     # a client waiting while every worker holds a kept-alive connection gets a
     # new worker after about a second, not when that connection ends
-    stop, held_errors, waited = threading.Event(), [], None
+    stop, held_errors, waited, spare = threading.Event(), [], None, ""
 
     def keep_using(conn):
         try:
@@ -338,10 +338,10 @@ def run_keep_alive_checks(args, check, plain, secure, request):
         user.start()
         try:
             start = time.time()
-            waiting.send(request)
+            waiting.send(get(b"/pid.kl1"))
             status, headers, body = waiting.response()
-            if body == hello:
-                waited = time.time() - start
+            if body.strip().isdigit():
+                waited, spare = time.time() - start, body.strip().decode()
         except (OSError, EOFError):
             pass
         finally:
@@ -350,6 +350,14 @@ def run_keep_alive_checks(args, check, plain, secure, request):
     check(waited is not None and waited < 3,
           f"Client not served while another kept a connection in use (waited {waited})")
     check(not held_errors, f"Kept-alive connection dropped for a waiting client: {held_errors}")
+
+    # the worker started for the waiting client is a spare: it exits after
+    # prefork.idle_timeout (1 s) without a client, so the pool shrinks back
+    time.sleep(3)
+    state = subprocess.run(["ps", "-o", "stat=", "-p", spare or "0"],
+                           stdout=subprocess.PIPE, text=True).stdout.strip()
+    check(spare and (not state or state.startswith("Z")),
+          f"Idle spare worker {spare} still running: state {state!r}")
 
     # an idle connection is closed after keep_alive_timeout (1 s)
     with Connection(plain) as conn:
@@ -403,6 +411,7 @@ def run_server_checks(args, env, output, daemon):
     keep_alive_timeout 1
     prefork.start_child 1
     prefork.max_child 2
+    prefork.idle_timeout 1
     session
     {{
         type {session}

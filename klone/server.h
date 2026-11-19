@@ -32,7 +32,8 @@ enum {
 
     /* prefork server model limits */
     SERVER_PREFORK_START_CHILD = 2, /* # of child to run on startup           */
-    SERVER_PREFORK_MAX_RQ_CHILD = 10000 /* max # of rq a process can serve    */
+    SERVER_PREFORK_MAX_RQ_CHILD = 10000, /* max # of rq a process can serve   */
+    SERVER_PREFORK_IDLE_TIMEOUT = 10 /* secs before an idle spare worker exits */
 };
 
 enum { 

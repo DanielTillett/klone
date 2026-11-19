@@ -933,8 +933,9 @@ int translate(trans_info_t *pti)
 #ifdef HAVE_LIBZ
         if(pti->comp)
         {
-            /* set a compression filter to the input stream */
-            dbg_err_if(codec_gzip_create(GZIP_COMPRESS, &gzip));
+            /* set a compression filter to the input stream (zlib format:
+               the data can be sent as is with Content-Encoding: deflate) */
+            dbg_err_if(codec_gzip_create(ZLIB_COMPRESS, &gzip));
             dbg_err_if(io_codec_add_tail(in, gzip));
             gzip = NULL;
         }

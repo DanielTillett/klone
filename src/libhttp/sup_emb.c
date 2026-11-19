@@ -132,7 +132,9 @@ static int supemb_static_set_header_fields(request_t *rq, response_t *rs,
        resource but send as it is (if enabled by config) */
     if(vhost->send_enc_deflate)
     {
-        if(e->comp && (*sai = request_is_encoding_accepted(rq, "deflate")) != 0)
+        /* only zlib data is HTTP's "deflate" (older raw data is not) */
+        if(e->comp == EMB_COMP_ZLIB &&
+                (*sai = request_is_encoding_accepted(rq, "deflate")) != 0)
         {   /* we can send compressed responses */
             dbg_err_if(response_set_content_encoding(rs, "deflate"));
             dbg_err_if(response_set_content_length(rs, e->size));
@@ -409,7 +411,8 @@ static int supemb_serve_static(request_t *rq, response_t *rs, embfile_t *e)
 #ifdef HAVE_LIBZ
     /* if needed apply a gzip codec to uncompress content data */
     if(e->comp && !sai)
-        dbg_err_if(codec_gzip_create(GZIP_UNCOMPRESS, &gzip));
+        dbg_err_if(codec_gzip_create(e->comp == EMB_COMP_ZLIB ?
+                    ZLIB_UNCOMPRESS : GZIP_UNCOMPRESS, &gzip));
 #endif
 
 #ifdef SSL_ON

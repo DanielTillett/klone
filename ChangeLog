@@ -37,6 +37,12 @@ Klin 4.0.0:
 	  file stored compressed is cut after it is uncompressed. Encrypted
 	  files get no ETag (it would let anyone test a guess of the content).
 	  New status codes 206 and 416
+	- send_enc_deflate: embedded files are now compressed in zlib format,
+	  which is what "Content-Encoding: deflate" means in HTTP (RFC 9110
+	  8.4.1.2); they used to be sent as raw deflate data, which strict
+	  clients reject. Files translated by an older klin (raw data) are
+	  still served, uncompressed. Client sessions and compressed page
+	  blocks keep their raw format (codec ZLIB_* modes are new)
 	- Server-Sent Events (doc/SSE, <klin/sse.h>): sse_start(), sse_send()
 	  (multi-line data), sse_comment(), sse_retry(), sse_last_event_id()
 	  and sse_wait(), which polls the client socket (to see it close), a

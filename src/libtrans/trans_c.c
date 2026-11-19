@@ -17,6 +17,7 @@
 #include <klin/os.h>
 #include <klin/translat.h>
 #include <klin/parser.h>
+#include <klin/emb.h>
 #include <klin/utils.h>
 #include <klin/codecs.h>
 
@@ -291,7 +292,7 @@ static void print_static_page_block(io_t *out, lang_c_ctx_t *ctx)
         "   e.comp = %d;                    \n"
         "   e.encrypted = %d;               \n",
         (unsigned long) ctx->ti->mtime,
-        ctx->ti->comp,
+        ctx->ti->comp ? EMB_COMP_ZLIB : EMB_COMP_NONE,
         ctx->ti->encrypt);
     /* hex digits only: no escaping needed */
     if(ctx->ti->etag[0])

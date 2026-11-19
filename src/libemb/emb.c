@@ -130,7 +130,8 @@ int emb_open(const char *file, io_t **pio)
 #ifdef HAVE_LIBZ
     if(e->comp)
     {
-        dbg_err_if(codec_gzip_create(GZIP_UNCOMPRESS, &gzip));
+        dbg_err_if(codec_gzip_create(e->comp == EMB_COMP_ZLIB ?
+                    ZLIB_UNCOMPRESS : GZIP_UNCOMPRESS, &gzip));
         dbg_err_if(io_codec_add_tail(io, (codec_t*)gzip));
         gzip = NULL;
     }

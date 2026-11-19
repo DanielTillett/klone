@@ -151,20 +151,27 @@ int codec_gzip_create(int op, codec_t **piz)
     iz->codec.transform = gzip_transform;
     iz->codec.flush = gzip_flush;
     iz->codec.free = gzip_free;
-    iz->action = op; 
 
+    /* the action is compress or uncompress; the zlib formats differ only
+       in the window bits (negative: raw deflate, no header) */
     switch(op)
     {
     case GZIP_COMPRESS:
+    case ZLIB_COMPRESS:
+        iz->action = GZIP_COMPRESS;
         iz->op = deflate;
         iz->opEnd = deflateEnd;
         dbg_err_if(deflateInit2(&iz->zstr, Z_DEFAULT_COMPRESSION, Z_DEFLATED,
-                    -MAX_WBITS, 8, Z_DEFAULT_STRATEGY));
+                    op == ZLIB_COMPRESS ? MAX_WBITS : -MAX_WBITS, 8,
+                    Z_DEFAULT_STRATEGY));
         break;
     case GZIP_UNCOMPRESS:
+    case ZLIB_UNCOMPRESS:
+        iz->action = GZIP_UNCOMPRESS;
         iz->op = inflate;
         iz->opEnd = inflateEnd;
-        dbg_err_if(inflateInit2(&iz->zstr, -MAX_WBITS) != Z_OK);
+        dbg_err_if(inflateInit2(&iz->zstr,
+                    op == ZLIB_UNCOMPRESS ? MAX_WBITS : -MAX_WBITS) != Z_OK);
         break;
     default:
         dbg_err_if("bad gzip op");

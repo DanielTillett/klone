@@ -29,6 +29,13 @@ enum {
     ET_PAGE                 /* dynamic web page             */
 };
 
+/* embfile_t.comp */
+enum {
+    EMB_COMP_NONE = 0,      /* stored as is                                   */
+    EMB_COMP_RAW = 1,       /* raw deflate (translated before Klin 4.0.0)     */
+    EMB_COMP_ZLIB = 2       /* zlib: HTTP's "deflate", sent as stored         */
+};
+
 /* define resource list */
 LIST_HEAD(emblist_s, embres_s);
 
@@ -46,7 +53,7 @@ typedef struct embfile_s
     embres_t res;           /* any emb resource must start with a embres_t    */
     size_t size;            /* size of the data block                         */
     const unsigned char *data; /* file data                                   */
-    int comp;               /* if data is compressed                          */
+    int comp;               /* how data is compressed (EMB_COMP_*)            */
     int encrypted;          /* if data is encrypted                           */
     time_t mtime;           /* time of last modification                      */
     const char *mime_type;  /* guessed mime type                              */

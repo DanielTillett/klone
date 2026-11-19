@@ -35,10 +35,6 @@ PLANNED: FEATURES AND TESTING
 * Streaming file uploads: a per-chunk upload callback, so large uploads do
   not have to be held in memory or a temporary file (important on small
   devices).
-* send_enc_deflate sends embedded files as stored, raw deflate data, with
-  "Content-Encoding: deflate", which HTTP defines as zlib-wrapped data
-  (RFC 9110 8.4.1.2). Browsers accept both; strict clients may not. Store
-  zlib data (or send gzip) and change the import format together.
 * Code coverage reporting in CI, to show what the test suites miss.
 * Longer fuzzing campaigns (the parsers and the page translator have a
   fuzz target; CI runs a short smoke test).

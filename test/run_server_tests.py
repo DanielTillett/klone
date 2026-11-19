@@ -658,7 +658,7 @@ def run_conditional_checks(check, plain, files):
     tag = re.search(rb'(?im)^etag: *("[0-9a-f]{32}-deflate")', head)
     check(b" 200 " in head.split(b"\r\n")[0] and b"content-encoding: deflate" in head.lower() and
           tag and b"accept-ranges" not in head.lower() and
-          zlib.decompress(body, -zlib.MAX_WBITS) == data,     # raw deflate (TODO)
+          zlib.decompress(body) == data,      # zlib format, as HTTP defines it
           f"Deflated representation: {head!r}")
     if tag:
         reply = exchange(files, b"GET /range-z.txt HTTP/1.1\r\nHost: localhost\r\n" + deflate +

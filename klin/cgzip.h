@@ -16,8 +16,11 @@ extern "C" {
 
 /* the codec [un]compresses (using libz) the stream to whom it's applied */
 
-/* possibile values for io_gzip_create */
-enum { GZIP_COMPRESS, GZIP_UNCOMPRESS };
+/* possibile values for io_gzip_create: GZIP_* work on raw deflate data
+   (client sessions, compressed page blocks), ZLIB_* on zlib-wrapped data,
+   which is what HTTP's "Content-Encoding: deflate" means (RFC 9110
+   8.4.1.2), for embedded files */
+enum { GZIP_COMPRESS, GZIP_UNCOMPRESS, ZLIB_COMPRESS, ZLIB_UNCOMPRESS };
 
 int codec_gzip_create(int operation, codec_t **pioz);
 

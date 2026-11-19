@@ -51,13 +51,21 @@ def free_port():
         return sock.getsockname()[1]
 
 
-def fetch_all(daemon, temp, paths):
-    port = free_port()
-    config = temp / "klind.conf"
-    config.write_text(f"server_list h\nallow_root yes\nh\n{{\n type http\n addr tcp4://127.0.0.1:{port}\n"
-                      " dir_root /www\n}\n")
-    process = subprocess.Popen([str(daemon), "-F", "-d", "-f", str(config)],
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+def site_config(port):
+    return (f"server_list h\nallow_root yes\nh\n{{\n type http\n addr tcp4://127.0.0.1:{port}\n"
+            " dir_root /www\n}\n")
+
+
+def fetch_all(daemon, temp, paths, embedded_port=None):
+    """Serve 'paths' with a -f configuration, or, given embedded_port, with
+    the configuration embedded in the site (listening on that port)."""
+    port = embedded_port or free_port()
+    command = [str(daemon), "-F", "-d"]
+    if not embedded_port:
+        config = temp / "klind.conf"
+        config.write_text(site_config(port))
+        command += ["-f", str(config)]
+    process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         for _ in range(100):
             try:
@@ -97,9 +105,15 @@ def main():
         (www / "part#1.inc").write_text("<% io_printf(out, \"part-one\\n\"); %>\n")
         (www / "index.kl1").write_text('<%@ include "part#1.inc" %>\n'
                                        '<% io_printf(out, "flag=%s\\n", KLIN_CHECK_STR); %>\n')
-        # a page written for KLone (renamed Klin): old header and names
+        # a page written for KLone (renamed Klin): old header and names, a
+        # page with the old .klone extension, and the configuration
+        # embedded under its old name, /etc/kloned.conf
         (www / "old.kl1").write_text('<%! #include <klone/utils.h> %>\n'
                                      '<% io_printf(out, "old=%s\\n", KLONE_VERSION); %>\n')
+        (www / "legacy.klone").write_text('<% io_printf(out, "legacy-%s\\n", "page"); %>\n')
+        embedded_port = free_port()
+        (site / "etc").mkdir()
+        (site / "etc/kloned.conf").write_text(site_config(embedded_port))
         names = {"trailing]": "t\n", "x]==]y.txt": "b\n", "hash#name.txt": "h\n", "skip.bak": "s\n",
                  "secret.txt": "encrypted at rest\n"}
         if gnu_or_ninja:
@@ -124,10 +138,24 @@ def main():
         check("KLONE_SITE_DIR is now KLIN_SITE_DIR" in " ".join(out.split()),
               "no deprecation warning for KLONE_SITE_DIR")
         version = (ROOT / "VERSION").read_text().strip()
-        served = fetch_all(b / "bin/klind", temp, ["index.kl1", "old.kl1", *names])
+        served = fetch_all(b / "bin/klind", temp, ["index.kl1", "old.kl1", "legacy.klone", *names])
         check("part-one" in str(served["index.kl1"]), f"page include not served: {served['index.kl1']!r}")
         check("flag=escaped" in str(served["index.kl1"]), f"escaped flag lost: {served['index.kl1']!r}")
         check(f"old={version}" in str(served["old.kl1"]), f"KLone-era page failed: {served['old.kl1']!r}")
+        # run as a page: its output, not its source (the page's last
+        # newline is HTML and is sent too)
+        check(str(served["legacy.klone"]).strip() == "legacy-page",
+              f".klone page not run as a page: {served['legacy.klone']!r}")
+        embedded = fetch_all(b / "bin/klind", temp, ["old.kl1"], embedded_port)
+        check(f"old={version}" in str(embedded["old.kl1"]),
+              f"embedded /etc/kloned.conf not used: {embedded['old.kl1']!r}")
+
+        # a second configure keeps the site given as KLONE_SITE_DIR (moved
+        # to KLIN_SITE_DIR in the cache, the old entry removed)
+        rc, out = run(["cmake", "-S", str(ROOT), "-B", str(b)])
+        cache = (b / "CMakeCache.txt").read_text()
+        check(rc == 0 and f"KLIN_SITE_DIR:PATH={site}" in cache and "\nKLONE_SITE_DIR:" not in cache,
+              f"KLONE_SITE_DIR lost on reconfigure:\n{out[-2000:]}")
         site_library = (b / "lib").glob("*site*")
         for name, body in names.items():
             if name.endswith(".bak"):
@@ -196,6 +224,18 @@ def main():
             for old, new in [("bin/klone", "klin"), ("sbin/kloned", "klind")]:
                 link = prefix / old
                 check(link.is_symlink() and os.readlink(link) == new, f"{old} is not a link to {new}")
+
+            # the links follow an absolute install directory, under DESTDIR
+            tools = temp / "tools-bin"
+            rc, out = run(["cmake", "-S", str(ROOT), "-B", str(b), f"-DCMAKE_INSTALL_BINDIR={tools}"])
+            check(rc == 0, f"reconfigure with an absolute bindir failed:\n{out[-2000:]}")
+            stage = temp / "stage"
+            rc, out = run(["cmake", "--install", str(b), "--prefix", "/opt/klin"],
+                          env={**os.environ, "DESTDIR": str(stage)})
+            link = Path(str(stage) + str(tools)) / "klone"
+            check(rc == 0 and link.is_symlink() and os.readlink(link) == "klin"
+                  and (link.parent / "klin").exists(),
+                  f"klone link not next to klin in an absolute bindir:\n{out[-2000:]}")
 
     print(f"{checks} build-system checks passed ({args.generator}{' ' + program if program else ''})")
 

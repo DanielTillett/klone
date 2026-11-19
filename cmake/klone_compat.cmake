@@ -5,20 +5,31 @@
 # and KLONE_* names and, on install, the klone and kloned commands. Remove
 # this file (and its three calls in CMakeLists.txt) in the next release.
 
-# KLONE_* settings (-DKLONE_SITE_DIR=...) set the KLIN_* ones, with a warning.
-# Called before the option() and set(CACHE) declarations, which keep a normal
-# variable that is already set.
-macro(klone_compat_options)
-    foreach(_kc_name DEBUG ENABLE_SUP_FS ENABLE_SUP_CGI ENABLE_HOOKS
-            ENABLE_WARNINGS STACK_PROTECTOR INSTALL_DAEMON_ONLY WITH_OPENSSL
-            WITH_ZLIB DAEMON_NAME SITE_DIR IMPORT_ARGS WEBAPP_SOURCES)
-        if(DEFINED KLONE_${_kc_name} AND NOT DEFINED KLIN_${_kc_name})
-            message(DEPRECATION
-                "KLONE_${_kc_name} is now KLIN_${_kc_name} (KLone was renamed Klin)")
-            set(KLIN_${_kc_name} "${KLONE_${_kc_name}}")
+# KLONE_* settings (-DKLONE_SITE_DIR=...) move to the KLIN_* cache entries,
+# with a warning, and the KLONE_* entry is removed: the value then stays in
+# the cache under its new name on every later configure. A KLONE_* entry is
+# only there when it was just given, so it replaces any KLIN_* value (also
+# one left from an earlier configure). Called before the option() and
+# set(CACHE) declarations, which keep a cache entry that already exists.
+function(klone_compat_options)
+    foreach(_spec DEBUG:BOOL ENABLE_SUP_FS:BOOL ENABLE_SUP_CGI:BOOL
+            ENABLE_HOOKS:BOOL ENABLE_WARNINGS:BOOL STACK_PROTECTOR:BOOL
+            INSTALL_DAEMON_ONLY:BOOL WITH_OPENSSL:BOOL WITH_ZLIB:BOOL
+            DAEMON_NAME:STRING SITE_DIR:PATH IMPORT_ARGS:STRING
+            WEBAPP_SOURCES:STRING)
+        string(REPLACE ":" ";" _spec "${_spec}")
+        list(GET _spec 0 _name)
+        list(GET _spec 1 _type)
+        if(NOT DEFINED CACHE{KLONE_${_name}})
+            continue()
         endif()
+        message(DEPRECATION
+            "KLONE_${_name} is now KLIN_${_name} (KLone was renamed Klin)")
+        set(KLIN_${_name} "$CACHE{KLONE_${_name}}" CACHE ${_type}
+            "Set from KLONE_${_name}" FORCE)
+        unset(KLONE_${_name} CACHE)
     endforeach()
-endmacro()
+endfunction()
 
 # <klone/X.h> for each <klin/X.h>, klone_conf.h and klone_compat.h, in the
 # generated include directory (on the include path of Klin, the site and the
@@ -74,8 +85,14 @@ function(klone_compat_install include_dir)
         list(GET _parts 0 _dir)
         list(GET _parts 1 _target)
         list(GET _parts 2 _name)
+        # the directory as install(TARGETS) uses it: an absolute one as is,
+        # a relative one under the install prefix; DESTDIR goes in front
         install(CODE "
-            set(_d \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${_dir}\")
+            set(_d \"${_dir}\")
+            if(NOT IS_ABSOLUTE \"\${_d}\")
+                set(_d \"\${CMAKE_INSTALL_PREFIX}/\${_d}\")
+            endif()
+            set(_d \"\$ENV{DESTDIR}\${_d}\")
             file(CREATE_LINK \"${_target}\" \"\${_d}/${_name}\" SYMBOLIC)
             message(STATUS \"Installing: \${_d}/${_name} -> ${_target}\")
         ")

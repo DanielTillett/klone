@@ -2056,8 +2056,10 @@ static int request_load_config(request_t *rq)
         if((v = u_config_get_subkey_value(c, "post_maxsize")) != NULL)
             vhost->rq_post_maxsize = U_MAX(1024, atoi(v));
 
-        /* temp dir to use on file upload.  when 'NULL' use system default */
-        vhost->rq_temp_dir = u_config_get_subkey_value(c, "temp_dir");
+        /* temp dir to use on file upload.  when 'NULL' use system default
+           (a copy owned by the vhost) */
+        if((v = u_config_get_subkey_value(c, "temp_dir")) != NULL)
+            dbg_err_if((vhost->rq_temp_dir = u_strdup(v)) == NULL);
 
         vhost->rq_config_loaded = 1;
     }

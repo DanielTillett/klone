@@ -28,7 +28,9 @@ context_t  *ctx = &c; /* exported */
 #ifdef OS_WIN
     /* Win32 service name and description */
     enum { SS_NAME_BUFSZ = 64, SS_DESC_BUFSZ = 256 };
-    static char ss_name[SS_NAME_BUFSZ] = "klind";
+    /* the service keeps the name KLone gave it, so that services installed
+       before KLone was renamed Klin can still be removed and run */
+    static char ss_name[SS_NAME_BUFSZ] = "kloned";
     static char ss_desc[SS_DESC_BUFSZ] = "klind daemon";
 
     int InstallService(); 

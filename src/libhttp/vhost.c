@@ -29,7 +29,10 @@ int vhost_free(vhost_t *v)
 {
     dbg_err_if(v == NULL);
 
+    while(v->alias && v->nalias)
+        u_free(v->alias[--v->nalias]);
     u_free(v->alias);
+    u_free(v->rq_temp_dir);
     u_free(v);
 
     return 0;

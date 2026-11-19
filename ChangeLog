@@ -9,9 +9,17 @@ Klin 4.0.0:
 	  still work in 4.x (README, RENAMED FROM KLONE): forwarding <klone/...>
 	  headers and klone_conf.h with the old klone_*/KLONE_* names, KLONE_*
 	  CMake settings (with a deprecation warning), klone and kloned links
-	  on install, and klone_sid, KLONE_CIPHER_KEY and /index.klone are read.
-	  All of it is in cmake/klone_compat.cmake and the few lines marked
-	  "before KLone was renamed Klin"
+	  on install, and klone_sid, KLONE_CIPHER_KEY, .klone pages (and
+	  /index.klone), an embedded /etc/kloned.conf and klone_sess_* session
+	  files are read. KLONE_* CMake settings move to the KLIN_* cache
+	  entries, so they survive a reconfigure. The Windows service keeps
+	  the name kloned. All of it is in cmake/klone_compat.cmake and the
+	  lines marked "before KLone was renamed Klin"
+	- vhost: the cached dir_alias/script_alias values and temp_dir are
+	  copies owned by the vhost; timer: the clock is read with the alarms
+	  blocked, and deleting the earliest alarm sets SIGALRM sooner if the
+	  next one is due before it; session_get_cipher_key() no longer frees
+	  a variable still in the session on error
 	- performance: request header lines are read straight from the
 	  connection buffer into a stack buffer and parsed there (no string
 	  object per line); header_get_fieldn() goes on from the last field

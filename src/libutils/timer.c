@@ -362,16 +362,20 @@ static void timerm_adopt(void)
 int timerm_reschedule(talarm_t *al, int secs, talarm_cb_t cb, void *arg)
 {
     talarm_t *item = NULL;
-    int64_t now = timerm_now();
+    int64_t now;
 
     dbg_return_if (cb == NULL, ~0);
     dbg_return_if (al == NULL, ~0);
 
+    dbg_err_if(timerm_block_alarms());
+
+    /* read the clock with the alarms blocked: a SIGALRM handled before
+       (its callbacks may take a while) would make an earlier reading old */
+    now = timerm_now();
+
     al->cb = cb;
     al->arg = arg;
     al->expire = now + (int64_t) secs * 1000;
-
-    dbg_err_if(timerm_block_alarms());
 
     timerm_adopt();
 
@@ -456,12 +460,18 @@ int timerm_del(talarm_t *a)
 
     dbg_err_if(timerm_block_alarms());
 
-    /* if not expired remove it from the list */
+    /* if not expired remove it from the list; the SIGALRM already set
+       stays, as it can only come early for the alarms left (timerm_run()
+       then sets it again). When the earliest alarm goes, set it sooner if
+       the next one is due before it (whole-second rounding) */
     if(timerm_alarm_pending(a))
-        TAILQ_REMOVE(&timer->alist, a, np);
+    {
+        int head = (TAILQ_FIRST(&timer->alist) == a);
 
-    /* the SIGALRM already set stays: it can only come early for the alarms
-       left, and timerm_run() then sets it again for the earliest one */
+        TAILQ_REMOVE(&timer->alist, a, np);
+        if(head && TAILQ_FIRST(&timer->alist))
+            timerm_set_next(timerm_now());
+    }
 
     dbg_err_if(timerm_unblock_alarms());
 

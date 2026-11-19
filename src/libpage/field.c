@@ -8,6 +8,7 @@
  */
 
 #include "klin_conf.h"
+#include <stdint.h>
 #include <string.h>
 #include <klin/field.h>
 #include <klin/utils.h>
@@ -25,10 +26,14 @@ enum { FIELD_CACHE_MAX = 64, FIELD_BUF_KEEP = 256, FIELD_BUF_MIN = 64 };
 static field_t *field_cache[FIELD_CACHE_MAX];
 static size_t field_ncached = 0;
 
-/* does 'p' point into the buffer of field 'f'? */
+/* does 'p' point into the buffer of field 'f'? (compared as addresses: 'p'
+   is usually some other object, and relational operators on pointers into
+   different objects are undefined) */
 static int field_in_buf(field_t *f, const char *p)
 {
-    return p && f->buf && p >= f->buf && p < f->buf + f->bufsz;
+    uintptr_t a = (uintptr_t) p, b = (uintptr_t) f->buf;
+
+    return p && f->buf && a >= b && a - b < f->bufsz;
 }
 
 /* store 'name' ('nlen' bytes) and 'value' in the field buffer, reused if

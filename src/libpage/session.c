@@ -11,6 +11,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 #include <ctype.h>
@@ -36,6 +37,21 @@ static const char SID_NAME[] = "klin_sid";
 /* the cookie's name before KLone was renamed Klin: still read for one
    release, so an upgrade does not log every user out */
 static const char SID_NAME_OLD[] = "klone_sid";
+
+/* a page written before KLone was renamed Klin may set the cipher key under
+   its old name: give it the new one, so it is saved and found as the key */
+static void session_adopt_old_key_var(session_t *ss)
+{
+    var_t *v;
+
+    if((v = vars_get(ss->vars, SESSION_KEY_VAR_OLD)) == NULL)
+        return;
+
+    if(vars_get(ss->vars, SESSION_KEY_VAR) == NULL)
+        dbg_if(var_set_name(v, SESSION_KEY_VAR));
+    else if(!vars_del(ss->vars, v))     /* the new name wins */
+        var_free(v);
+}
 
 int session_set_cookie(session_t *ss, const char *name, const char *value,
     time_t expire, const char *path, const char *domain, int secure)
@@ -294,13 +310,23 @@ static int session_is_good_id(const char *id)
 static int session_set_filename(session_t *ss)
 {
     const char *a = NULL;
+    char old[U_FILENAME_MAX];
+    struct stat st;
 
     dbg_return_if (ss->id[0] == '\0', ~0);
 
     dbg_err_if((a = request_get_addr(ss->rq)) == NULL);
 
-    dbg_err_if(u_path_snprintf(ss->filename, U_FILENAME_MAX, 
+    dbg_err_if(u_path_snprintf(ss->filename, U_FILENAME_MAX,
             U_PATH_SEPARATOR, "%s/klin_sess_%s_%s", ss->so->path, ss->id, a));
+
+    /* a session file saved before KLone was renamed Klin: take it over
+       under the new name, so loading, saving and removal all use one file */
+    if(ss->so->type == SESSION_TYPE_FILE && stat(ss->filename, &st) != 0 &&
+            !u_path_snprintf(old, U_FILENAME_MAX, U_PATH_SEPARATOR,
+                "%s/klone_sess_%s_%s", ss->so->path, ss->id, a) &&
+            stat(old, &st) == 0)
+        dbg_if(rename(old, ss->filename));
 
     return 0;
 err:
@@ -782,6 +808,8 @@ int session_get_cipher_key(session_t *ss, char *buf, size_t *psz)
     dbg_err_if(psz == 0);
     dbg_err_if(*psz == 0);
 
+    session_adopt_old_key_var(ss);
+
     nop_err_if((v = vars_get(ss->vars, SESSION_KEY_VAR)) == NULL);
 
     vsize = var_get_value_size(v);
@@ -794,8 +822,7 @@ int session_get_cipher_key(session_t *ss, char *buf, size_t *psz)
 
     return 0;
 err:
-    if(v)
-        var_free(v);
+    /* v (if any) belongs to ss->vars */
     return ~0;
 }
 
@@ -831,6 +858,9 @@ int session_prv_save_to_io(session_t *ss, io_t *out)
     /* pass io and session pointers to the callback function */
     prm.io = out;
     prm.ss = ss;
+
+    /* so a key set by an older page is saved (encrypted) as the key */
+    session_adopt_old_key_var(ss);
 
     vars_foreach(ss->vars, session_prv_save_var, (void*)&prm);
 

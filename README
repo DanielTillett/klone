@@ -247,13 +247,17 @@ will be removed in the next major release:
     klone_sid (session cookie)     klin_sid             read, never set
     KLONE_CIPHER_KEY (session      KLIN_CIPHER_KEY      read (saved sessions,
     variable, environment)                              pages, the klin tool)
-    /index.klone                   /index.klin          both are index pages
+    .klone pages, /index.klone     .klin, /index.klin   both are pages
+    /etc/kloned.conf embedded      /etc/klind.conf      used when there is
+    in the site                                         no /etc/klind.conf
+    klone_sess_* session files     klin_sess_*          renamed when used
     Server: klone/<version>        Server: klin/...     -
 
 Unchanged: the .kl1 (and .klx, .klc) page extensions, the KL1_CLISES_*
-client-session cookies, the configuration file format and the installed
-library names (libhttp.a, libutils.a ...). kloned.conf files work as they
-are; only the example and manual names changed (klind.conf).
+client-session cookies, the configuration file format, the Windows service
+name (kloned) and the installed library names (libhttp.a, libutils.a ...).
+A kloned.conf given with -f works as it is; only the example and manual
+names changed (klind.conf).
 
 
 SECURITY AND COMPATIBILITY CHANGES

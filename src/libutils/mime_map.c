@@ -32,7 +32,8 @@ mime_map_t mime_map[] = {
     { "csh",        "application/x-csh",                1 }, 
     { "css",        "text/css",                         1 }, 
     { "kl1",        "text/html",                        1 }, 
-    { "klin",      "text/html",                        1 }, 
+    { "klin",       "text/html",                        1 },
+    { "klone",      "text/html",                        1 }, /* old name */
     { "dcr",        "application/x-director",           1 }, 
     { "dir",        "application/x-director",           1 }, 
     { "djv",        "image/vnd.djvu",                   1 }, 

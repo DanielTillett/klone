@@ -1186,7 +1186,7 @@ static int server_setup_backend(server_t *s, backend_t *be)
 
     return 0;
 err:
-    u_warn("'addr' syntax has changed with klin 3: check libu URI format");
+    u_warn("'addr' syntax has changed with KLone 3: check libu URI format");
     return ~0;
 }
 

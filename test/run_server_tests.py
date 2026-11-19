@@ -395,12 +395,15 @@ def run_server_checks(args, env, output, daemon):
         subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
                         "-keyout", str(key), "-out", str(cert), "-days", "1", "-subj", "/CN=localhost"],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        plain, client, secure = free_port(), free_port(), free_port()
+        plain, client, secure, files = free_port(), free_port(), free_port(), free_port()
+        sessions = temp / "sessions"
+        sessions.mkdir()
         config = temp / "klind.conf"
         blocks = []
         for name, port, tls, session in [("plain", plain, False, "memory"),
                                          ("client", client, False, "client"),
-                                         ("secure", secure, True, "client")]:
+                                         ("secure", secure, True, "client"),
+                                         ("files", files, False, f"file\n        file.path {sessions}")]:
             blocks.append(f"""{name}
 {{
     type {'https' if tls else 'http'}
@@ -420,7 +423,7 @@ def run_server_checks(args, env, output, daemon):
     {f'key_file {key}' if tls else ''}
 }}
 """)
-        config.write_text("server_list plain client secure\nallow_root yes\n" + "\n".join(blocks))
+        config.write_text("server_list plain client secure files\nallow_root yes\n" + "\n".join(blocks))
         log_path = output / ("server-prefork-test.log" if args.prefork else "server-test.log")
         with log_path.open("w") as log:
             command = [str(daemon), "-F", "-f", str(config)]
@@ -480,7 +483,7 @@ def run_server_checks(args, env, output, daemon):
                         check(True, "")
                     else:
                         check(False, f"Accepted obsolete TLS: {version.name}")
-                for port, context in [(plain, None), (client, None),
+                for port, context in [(plain, None), (client, None), (files, None),
                                       (secure, client_context(ssl.TLSVersion.TLSv1_3))]:
                     cookies = {}
                     for expected in [b"new", b"persisted"]:
@@ -505,6 +508,20 @@ def run_server_checks(args, env, output, daemon):
                                          old + b"\r\n\r\n", context)
                         check(b"persisted" in reply.partition(b"\r\n\r\n")[2],
                               f"Old klone_sid cookie not accepted: {reply[:400]!r}")
+                    if port == files:
+                        # a session file saved before the rename (klone_sess_)
+                        # is taken over under the new name
+                        sid = cookies["klin_sid"]
+                        saved = list(sessions.glob(f"klin_sess_{sid}_*"))
+                        check(len(saved) == 1, f"no session file: {list(sessions.iterdir())}")
+                        old_file = saved[0].with_name(saved[0].name.replace("klin_sess_", "klone_sess_", 1))
+                        saved[0].rename(old_file)
+                        reply = exchange(port, b"GET /session.kl1 HTTP/1.1\r\nHost: localhost\r\nCookie: klone_sid=" +
+                                         sid.encode() + b"\r\n\r\n", context)
+                        check(b"persisted" in reply.partition(b"\r\n\r\n")[2],
+                              f"Old session file not loaded: {reply[:400]!r}")
+                        check(saved[0].exists() and not old_file.exists(),
+                              f"Old session file not renamed: {list(sessions.iterdir())}")
                     if "KL1_CLISES_HMAC" in cookies:
                         tag = cookies["KL1_CLISES_HMAC"]
                         cookies["KL1_CLISES_HMAC"] = ("0" if tag[0] != "0" else "1") + tag[1:]

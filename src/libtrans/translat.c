@@ -324,8 +324,9 @@ err:
 int translate_is_a_script(const char *filename)
 {
     static const char *script_ext[] = { 
-        ".klin", ".kl1", ".klc", 
+        ".klin", ".kl1", ".klc",
         ".klx",  /* C++ page */
+        ".klone", /* before KLone was renamed Klin */
         NULL 
     };
     const char **ext;

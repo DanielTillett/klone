@@ -217,6 +217,19 @@ err:
     return NULL;
 }
 
+/* append a copy of alias value 'v' (may be NULL: http_try_resolv skips it) */
+static int http_alias_add(vhost_t *vhost, const char *v)
+{
+    char *copy = NULL;
+
+    dbg_err_if(v && (copy = u_strdup(v)) == NULL);
+    vhost->alias[vhost->nalias++] = copy;
+
+    return 0;
+err:
+    return ~0;
+}
+
 /* collect the vhost's dir_alias and then cgi.script_alias values once (they
  * are tried in this order for every request) */
 static int http_load_aliases(vhost_t *vhost)
@@ -240,20 +253,23 @@ static int http_load_aliases(vhost_t *vhost)
     {
         dbg_err_if((vhost->alias = u_zalloc(n * sizeof(char*))) == NULL);
 
-        n = 0;
+        /* copies: the vhost owns them (vhost_free) */
         for(i = 0; !u_config_get_subkey_nth(vhost->config,"dir_alias", i,
                     &config); ++i)
-            vhost->alias[n++] = u_config_get_value(config);
+            dbg_err_if(http_alias_add(vhost, u_config_get_value(config)));
         for(i = 0; cgi && !u_config_get_subkey_nth(cgi, "script_alias", i,
                     &config); ++i)
-            vhost->alias[n++] = u_config_get_value(config);
+            dbg_err_if(http_alias_add(vhost, u_config_get_value(config)));
     }
 
-    vhost->nalias = n;
     vhost->alias_loaded = 1;
 
     return 0;
 err:
+    /* drop what was copied: the next request tries again */
+    while(vhost->alias && vhost->nalias)
+        u_free(vhost->alias[--vhost->nalias]);
+    U_FREE(vhost->alias);
     return ~0;
 }
 

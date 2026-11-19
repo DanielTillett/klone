@@ -103,10 +103,17 @@ int app_init(void)
                     "unable to load the configuration file: %s", 
                     ctx->ext_config);
     } else {
-        /* if -f is not used load the default embfs config file */
-        con_err_ifm(u_config_load_from_drv("/etc/klind.conf", &drv_embfs, 0,
-                    &ctx->config), 
-                    "embfs configuration file load error");
+        /* if -f is not used load the default embfs config file (a site
+           made before KLone was renamed Klin embeds /etc/kloned.conf) */
+        embres_t *res;
+        const char *conf = "/etc/klind.conf";
+
+        if(emb_lookup(conf, &res) && !emb_lookup("/etc/kloned.conf", &res))
+            conf = "/etc/kloned.conf";
+
+        con_err_ifm(u_config_load_from_drv(conf, &drv_embfs, 0,
+                    &ctx->config),
+                    "embfs configuration file load error (%s)", conf);
     }
 
     if (ctx->cmd_config) {

@@ -38,13 +38,15 @@ typedef struct vhost_s
     const char *index;      /* user-provided index page(s)                   */
     int send_enc_deflate;   /* >0 if sending deflated content is not disabled*/
 
-    /* filled on first use (see http_alias_resolv, request_load_config) */
-    const char **alias;     /* dir_alias then cgi.script_alias values        */
+    /* filled on first use (see http_alias_resolv, request_load_config);
+       like the fields above, read once: later changes to the configuration
+       are not seen. The strings are copies owned by the vhost */
+    char **alias;           /* dir_alias then cgi.script_alias values        */
     size_t nalias;
     int alias_loaded;
     int rq_config_loaded;   /* the request limits below are set              */
     size_t rq_idle_timeout, rq_post_timeout, rq_post_maxsize;
-    const char *rq_temp_dir;
+    char *rq_temp_dir;
 } vhost_t;
 
 typedef struct vhost_list_s vhost_list_t;

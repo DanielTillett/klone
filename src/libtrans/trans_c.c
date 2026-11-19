@@ -108,6 +108,25 @@ err:
     return ~0;
 }
 
+/* print 's' as a C string literal: site file names may contain any
+   character, including '"' and '\', and must not end the string early */
+static void print_c_string(io_t *out, const char *s)
+{
+    const unsigned char *c;
+
+    io_printf(out, "\"");
+    for(c = (const unsigned char *) s; *c; ++c)
+    {
+        if(*c == '"' || *c == '\\' || *c == '?')    /* '?': no trigraphs */
+            io_printf(out, "\\%c", *c);
+        else if(*c < 0x20 || *c >= 0x7f)
+            io_printf(out, "\\%03o", *c);           /* always 3 digits */
+        else
+            io_printf(out, "%c", *c);
+    }
+    io_printf(out, "\"");
+}
+
 static void print_header(parser_t *p, lang_c_ctx_t *ctx)
 {
     static const char dfun_prefix[] = "page_";
@@ -118,19 +137,17 @@ static void print_header(parser_t *p, lang_c_ctx_t *ctx)
     dbg_ifb (p == NULL) return;
     dbg_ifb (ctx == NULL) return;
 
-    (void)ctx;
-
     io_printf(p->out, "%s", copyright_hdr);
     io_printf(p->out, "#include <klin/emb.h>\n");
     io_printf(p->out, "#include <klin/dypage.h>\n");
 
-    file = ctx->ti->uri + strlen(ctx->ti->uri) - 1;
+    /* the file name part of the uri */
+    file = strrchr(ctx->ti->uri, '/');
+    file = file ? file + 1 : ctx->ti->uri;
 
-    for(; *file != '/' && file >= ctx->ti->uri; --file)
-            ;
-
-    io_printf(p->out, "static const char *SCRIPT_NAME = \"%s\";\n", 
-                ++file);
+    io_printf(p->out, "static const char *SCRIPT_NAME = ");
+    print_c_string(p->out, file);
+    io_printf(p->out, ";\n");
 
     dfun = ctx->ti->dfun; /* shortcut */
 
@@ -254,24 +271,26 @@ static void print_static_page_block(io_t *out, lang_c_ctx_t *ctx)
     dbg_ifb (ctx == NULL) return;
     dbg_ifb (ctx->ti == NULL) return;
  
-    io_printf(out, 
+    io_printf(out,
         "static embfile_t e;                \n"
         "static void res_ctor(void)         \n"
         "{                                  \n"
         "   e.res.type = ET_FILE;           \n"
-        "   e.res.filename = \"%s\";        \n"
+        "   e.res.filename = ");
+    print_c_string(out, ctx->ti->uri);
+    io_printf(out, ";\n"
         "   e.data = (const unsigned char*)data;\n"
         "   e.size = sizeof(data);          \n"
         "   e.file_size = %u;               \n"
-        "   e.mime_type = \"%s\";           \n"
+        "   e.mime_type = ",
+         /* file_size will be == to size if the file is not compressed */
+        ctx->ti->file_size);
+    print_c_string(out, u_guess_mime_type(ctx->ti->uri));
+    io_printf(out, ";\n"
         "   e.mtime = %lu;                  \n"
         "   e.comp = %d;                    \n"
         "   e.encrypted = %d;               \n"
         "}                                  \n",
-        ctx->ti->uri, 
-         /* file_size will be == to size if the file is not compressed */
-        ctx->ti->file_size, 
-        u_guess_mime_type(ctx->ti->uri), 
         (unsigned long) ctx->ti->mtime,
         ctx->ti->comp,
         ctx->ti->encrypt);
@@ -283,15 +302,16 @@ static void print_dynamic_page_block(io_t *out, lang_c_ctx_t *ctx)
     dbg_ifb (ctx == NULL) return;
     dbg_ifb (ctx->ti == NULL) return;
 
-    io_printf(out, 
+    io_printf(out,
         "static embpage_t e;                \n"
         "static void res_ctor(void)         \n"
         "{                                  \n"
         "   e.res.type = ET_PAGE;           \n"
-        "   e.res.filename = \"%s\";        \n"
+        "   e.res.filename = ");
+    print_c_string(out, ctx->ti->uri);
+    io_printf(out, ";\n"
         "   e.fun = exec_page;              \n"
-        "}                                  \n",
-        ctx->ti->uri);
+        "}                                  \n");
 }
 
 static void print_register_block(io_t *out, lang_c_ctx_t *ctx)

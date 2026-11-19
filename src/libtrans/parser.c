@@ -18,10 +18,8 @@
 
 /* parser state */
 enum { 
-    S_START, 
-    S_IN_DOUBLE_QUOTE,
-    S_IN_SINGLE_QUOTE, 
-    S_HTML, 
+    S_START,
+    S_HTML,
     S_WAIT_PERC,
     S_START_CODE, 
     S_CODE, 
@@ -43,15 +41,7 @@ static int parser_on_block(parser_t *p, const char *buf, size_t sz)
         case S_START:
             /* empty file */
             return 0;
-        case S_IN_DOUBLE_QUOTE:
-        case S_IN_SINGLE_QUOTE: 
-            if(p->state != p->prev_state)
-            {
-                p->state = p->prev_state;
-                continue;
-            } else
-                return 0;
-        case S_HTML: 
+        case S_HTML:
         case S_WAIT_PERC:
             if(sz && p->cb_html)
                 dbg_err_if(p->cb_html(p, p->cb_arg, buf, sz));
@@ -105,14 +95,6 @@ int parser_run(parser_t *p)
         case S_START:
             set_state(S_HTML);
             continue;
-        case S_IN_DOUBLE_QUOTE:
-            if(c == '"' && prev != '\\')
-                set_state(p->prev_state);
-            break;
-        case S_IN_SINGLE_QUOTE:
-            if(c == '\'' && prev != '\\')
-                set_state(p->prev_state);
-            break;
         case S_HTML:
             if(c == '<')
                 set_state(S_WAIT_PERC);

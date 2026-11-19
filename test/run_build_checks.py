@@ -156,6 +156,24 @@ def main():
         cache = (b / "CMakeCache.txt").read_text()
         check(rc == 0 and f"KLIN_SITE_DIR:PATH={site}" in cache and "\nKLONE_SITE_DIR:" not in cache,
               f"KLONE_SITE_DIR lost on reconfigure:\n{out[-2000:]}")
+
+        # page URIs are written into the generated C as escaped string
+        # literals: quotes, backslashes, trigraphs and control characters
+        # must not break it (given with -u here: CMake's own file globbing
+        # refuses such names inside a site)
+        includes = [f"-I{b / 'include'}", f"-I{b / 'libu/include'}", f"-I{ROOT}"]
+        includes += [f"-I{line.split('=', 1)[1]}" for line in cache.splitlines()
+                     if line.startswith("OPENSSL_INCLUDE_DIR:") and line.split("=", 1)[1]]
+        for source in [www / "old.kl1", www / "trailing]"]:
+            generated = temp / (source.name + ".c")
+            uri = '/d"ir\\x??=/p\x01"a\\ge' + source.suffix
+            # -u drops its first character (an MSYS workaround): the site
+            # build passes "/${uri}" too
+            rc, out = run([str(b / "bin/klin"), "-c", "translate", "-i", str(source),
+                           "-o", str(generated), "-u", "/" + uri])
+            check(rc == 0, f"translate failed for {source.name}:\n{out[-2000:]}")
+            rc, out = run(["cc", "-fsyntax-only", "-DHAVE_CONF_H", *includes, str(generated)])
+            check(rc == 0, f"generated C for an awkward URI does not compile:\n{out[-3000:]}")
         site_library = (b / "lib").glob("*site*")
         for name, body in names.items():
             if name.endswith(".bak"):

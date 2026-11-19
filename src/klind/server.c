@@ -995,17 +995,10 @@ err:
 }
 #endif
 
-int server_loop(server_t *s)
+/* chroot, drop to the configured uid/gid and refuse to run as root unless
+ * allow_root is set (the listening sockets are open by now) */
+static int server_harden(server_t *s)
 {
-    struct timeval tv;
-    int rc, fd;
-    fd_set rdfds, wrfds, exfds;
-
-    dbg_err_if (s == NULL);
-    dbg_err_if (s->config == NULL);
-
-    dbg_err_if(server_listen(s));
-
 #ifdef OS_UNIX
     /* if it's configured chroot to the dst dir */
     if(s->chroot)
@@ -1025,6 +1018,55 @@ int server_loop(server_t *s)
 
 #endif
 
+    return 0;
+err:
+    return ~0;
+}
+
+/* flush the log (the flush alarm fired) and set the alarm again */
+static int server_flush_log(server_t *s)
+{
+    klog_flush(s->klog);
+    s->klog_flush = 0;
+
+    /* the alarm has fired: it is off the list, free it (see timer.h) */
+    U_FREE(s->al_klog_flush);
+
+    dbg_err_if(timerm_add(SERVER_LOG_FLUSH_TIMEOUT, server_cb_klog_flush, s,
+                &s->al_klog_flush));
+
+    return 0;
+err:
+    return ~0;
+}
+
+/* on shutdown: SIGTERM the children, give them a second, then kill the
+ * ones still running */
+static void server_stop_children(server_t *s)
+{
+    server_term_children(s);
+
+    sleep(1);
+
+#ifdef OS_UNIX
+    server_waitpid(s);
+#endif
+    if(children_count(s->children))
+        server_kill_children(s);
+}
+
+int server_loop(server_t *s)
+{
+    struct timeval tv;
+    int rc, fd;
+    fd_set rdfds, wrfds, exfds;
+
+    dbg_err_if (s == NULL);
+    dbg_err_if (s->config == NULL);
+
+    dbg_err_if(server_listen(s));
+    dbg_err_if(server_harden(s));
+
     /* server startup hook */
     hook_call(server_init);
 
@@ -1039,17 +1081,18 @@ int server_loop(server_t *s)
         if(ctx->pipc)
             break;
 
+        /* select() changes the sets: a fresh copy every time (also after
+           an interrupted select, whose sets are undefined) */
         memcpy(&rdfds, &s->rdfds, sizeof(fd_set));
         memcpy(&wrfds, &s->wrfds, sizeof(fd_set));
         memcpy(&exfds, &s->exfds, sizeof(fd_set));
 
-    again:
         /* wake up every second */
         tv.tv_sec = 1; tv.tv_usec = 0;
 
-        rc = select(1 + s->hfd, &rdfds, &wrfds, &exfds, &tv); 
+        rc = select(1 + s->hfd, &rdfds, &wrfds, &exfds, &tv);
         if(rc == -1 && errno == EINTR)
-            goto again; /* interrupted */
+            continue; /* interrupted by a signal */
         dbg_err_if(rc == -1); /* select error */
 
 #ifdef OS_UNIX
@@ -1060,21 +1103,9 @@ int server_loop(server_t *s)
         /* parent only */
         if(ctx->pipc == 0)
         {
-            /* call klog_flush if flush timeout has expired and select() timeouts */
+            /* the log flush alarm has fired */
             if(s->klog_flush)
-            {
-                /* flush the log buffer */
-                klog_flush(s->klog);
-
-                /* reset the flag */
-                s->klog_flush = 0;
-
-                U_FREE(s->al_klog_flush);
-
-                /* re-set the timer */
-                dbg_err_if(timerm_add(SERVER_LOG_FLUSH_TIMEOUT,
-                    server_cb_klog_flush, s, &s->al_klog_flush));
-            }
+                dbg_err_if(server_flush_log(s));
 
             /* server loop hook - trigger only upon timeout and not upon client request */
             if(rc == 0)
@@ -1101,18 +1132,9 @@ int server_loop(server_t *s)
     /* server shutdown hook */
     hook_call(server_term);
 
-    /* shutdown all children */
-    server_term_children(s);
-
-    sleep(1);
-
-    /* brute kill the children still running (this tested a counter that
-       was never set, so it never happened) */
-#ifdef OS_UNIX
-    server_waitpid(s);
-#endif
-    if(children_count(s->children))
-        server_kill_children(s);
+    /* shutdown all children (the kill fallback tested a counter that was
+       never set, so it never happened before) */
+    server_stop_children(s);
 
     return 0;
 err:
@@ -1316,14 +1338,110 @@ err: /* fall through if search loop exhausted */
     return ~0;
 }
 
+/* the parent's handlers for the commands its children send */
+static int server_register_ppc(server_t *s)
+{
+    dbg_err_if(ppc_register(s->ppc, PPC_CMD_NOP, server_ppc_cb_nop, s));
+    dbg_err_if(ppc_register(s->ppc, PPC_CMD_LOG_ADD, server_ppc_cb_log_add, s));
+    dbg_err_if(ppc_register(s->ppc, PPC_CMD_LOG_GET, server_ppc_cb_log_get, s));
+#ifdef OS_UNIX
+    dbg_err_if(ppc_register(s->ppc, PPC_CMD_FORK_CHILD,
+        server_ppc_cb_fork_child, s));
+#endif
+    dbg_err_if(ppc_register(s->ppc, PPC_CMD_ACCESS_LOG,
+                server_ppc_cb_access_log, s));
+
+    return 0;
+err:
+    return ~0;
+}
+
+/* configure the server called 'name' in server_list (its config section),
+ * with id 'id', and add it to the server */
+static int server_add_backend(server_t *s, const char *name, int id,
+        int foreground)
+{
+    u_config_t *bekey = NULL, *log_c = NULL;
+    backend_t *be = NULL;
+    const char *type;
+
+    u_dbg("configuring backend: %s", name);
+
+    /* just SERVER_MAX_BACKENDS supported */
+    warn_err_if(s->nbackend == SERVER_MAX_BACKENDS);
+
+    /* get config tree of this backend */
+    warn_err_ifm(u_config_get_subkey(s->config, name, &bekey),
+        "missing [%s] backend configuration", name);
+
+    type = u_config_get_subkey_value(bekey, "type");
+    warn_err_ifm(type == NULL, "missing or bad '<servname>.type' value");
+
+    /* create a new backend and push it into the 'be' list */
+    warn_err_ifm(backend_create(type, bekey, &be),
+        "backend \"%s\" startup error", type);
+
+    be->server = s;
+    be->config = bekey;
+    be->id = id;
+    if(be->model == SERVER_MODEL_UNSET)
+        be->model = s->model; /* inherit server model */
+
+    if(foreground)
+        be->model = SERVER_MODEL_ITERATIVE;
+
+    /* create the log device (may fail if logging is not configured) */
+    if(!u_config_get_subkey(bekey, "log", &log_c))
+        dbg_if(klog_open_from_config(log_c, &be->klog));
+
+#ifdef OS_WIN
+    warn_err_ifm(be->model != SERVER_MODEL_ITERATIVE, "child-based server "
+            "model is not yet supported on Windows");
+#endif
+
+    /* the server owns it from here (server_free) */
+    LIST_INSERT_HEAD(&s->bes, be, np);
+    be = NULL;
+
+    dbg_err_if(server_setup_backend(s, LIST_FIRST(&s->bes)));
+
+    return 0;
+err:
+    if(be)
+        backend_free(be);
+    return ~0;
+}
+
+/* configure each server named in 'list' (separated by blanks) */
+static int server_add_backends(server_t *s, const char *list, int foreground)
+{
+    char *copy = NULL, *name, *pp = NULL;
+    int id = 0;
+
+    dbg_err_if((copy = u_strdup(list)) == NULL);
+
+    /* (a sscanf loop stopped at a leading or doubled blank, ignoring the
+       servers after it) */
+    for(name = strtok_r(copy, " \t", &pp); name != NULL;
+            name = strtok_r(NULL, " \t", &pp))
+        dbg_err_if(server_add_backend(s, name, id++, foreground));
+
+    warn_err_ifm(id == 0, "no server in 'server_list'");
+
+    U_FREE(copy);
+
+    return 0;
+err:
+    U_FREE(copy);
+    return ~0;
+}
+
 int server_create(u_config_t *config, int foreground, server_t **ps)
 {
     server_t *s = NULL;
-    u_config_t *bekey = NULL, *log_c = NULL;
-    backend_t *be = NULL;
-    const char *list, *type;
-    char *n = NULL, *name = NULL;
-    int i, id, iv;
+    u_config_t *log_c = NULL;
+    const char *list;
+    int iv;
 
     dbg_return_if (ps == NULL, ~0);
     dbg_return_if (config == NULL, ~0);
@@ -1363,16 +1481,7 @@ int server_create(u_config_t *config, int foreground, server_t **ps)
         s->klog_flush = 1;
     }
 
-    /* register the log ppc callbacks */
-    dbg_err_if(ppc_register(s->ppc, PPC_CMD_NOP, server_ppc_cb_nop, s));
-    dbg_err_if(ppc_register(s->ppc, PPC_CMD_LOG_ADD, server_ppc_cb_log_add, s));
-    dbg_err_if(ppc_register(s->ppc, PPC_CMD_LOG_GET, server_ppc_cb_log_get, s));
-#ifdef OS_UNIX
-    dbg_err_if(ppc_register(s->ppc, PPC_CMD_FORK_CHILD, 
-        server_ppc_cb_fork_child, s));
-#endif
-    dbg_err_if(ppc_register(s->ppc, PPC_CMD_ACCESS_LOG, 
-                server_ppc_cb_access_log, s));
+    dbg_err_if(server_register_ppc(s));
 
     /* redirect logs to the server_log_hook function */
     dbg_err_if(u_log_set_hook(server_log_hook, s, NULL, NULL));
@@ -1397,55 +1506,8 @@ int server_create(u_config_t *config, int foreground, server_t **ps)
         SERVER_MAX_CHILD, &iv));
     s->max_child = iv;
 
-    name = n = u_zalloc(strlen(list) + 1);
-    dbg_err_if(name == NULL);
-    
-    /* load config and init backend for each server in server.list */
-    for(i = strlen(list), id = 0; 
-        i > 0 && sscanf(list, "%[^ \t]", name); 
-        i -= 1 + strlen(name), list += 1 + strlen(name), name[0] = 0)
-    {
-        u_dbg("configuring backend: %s", name);
-
-        /* just SERVER_MAX_BACKENDS supported */
-        warn_err_if(s->nbackend == SERVER_MAX_BACKENDS);
-
-        /* get config tree of this backend */
-        warn_err_ifm(u_config_get_subkey(config, name, &bekey),
-            "missing [%s] backend configuration", name);
-
-        type = u_config_get_subkey_value(bekey, "type");
-        warn_err_ifm(type == NULL, "missing or bad '<servname>.type' value");
-
-        /* create a new backend and push it into the 'be' list */
-        warn_err_ifm(backend_create(type, bekey, &be),
-            "backend \"%s\" startup error", type);
-
-        be->server = s;
-        be->config = bekey;
-        be->id = id++;
-        if(be->model == SERVER_MODEL_UNSET)
-            be->model = s->model; /* inherit server model */
-
-        if(foreground)
-            be->model = SERVER_MODEL_ITERATIVE;
-
-        /* create the log device (may fail if logging is not configured) */
-        if(!u_config_get_subkey(bekey, "log", &log_c))
-            dbg_if(klog_open_from_config(log_c, &be->klog));
-
-#ifdef OS_WIN
-        if(be->model != SERVER_MODEL_ITERATIVE)
-            warn_err("child-based server model is not "
-                     "yet supported on Windows");
-#endif
-
-        LIST_INSERT_HEAD(&s->bes, be, np);
-
-        dbg_err_if(server_setup_backend(s, be));
-    }
-
-    U_FREE(n);
+    /* load config and init backend for each server in server_list */
+    dbg_err_if(server_add_backends(s, list, foreground));
 
     /* init done, set signal handlers */
     dbg_err_if(u_signal(SIGINT, server_sigint));
@@ -1458,7 +1520,6 @@ int server_create(u_config_t *config, int foreground, server_t **ps)
     return 0;
 err:
     u_warn("server init error (config error?)");
-    U_FREE(n);
     if(s)
     {
         server_free(s);

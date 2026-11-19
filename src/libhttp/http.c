@@ -667,28 +667,20 @@ static int http_end_response(io_t *out, request_t *rq, response_t *rs)
 /* serve one request read from 'cin' writing the response to 'cout' (the
  * same io_t but in CGI mode); on return *keep is !0 if the connection can
  * be used for another request */
-static int http_serve_request(http_t *h, io_t *cin, io_t *cout, int cgi,
-        const http_conn_addr_t *ca, int nreq, int keep_alive, int *keep)
+/* create the request and response objects of the next request on a
+ * connection and bind them to it; on error *prq and *prs are what was made
+ * (the caller frees them, after printing an error page if it can) */
+static int http_serve_setup(http_t *h, io_t *cin, io_t *cout, int cgi,
+        const http_conn_addr_t *ca, int nreq, request_t **prq,
+        response_t **prs)
 {
-    request_t *rq = NULL;
-    response_t *rs = NULL;
+    request_t *rq;
+    response_t *rs;
     io_t *in = NULL, *out = NULL;
-    int rc = HTTP_STATUS_INTERNAL_SERVER_ERROR, committed, hooked = 0;
-    const char *cstr, *proto;
-    vhost_t *vhost;
-    const char *uri;
-    char nuri[URI_MAX];
-    supplier_t *sup;
-
-    dbg_err_if (h == NULL);
-    dbg_err_if (cin == NULL);
-    dbg_err_if (cout == NULL);
-    dbg_err_if (keep == NULL);
-
-    *keep = 0;
 
     /* create a request object */
-    dbg_err_if(request_create(h, &rq));
+    dbg_err_if(request_create(h, prq));
+    rq = *prq;
     request_set_cgi(rq, cgi);
 
     /* on a kept-alive connection wait for the next request a shorter time */
@@ -707,7 +699,8 @@ static int http_serve_request(http_t *h, io_t *cin, io_t *cout, int cgi,
     in = NULL;
 
     /* create a response object */
-    dbg_err_if(response_create(h, &rs));
+    dbg_err_if(response_create(h, prs));
+    rs = *prs;
 
     response_set_cgi(rs, cgi);
 
@@ -722,8 +715,107 @@ static int http_serve_request(http_t *h, io_t *cin, io_t *cout, int cgi,
     dbg_err_if(response_bind(rs, out));
     out = NULL;
 
-    /* server ready, parse the request */
+    /* server ready: until the request is parsed, any error is a bad one */
     dbg_err_if(response_set_status(rs, HTTP_STATUS_BAD_REQUEST));
+
+    return 0;
+err:
+    if(in)
+        io_free(in);
+    if(out)
+        io_free(out);
+    return ~0;
+}
+
+/* a 404 for "/dir" when "/dir/" has an index page: redirect there (with
+ * the path info and query string); return 0 if the redirect was set */
+static int http_redirect_dir(http_t *h, request_t *rq, response_t *rs)
+{
+    char nuri[URI_MAX];
+    const char *uri;
+
+    nop_err_if((uri = request_get_uri(rq)) == NULL || *uri == '\0' ||
+            uri[strlen(uri) - 1] == '/');
+    nop_err_if(http_set_index_request(h, rq));
+
+    (void) u_strlcpy(nuri, uri, sizeof(nuri));
+    (void) u_strlcat(nuri, "/", sizeof(nuri));
+
+    if(request_get_path_info(rq))
+        (void) u_strlcat(nuri, request_get_path_info(rq), sizeof(nuri));
+
+    if(request_get_query_string(rq))
+    {
+        (void) u_strlcat(nuri, "?", sizeof(nuri));
+        (void) u_strlcat(nuri, request_get_query_string(rq), sizeof(nuri));
+    }
+
+    response_redirect(rs, nuri);
+
+    return 0;
+err:
+    return ~0;
+}
+
+/* serve a parsed request: resolve aliases and the index page, add the
+ * default header fields and run the page. Return 0, or the status of the
+ * error page to print (a redirect too: its page carries the Location).
+ * *served is set when the page was run (it is then logged) */
+static int http_serve_page(http_t *h, request_t *rq, response_t *rs,
+        int *served)
+{
+    const char *cstr;
+    supplier_t *sup;
+    int rc;
+
+    *served = 0;
+
+    /* if we're running in server mode then resolv aliases and dir_root */
+    dbg_err_if(http_resolv_request(h, rq));
+
+    /* if the uri end with a slash then return an index page */
+    request_get_sup_info(rq, &sup, NULL, NULL);
+    if(sup == NULL && (cstr = request_get_filename(rq)) != NULL &&
+            cstr[strlen(cstr)-1] == '/')
+        dbg_if(http_set_index_request(h, rq)); /* set the index page */
+
+    /* add default header fields */
+    dbg_err_if(http_add_default_header(h, rq, rs));
+
+    /* set default successfull status code */
+    dbg_err_if(response_set_status(rs, HTTP_STATUS_OK));
+
+    /* serve the page; on error write out a simple error page */
+    rc = broker_serve(h->broker, h, rq, rs);
+    *served = 1;
+
+    /* file not found: maybe a directory request, /dir for /dir/ */
+    if(response_get_status(rs) == HTTP_STATUS_NOT_FOUND &&
+            !http_redirect_dir(h, rq, rs))
+        rc = HTTP_STATUS_MOVED_TEMPORARILY;
+
+    return rc;
+err:
+    return HTTP_STATUS_BAD_REQUEST;
+}
+
+static int http_serve_request(http_t *h, io_t *cin, io_t *cout, int cgi,
+        const http_conn_addr_t *ca, int nreq, int keep_alive, int *keep)
+{
+    request_t *rq = NULL;
+    response_t *rs = NULL;
+    int rc = HTTP_STATUS_INTERNAL_SERVER_ERROR, committed, served, hooked = 0;
+    const char *proto;
+    vhost_t *vhost;
+
+    dbg_err_if (h == NULL);
+    dbg_err_if (cin == NULL);
+    dbg_err_if (cout == NULL);
+    dbg_err_if (keep == NULL);
+
+    *keep = 0;
+
+    dbg_err_if(http_serve_setup(h, cin, cout, cgi, ca, nreq, &rq, &rs));
     rc = HTTP_STATUS_BAD_REQUEST;
 
     /* parse request. may fail on timeout */
@@ -750,58 +842,20 @@ static int http_serve_request(http_t *h, io_t *cin, io_t *cout, int cgi,
     dbg_err_if((vhost = http_get_vhost(h, rq)) == NULL);
     request_set_vhost(rq, vhost);
 
-    /* if we're running in server mode then resolv aliases and dir_root */
-    dbg_err_if(http_resolv_request(h, rq));
+    rc = http_serve_page(h, rq, rs, &served);
 
-    /* if the uri end with a slash then return an index page */
-    request_get_sup_info(rq, &sup, NULL, NULL);
-    if(sup == NULL && (cstr = request_get_filename(rq)) != NULL &&
-            cstr[strlen(cstr)-1] == '/')
-        dbg_if(http_set_index_request(h, rq)); /* set the index page */
-
-    /* add default header fields */
-    dbg_err_if(http_add_default_header(h, rq, rs));
-
-    /* set default successfull status code */
-    dbg_err_if(response_set_status(rs, HTTP_STATUS_OK));
-
-    /* serve the page; on error write out a simple error page */
-    rc = broker_serve(h->broker, h, rq, rs);
-
-    /* on 404 (file not found) try to find out if this is a directory request
-       i.e. http://site:port/dir redirects to /dir/ */
-    if(response_get_status(rs) == 404 && (uri = request_get_uri(rq)) != NULL &&
-            uri[strlen(uri)-1] != '/')
+    if(served)
     {
-        if(!http_set_index_request(h, rq))
-        {
-            (void) u_strlcpy(nuri, request_get_uri(rq), sizeof(nuri));
-            (void) u_strlcat(nuri, "/", sizeof(nuri));
+        /* log the request */
+        if(vhost->klog)
+            dbg_if(access_log(h, vhost->al_config, rq, rs));
 
-            if(request_get_path_info(rq))
-                (void) u_strlcat(nuri, request_get_path_info(rq), sizeof(nuri));
-
-            if(request_get_query_string(rq))
-            {
-                (void) u_strlcat(nuri, "?", sizeof(nuri));
-                (void) u_strlcat(nuri, request_get_query_string(rq),
-                        sizeof(nuri));
-            }
-
-            response_redirect(rs, nuri);
-            rc = HTTP_STATUS_MOVED_TEMPORARILY;
-        }
+        /* call the hook that fires on each request */
+        hook_call(request, rq, rs);
+        hooked = 1;
     }
 
-    /* log the request */
-    if(vhost->klog)
-        dbg_if(access_log(h, vhost->al_config, rq, rs));
-
-    /* call the hook that fires on each request */
-    hook_call(request, rq, rs);
-    hooked = 1;
-
-    /* on broker_serve error jump to err */
+    /* an error (or a redirect): print its page */
     nop_err_if(rc != 0);
 
     /* page successfully served */
@@ -833,10 +887,6 @@ err:
         *keep = http_end_response(cout, rq, rs) && !committed;
     }
 end:
-    if(in)
-        io_free(in);
-    if(out)
-        io_free(out);
     if(rq)
         request_free(rq);
     if(rs)

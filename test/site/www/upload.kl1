@@ -1,0 +1,24 @@
+<%!
+    #include <stdio.h>
+%><%
+    /* a multipart/form-data POST: a field and an uploaded file */
+    char local[U_FILENAME_MAX], client[U_FILENAME_MAX], mime[MIME_TYPE_BUFSZ];
+    char data[64] = "";
+    size_t size = 0;
+    FILE *fp;
+
+    io_printf(out, "field=%s\n", request_get_arg(request, "field") ?
+            request_get_arg(request, "field") : "(none)");
+    if(request_get_uploaded_file(request, "file", 0, local, client, mime,
+                &size) == 0)
+    {
+        if((fp = fopen(local, "rb")) != NULL)
+        {
+            data[fread(data, 1, sizeof data - 1, fp)] = '\0';
+            fclose(fp);
+        }
+        io_printf(out, "file=%s %s %lu [%s]\n", client, mime,
+                (unsigned long) size, data);
+    } else
+        io_printf(out, "file=(none)\n");
+%>

@@ -87,6 +87,47 @@ def fetch_all(daemon, temp, paths, embedded_port=None):
         process.wait()
 
 
+def check_cgi(daemon, temp):
+    cgi_dir = temp / "cgi-bin"
+    cgi_dir.mkdir()
+    scripts = {
+        "echo.sh": "printf 'Content-Type: text/plain\\r\\nX-Cgi: yes\\r\\n\\r\\n'\n"
+                   "printf 'cgi %s\\n' \"$REQUEST_METHOD\"\ncat\n",
+        "status.sh": "printf 'Status: 404 Nope\\r\\nContent-Type: text/plain\\r\\n\\r\\n'\n"
+                     "echo missing\n",
+    }
+    for name, body in scripts.items():
+        (cgi_dir / name).write_text("#!/bin/sh\n" + body)
+        (cgi_dir / name).chmod(0o755)
+    port = free_port()
+    config = temp / "cgi.conf"
+    config.write_text(f"server_list h\nallow_root yes\nh\n{{\n type http\n addr tcp4://127.0.0.1:{port}\n"
+                      f" dir_root /www\n cgi\n {{\n  script_alias /cgi-bin {cgi_dir}\n }}\n}}\n")
+    process = subprocess.Popen([str(daemon), "-F", "-d", "-f", str(config)],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    base = f"http://127.0.0.1:{port}/cgi-bin/"
+    try:
+        for _ in range(100):
+            try:
+                socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
+                break
+            except OSError:
+                time.sleep(0.1)
+        with urllib.request.urlopen(base + "echo.sh", timeout=5) as response:
+            check(response.headers.get("X-Cgi") == "yes" and response.read() == b"cgi GET\n",
+                  "CGI GET failed")
+        with urllib.request.urlopen(base + "echo.sh", data=b"posted body", timeout=5) as response:
+            check(response.read() == b"cgi POST\nposted body", "CGI POST body not passed through")
+        try:
+            urllib.request.urlopen(base + "status.sh", timeout=5)
+            check(False, "CGI Status: 404 ignored")
+        except urllib.error.HTTPError as error:
+            check(error.code == 404 and error.read() == b"missing\n", f"CGI Status: {error.code}")
+    finally:
+        process.terminate()
+        process.wait()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--generator", default="Ninja" if shutil.which("ninja") else "Unix Makefiles")
@@ -149,6 +190,11 @@ def main():
         embedded = fetch_all(b / "bin/klind", temp, ["old.kl1"], embedded_port)
         check(f"old={version}" in str(embedded["old.kl1"]),
               f"embedded /etc/kloned.conf not used: {embedded['old.kl1']!r}")
+
+        # CGI scripts (the build has the CGI supplier): GET, a POST body on
+        # the script's stdin, and a Status line setting the response code
+        if os.name != "nt":
+            check_cgi(b / "bin/klind", temp)
 
         # a second configure keeps the site given as KLONE_SITE_DIR (moved
         # to KLIN_SITE_DIR in the cache, the old entry removed)

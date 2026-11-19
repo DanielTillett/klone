@@ -1453,18 +1453,120 @@ err:
 
 }
 
-static int request_parse_multipart_chunk(request_t *rq, io_t *io, 
-    const char *boundary, int *eof)
+enum { MULTIPART_BUFSZ = 4096 };
+
+/* a file part: copy its data, up to the boundary, to a temporary file and
+ * add it to the request's uploads ('h' is the part's header) */
+static int request_save_upload(request_t *rq, io_t *io, const char *boundary,
+    const char *name, const char *filename, header_t *h)
 {
-    enum { PRMSZ = 512, BUFSZ = 4096 };
-    header_t *h = NULL;
     io_t *tmpio = NULL;
-    var_t *v = NULL;
-    u_buf_t *ubuf = NULL;
-    char name[PRMSZ], filename[PRMSZ], buf[BUFSZ];
-    size_t bound_len, rall;
+    char buf[MULTIPART_BUFSZ];
+    size_t bound_len = strlen(boundary);
     int found;
     ssize_t rc;
+
+    dbg_err_if(sizeof(buf) <= bound_len);
+
+    /* open a temporary file to dump uploaded data */
+    dbg_err_if(u_tmpfile_open(rq->temp_dir, &tmpio));
+
+    for(found = 0; !found; /* nothing */)
+    {
+        rc = read_until(io, boundary, buf, sizeof(buf), &found);
+        dbg_err_if(rc <= 0); /* on error or eof exit */
+
+        /* write all but the last bound_len bytes (i.e. the boundary) */
+        if(found)
+        {
+            rc -= bound_len;
+            dbg_err_if(rc < 0);
+        }
+
+        /* write to the temp file */
+        dbg_err_if(io_write(tmpio, buf, rc) < 0);
+    }
+
+    /* save the path/name of the tmp file to buf */
+    dbg_err_if(io_name_get(tmpio, buf, sizeof(buf)));
+
+    /* flush and free */
+    io_free(tmpio); tmpio = NULL;
+
+    /* add this file to the uploaded file list */
+    dbg_err_if(request_add_uploaded_file(rq, name, filename, buf,
+        header_get_field_value(h, "Content-Type")));
+
+    return 0;
+err:
+    if(tmpio) {
+        /* free space occupied by partial uploads */
+        if(io_name_get(tmpio, buf, sizeof(buf)) == 0)
+            u_remove(buf);
+        io_free(tmpio);
+    }
+    return ~0;
+}
+
+/* a form field part: its data, up to the boundary, becomes a (binary)
+ * request argument, also listed in the POST arguments */
+static int request_save_field(request_t *rq, io_t *io, const char *boundary,
+    const char *name)
+{
+    char buf[MULTIPART_BUFSZ];
+    u_buf_t *ubuf = NULL;
+    var_t *v = NULL;
+    vars_t *args;
+    ssize_t rc;
+
+    /* read data before the boundary into the buffer. if the buffer is too
+       small the function will return all data in a new ubuf that must be
+       freed by the caller */
+    rc = request_read_until_boundary(rq, io, boundary, buf, sizeof(buf), &ubuf);
+    dbg_err_if(rc < 0);
+
+    dbg_err_if(var_bin_create(name,
+                (ubuf ? u_buf_ptr(ubuf) : buf),
+                (ubuf ? u_buf_len(ubuf) : rc),
+                &v));
+
+    /* rq->args owns v (args_post only links to it, see request_vars) */
+    dbg_err_if((args = request_vars(rq, &rq->args)) == NULL);
+    dbg_err_if(vars_add(args, v));
+    dbg_if(vars_add(request_vars(rq, &rq->args_post), v));
+    v = NULL;
+
+    if(ubuf)
+        u_buf_free(ubuf);
+
+    return 0;
+err:
+    if(v)
+        var_free(v);
+    if(ubuf)
+        u_buf_free(ubuf);
+    return ~0;
+}
+
+/* after the closing boundary: read and ignore the epilogue (if any) */
+static void request_skip_epilogue(request_t *rq, io_t *io)
+{
+    char buf[MULTIPART_BUFSZ];
+    size_t rall = rq->content_length + rq->body_off;
+
+    while(io->rtot < rall)
+    {
+        if(io_read(io, buf, U_MIN(rall - io->rtot, sizeof(buf))) <= 0)
+            break;
+    }
+}
+
+static int request_parse_multipart_chunk(request_t *rq, io_t *io,
+    const char *boundary, int *eof)
+{
+    enum { PRMSZ = 512 };
+    header_t *h = NULL;
+    char name[PRMSZ], filename[PRMSZ], buf[2];
 
     /* create an header object to parse MIME part headers */
     dbg_err_if(header_create(&h));
@@ -1472,69 +1574,19 @@ static int request_parse_multipart_chunk(request_t *rq, io_t *io,
     /* read header lines until the first blank line */
     dbg_err_if(header_load(h, io));
 
-    warn_err_ifm(is_multipart_mixed(h), 
+    warn_err_ifm(is_multipart_mixed(h),
         "multipart/mixed content is not supported yet");
 
     /* HTTP should never use cte */
-    warn_err_ifm(is_encoded(h), 
+    warn_err_ifm(is_encoded(h),
         "encoded file upload is not supported");
 
     dbg_err_if(parse_content_disposition(h, name, filename, PRMSZ));
 
-    /* shortcut */
-    bound_len = strlen(boundary);
-
     if(filename[0] != '\0')
-    {
-        dbg_err_if(BUFSZ <= bound_len);
-
-        /* open a temporary file to dump uploaded data */
-        dbg_err_if(u_tmpfile_open(rq->temp_dir, &tmpio));
-
-        for(found = 0; !found; /* nothing */)
-        {
-            rc = read_until(io, boundary, buf, BUFSZ, &found);
-            dbg_err_if(rc <= 0); /* on error or eof exit */
-
-            /* write all but the last bound_len bytes (i.e. the boundary) */
-            if(found)
-            {
-                rc -= bound_len;
-                dbg_err_if(rc < 0);
-            }
-
-            /* write to the temp file */
-            dbg_err_if(io_write(tmpio, buf, rc) < 0);
-        }
-
-        /* save the path/name of the tmp file to buf */
-        dbg_err_if(io_name_get(tmpio, buf, BUFSZ));
-
-        /* flush and free */
-        io_free(tmpio); tmpio = NULL;
-
-        /* add this file to the uploaded file list */
-        dbg_err_if(request_add_uploaded_file(rq, name, filename, buf, 
-            header_get_field_value(h, "Content-Type")));
-
-    } else {
-        /* read data before the boundary into the buffer. if the buffer is too 
-           small the function will return all data in a new ubuf that must be 
-           freed by the caller */
-        rc = request_read_until_boundary(rq, io, boundary, buf, BUFSZ, &ubuf);
-        dbg_err_if(rc < 0);
-
-        /* add a new binary var to request arguments list */
-        dbg_err_if(var_bin_create(name, 
-                    (ubuf ? u_buf_ptr(ubuf) : buf), 
-                    (ubuf ? u_buf_len(ubuf) : rc), 
-                    &v));
-
-        dbg_if(vars_add(request_vars(rq, &rq->args), v));
-
-        /* also add it to the post array */
-        dbg_if(vars_add(request_vars(rq, &rq->args_post), v));
-    }
+        dbg_err_if(request_save_upload(rq, io, boundary, name, filename, h));
+    else
+        dbg_err_if(request_save_field(rq, io, boundary, name));
 
     /* will read "\r\n" for not-ending boundaries, "--" otherwise */
     dbg_err_if(io_read(io, buf, 2) <= 0);
@@ -1542,32 +1594,13 @@ static int request_parse_multipart_chunk(request_t *rq, io_t *io,
     if(strncmp(buf, "--", 2) == 0)
     {
         *eof = 1; /* end of MIME stuff */
-
-        rall = rq->content_length + rq->body_off;
-
-        /* read and ignore the epilogue (if any) */
-        while(io->rtot < rall)
-        {
-            if(io_read(io, buf, U_MIN(rall - io->rtot, sizeof(buf))) <= 0)
-                break;
-        }
+        request_skip_epilogue(rq, io);
     }
-
-    if(ubuf)
-        u_buf_free(ubuf);
 
     header_free(h);
 
     return 0;
 err:
-    if(ubuf)
-        u_buf_free(ubuf);
-    if(tmpio) {
-        /* free space occupied by partial uploads */
-        if(io_name_get(tmpio, buf, BUFSZ) == 0)
-            u_remove(buf);
-        io_free(tmpio);
-    }
     if(h)
         header_free(h);
     return ~0;

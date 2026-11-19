@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <signal.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <klin/http.h>
@@ -476,30 +477,112 @@ err:
     return ~0;
 }
 
+/* send the POSTed data (Content-Length bytes) to the cgi's stdin. The
+ * script may not read it, so a broken pipe is not an error; one that reads
+ * nothing while more than a pipe buffer is POSTed blocks this write (the
+ * request's post_timeout then closes the connection) */
+static int cgi_send_post(request_t *rq, int cgi_stdin)
+{
+    io_t *cgi_out = NULL;
+    ssize_t clen;
+
+    if(request_get_method(rq) != HM_POST ||
+            (clen = request_get_content_length(rq)) <= 0)
+        return 0;
+
+    /* the descriptor is the caller's to close */
+    crit_err_sif(io_fd_create(cgi_stdin, IO_FD_NO_FLAGS, &cgi_out));
+    crit_if(io_copy(cgi_out, request_io(rq), clen) < 0);
+    io_free(cgi_out);
+
+    return 0;
+err:
+    return ~0;
+}
+
+/* read the cgi's header (its first lines) into the response: "Status" sets
+ * the status, a "Location" alone means 302. The response filter prints the
+ * merged header before the body */
+static int cgi_merge_header(request_t *rq, response_t *rs, io_t *cgi_in)
+{
+    header_t *head;
+    field_t *field;
+    codec_t *filter = NULL;
+
+    dbg_err_if((head = response_get_header(rs)) == NULL);
+
+    dbg_err_if(response_filter_create(rq, rs, NULL, &filter));
+    dbg_err_if(io_codec_add_tail(response_io(rs), filter));
+    filter = NULL; /* io_t owns it */
+
+    crit_err_if(header_load_ex(head, cgi_in, HLM_OVERRIDE));
+
+    if((field = header_get_field(head, "Status")) != NULL &&
+            field_get_value(field))
+    {
+        response_set_status(rs, atoi(field_get_value(field)));
+
+        /* "Status" is for the server, not a header field to send */
+        dbg_err_if(header_del_field(head, field));
+        field_free(field);
+    } else if(header_get_field(head, "Location"))
+        response_set_status(rs, HTTP_STATUS_MOVED_TEMPORARILY);
+    else
+        response_set_status(rs, HTTP_STATUS_OK);
+
+    return 0;
+err:
+    if(filter)
+        codec_free(filter);
+    return ~0;
+}
+
+/* copy the rest of the cgi's output to the client (if nothing is left the
+ * filter prints the header and an empty body when the codecs are flushed) */
+static void cgi_relay(io_t *cgi_in, io_t *out)
+{
+    char buf[4096];
+    ssize_t n;
+
+    while((n = io_read(cgi_in, buf, sizeof(buf))) > 0)
+    {
+        if(io_write(out, buf, n) < 0)
+            break;
+    }
+}
+
+/* reap the cgi; after an error it is killed first, as nobody reads its
+ * output any more */
+static void cgi_wait(pid_t child, int failed)
+{
+    int status;
+
+    if(failed)
+        (void) kill(child, SIGKILL);
+
+    if(waitpid(child, &status, 0) == child && !failed &&
+            WIFEXITED(status) && WEXITSTATUS(status))
+        warn("cgi exited with [%d]", WEXITSTATUS(status));
+}
+
 static int cgi_serve(request_t *rq, response_t *rs)
 {
-    codec_t *filter = NULL;
-    header_t *head = NULL;
-    field_t *field = NULL;
     const char *fqn, *filename;
-    char buf[4096];
-    io_t *out = NULL, *cgi_in = NULL, *cgi_out = NULL;
-    ssize_t n, clen;
-    int cgi_stdin = -1, cgi_stdout = -1, status;
-    pid_t child;
+    io_t *cgi_in = NULL;
+    int cgi_stdin = -1, cgi_stdout = -1;
+    pid_t child = -1;
 
     dbg_err_if (rq == NULL);
     dbg_err_if (rs == NULL);
-
-    /* shortcuts */
-    dbg_err_if((out = response_io(rs)) == NULL);
-    dbg_err_if((head = response_get_header(rs)) == NULL);
+    dbg_err_if (response_io(rs) == NULL);
 
     /* if something goes wrong return a "bad request" */
-    response_set_status(rs, HTTP_STATUS_BAD_REQUEST); 
+    response_set_status(rs, HTTP_STATUS_BAD_REQUEST);
 
     /* script file name */
     fqn = request_get_resolved_filename(rq);
+    crit_err_if(fqn == NULL || (filename = strrchr(fqn, '/')) == NULL);
+    filename++;
 
     /* run the CGI and return its stdin and stdout descriptor */
     crit_err_if(cgi_exec(rq, rs, &child, &cgi_stdin, &cgi_stdout));
@@ -507,98 +590,36 @@ static int cgi_serve(request_t *rq, response_t *rs)
     /* by default disable caching */
     response_disable_caching(rs);
 
-    /* copy any POST input data to the CGI */
-    if(request_get_method(rq) == HM_POST && 
-            (clen = request_get_content_length(rq)) > 0)
-    {
-        /* build an io_t object to write the POSTed data to the cgi; the
-           descriptors are closed here, not by io_free (O_WRONLY was passed
-           as the flags: it is IO_FD_CLOSE, so the pipe was closed twice) */
-        crit_err_sif(io_fd_create(cgi_stdin, IO_FD_NO_FLAGS, &cgi_out));
+    /* the POSTed data, then EOF on the cgi's stdin */
+    dbg_err_if(cgi_send_post(rq, cgi_stdin));
+    close(cgi_stdin);
+    cgi_stdin = -1;
 
-        /* FIXME 
-           if the cgi does not read from stdin (and POSTed data is big) 
-           we could be block here waiting for the buffer to drain 
-         */
-        
-        /* send POSTed data to the cgi (the script may not read it so we don't 
-         * complain on broken pipe error) */
-        crit_if(io_copy(cgi_out, request_io(rq), clen) < 0);
-
-        io_free(cgi_out); cgi_out = NULL;
-        close(cgi_stdin); cgi_stdin = -1;
-    }
-
-    /* build an io_t object to read cgi output */
+    /* the cgi's output; the descriptor is closed below, not by io_free */
     crit_err_sif(io_fd_create(cgi_stdout, IO_FD_NO_FLAGS, &cgi_in));
 
-    /* extract filename part of the fqn */
-    crit_err_if((filename = strrchr(fqn, '/')) == NULL);
-    filename++;
-
-    /* header of cgis whose name start with nhp- must not be parsed */
+    /* header of cgis whose name start with nph- must not be parsed */
     if(strncmp(filename, "nph-", 4))
-    {
-        /* create a response filter (used to automatically print the header) */
-        dbg_err_if(response_filter_create(rq, rs, NULL, &filter));
-        io_codec_add_tail(out, filter);
-        filter = NULL; /* io_t owns it */
+        dbg_err_if(cgi_merge_header(rq, rs, cgi_in));
+    else
+        response_set_status(rs, HTTP_STATUS_OK);
 
-        /* merge cgi header with response headers */
-        crit_err_if(header_load_ex(head, cgi_in, HLM_OVERRIDE));
+    cgi_relay(cgi_in, response_io(rs));
 
-        /* set the response code */
-        if((field = header_get_field(head, "Status")) != NULL && 
-                field_get_value(field))
-        {
-            response_set_status(rs, atoi(field_get_value(field)));
-
-            /* "Status" is for the server, not a header field to send */
-            dbg_err_if(header_del_field(head, field));
-            field_free(field);
-        } else {
-            if(header_get_field(head, "Location"))
-                response_set_status(rs, HTTP_STATUS_MOVED_TEMPORARILY);
-            else
-                response_set_status(rs, HTTP_STATUS_OK); 
-        }
-    } else
-        response_set_status(rs, HTTP_STATUS_OK); 
-
-    /* write cgi output to the client */
-    while((n = io_read(cgi_in, buf, sizeof(buf))) > 0)
-    {
-        if(io_write(out, buf, n) < 0)
-            break;
-    }
-
-    /* if nothing has been printed by the script the filter prints the
-     * header (and an empty body) when the server flushes the codecs */
-
-    if(cgi_in)
-        io_free(cgi_in); 
-    if(cgi_out)
-        io_free(cgi_out); 
-
-    if(cgi_stdin != -1)
-        close(cgi_stdin);
+    io_free(cgi_in);
     close(cgi_stdout);
-
-    /* wait for the child to finish (FIXME add a max timeout) */
-    waitpid(child, &status, 0);
-    if(WIFEXITED(status) && WEXITSTATUS(status))
-        warn("cgi exited with [%d]", WEXITSTATUS(status));
+    cgi_wait(child, 0);
 
     return 0;
 err:
-    if(cgi_out)
-        io_free(cgi_out);
     if(cgi_in)
         io_free(cgi_in);
     if(cgi_stdin != -1)
         close(cgi_stdin);
     if(cgi_stdout != -1)
         close(cgi_stdout);
+    if(child > 0)
+        cgi_wait(child, 1);
     return ~0;
 }
 

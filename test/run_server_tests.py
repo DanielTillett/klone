@@ -429,7 +429,10 @@ def run_server_checks(args, env, output, daemon):
     {extra}
 }}
 """)
-        config.write_text("server_list plain client secure files memlog\nallow_root yes\n" + "\n".join(blocks))
+        # blanks of every kind between the names: all servers must start (a
+        # doubled or leading blank used to drop the ones after it)
+        config.write_text("server_list  plain client\tsecure  files memlog\nallow_root yes\n" +
+                          "\n".join(blocks))
         log_path = output / ("server-prefork-test.log" if args.prefork else "server-test.log")
         with log_path.open("w") as log:
             command = [str(daemon), "-F", "-f", str(config)]
@@ -536,6 +539,18 @@ def run_server_checks(args, env, output, daemon):
                                          cookie_header + b"\r\n\r\n", context)
                         check(b"persisted" not in reply.partition(b"\r\n\r\n")[2],
                               "Accepted a forged client-session MAC")
+                # a multipart/form-data POST: a field and an uploaded file
+                body = (b"--XyZ\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\n"
+                        b"value 1\r\n--XyZ\r\nContent-Disposition: form-data; name=\"file\"; "
+                        b"filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\nfile body\r\n"
+                        b"--XyZ--\r\n")
+                reply = exchange(plain, b"POST /upload.kl1 HTTP/1.1\r\nHost: localhost\r\n"
+                                 b"Content-Type: multipart/form-data; boundary=XyZ\r\n"
+                                 b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body)
+                page = reply.partition(b"\r\n\r\n")[2]
+                check(b"200 OK" in reply and b"field=value 1\n" in page and
+                      b"file=a.txt text/plain 9 [file body]\n" in page,
+                      f"multipart upload: {reply[:600]!r}")
                 # a configured index list: the first page that exists is served
                 reply = exchange(files, b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
                 body = reply.partition(b"\r\n\r\n")[2].strip()

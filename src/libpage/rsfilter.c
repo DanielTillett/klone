@@ -264,7 +264,8 @@ static ssize_t rf_transform(codec_t *codec,
 
     if(rf->state == RFS_BUFFERING)
     {
-        if(rf->off + src_sz < RFBUFSZ)
+        /* buffered to measure the body, unless it is streamed */
+        if(rf->off + src_sz < RFBUFSZ && !response_is_streaming(rf->rs))
         {
             memcpy(rf->buf + rf->off, src, src_sz);
             rf->off += src_sz;

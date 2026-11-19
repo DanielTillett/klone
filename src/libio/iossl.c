@@ -72,6 +72,16 @@ static int io_ssl_retry(io_ssl_t *io_ssl, int rc)
     }
 }
 
+/* the socket under the TLS stream (-1 once closed) */
+int io_ssl_get_fd(io_t *io)
+{
+    io_ssl_t *io_ssl = (io_ssl_t*)io;
+
+    dbg_return_if (io_ssl == NULL || io_ssl->io.type != IO_TYPE_SSL, -1);
+
+    return io_ssl->fd;
+}
+
 static ssize_t io_ssl_read(io_ssl_t *io_ssl, char *buf, size_t size)
 {
     int c, rc;

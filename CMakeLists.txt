@@ -224,7 +224,7 @@ list(TRANSFORM _klog PREPEND ${_src}/libklog/)
 klin_library(klog ${_klog})
 
 set(_page field.c header.c request.c response.c rsfilter.c ses_file.c
-    ses_mem.c session.c var.c vars.c)
+    ses_mem.c session.c sse.c var.c vars.c)
 if(SSL_ON)
     list(APPEND _page ses_client.c)
 endif()

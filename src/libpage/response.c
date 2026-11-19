@@ -30,6 +30,7 @@ struct response_s
     int framed;             /* body framing has been decided    */
     int chunked;            /* body sent with chunked encoding  */
     int header_sent;        /* header has been printed          */
+    int streaming;          /* sent as written (SSE, see sse.c) */
 };
 
 /**
@@ -876,6 +877,33 @@ int response_header_sent(response_t *rs)
  *
  * \return !0 if the body is chunked
  */
+/**
+ * \ingroup response
+ * \brief   Send the response as it is written
+ *
+ * The header goes out with the first byte of the body, and every write
+ * then reaches the client after an io_flush() of the response io (chunked
+ * on HTTP/1.1; on HTTP/1.0 the connection is closed at the end). Used by
+ * Server-Sent Events. Must be called before anything is printed.
+ *
+ * \param rs  response object
+ *
+ * \return \c 0 if successful, \c ~0 if the header has been sent already
+ */
+int response_set_streaming(response_t *rs)
+{
+    dbg_return_if (rs == NULL || rs->header_sent, ~0);
+
+    rs->streaming = 1;
+
+    return 0;
+}
+
+int response_is_streaming(response_t *rs)
+{
+    return rs ? rs->streaming : 0;
+}
+
 int response_is_chunked(response_t *rs)
 {
     return rs->chunked;

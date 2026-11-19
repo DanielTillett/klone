@@ -52,8 +52,10 @@ int io_mem_create(char *buf, size_t size, int flags, io_t **pio);
 int io_ssl_create(int fd, int flags, int client_mode, 
         SSL_CTX *ssl_tx, io_t **pio);
 int io_ssl_get_SSL(io_t *io_ssl, SSL **pssl);
+int io_ssl_get_fd(io_t *io_ssl);
 #endif
 int io_fd_get_d(io_t *);
+int io_get_fd(io_t *io);
 char* io_mem_get_buf(io_t *);
 size_t io_mem_get_bufsz(io_t *io);
 

@@ -1,0 +1,45 @@
+<%!
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <unistd.h>
+    #include <klin/sse.h>
+%><%
+    /* ?n=N events, 300 ms apart, from Last-Event-ID + 1; with ?mark=FILE,
+       then hold the stream until the client goes away and write FILE */
+    const char *last = sse_last_event_id(request),
+          *n = request_get_arg(request, "n"),
+          *mark = request_get_arg(request, "mark");
+    int i, first = last ? atoi(last) + 1 : 1, count = n ? atoi(n) : 3, w;
+    char id[32], data[128];
+    FILE *f;
+
+    if(sse_start(request, response) || sse_retry(response, 1500))
+        return;
+
+    for(i = first; i < first + count; ++i)
+    {
+        snprintf(id, sizeof id, "%d", i);
+        snprintf(data, sizeof data, "event %d\nsecond line", i);
+        if(sse_send(response, "tick", id, data))
+            return;
+        if(i + 1 < first + count && sse_wait(request, -1, 300) == SSE_CLOSED)
+            return;
+    }
+
+    if(mark)
+    {
+        /* up to 10 s, a keep-alive comment every 200 ms */
+        for(i = 0; i < 50; ++i)
+        {
+            if((w = sse_wait(request, -1, 200)) == SSE_CLOSED)
+                break;
+            if(sse_comment(response, "ping"))
+                break;
+        }
+        if((f = fopen(mark, "w")) != NULL)
+        {
+            fprintf(f, "%s\n", i < 50 ? "closed" : "timeout");
+            fclose(f);
+        }
+    }
+%>

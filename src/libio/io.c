@@ -1265,6 +1265,34 @@ err:
  *
  * \return \c 0 for not secure connections, non-zero otherwise
  */
+/**
+ * \ingroup basic
+ * \brief  Get the descriptor under a file, socket or TLS \c io_t
+ *
+ * For poll(2) and the like: data must still be read and written through
+ * the io (it may have buffered some).
+ *
+ * \param io    the \c io_t object
+ *
+ * \return the descriptor, or \c -1 (a memory io, or a closed one)
+ */
+int io_get_fd(io_t *io)
+{
+    dbg_return_if (io == NULL, -1);
+
+    switch(io->type)
+    {
+    case IO_TYPE_FD:
+        return io_fd_get_d(io);
+#ifdef SSL_ON
+    case IO_TYPE_SSL:
+        return io_ssl_get_fd(io);
+#endif
+    default:
+        return -1;
+    }
+}
+
 int io_is_secure(io_t *io)
 {
     dbg_err_if(io == NULL);

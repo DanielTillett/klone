@@ -665,6 +665,150 @@ def run_conditional_checks(check, plain, files):
         check(b" 304 " in reply.split(b"\r\n")[0], "If-None-Match of the deflated ETag")
 
 
+class EventStream:
+    """An SSE client: reads the header, then events as they arrive, noting
+    when each one came (chunked or, on HTTP/1.0, until the close)."""
+
+    def __init__(self, port, path, extra=b"", context=None, version=b"HTTP/1.1"):
+        raw = socket.create_connection(("127.0.0.1", port), timeout=5)
+        self.sock = context.wrap_socket(raw, server_hostname="localhost") if context else raw
+        self.sock.sendall(b"GET " + path + b" " + version + b"\r\nHost: localhost\r\n" +
+                          b"Accept: text/event-stream\r\n" + extra + b"\r\n")
+        self.buf, self.text, self.ended = b"", "", False
+        while b"\r\n\r\n" not in self.buf:
+            self._recv()
+        head, self.buf = self.buf.split(b"\r\n\r\n", 1)
+        lines = head.decode("latin-1").split("\r\n")
+        self.status = lines[0]
+        self.fields = {}
+        for line in lines[1:]:
+            name, _, value = line.partition(":")
+            self.fields[name.strip().lower()] = value.strip()
+        self.chunked = self.fields.get("transfer-encoding") == "chunked"
+
+    def _recv(self):
+        data = self.sock.recv(65536)
+        if not data:
+            raise EOFError
+        self.buf += data
+
+    def _decode(self):
+        if not self.chunked:
+            self.text += self.buf.decode()
+            self.buf = b""
+            return
+        while b"\r\n" in self.buf:
+            size_line, rest = self.buf.split(b"\r\n", 1)
+            size = int(size_line.split(b";")[0], 16)
+            if len(rest) < size + 2:
+                return
+            if size == 0:
+                self.ended = True
+            self.text += rest[:size].decode()
+            self.buf = rest[size + 2:]
+
+    def event(self):
+        """The next event as {field: value} (data lines joined), or None at
+        the end of the stream."""
+        while True:
+            self._decode()
+            if "\n\n" in self.text:
+                block, self.text = self.text.split("\n\n", 1)
+                event = {}
+                for line in block.split("\n"):
+                    name, _, value = line.partition(":")
+                    value = value[1:] if value.startswith(" ") else value
+                    event[name] = event[name] + "\n" + value if name in event else value
+                return event
+            if self.ended:
+                return None
+            try:
+                self._recv()
+            except EOFError:
+                return None
+
+    def close(self):
+        self.sock.close()
+
+
+def run_sse_checks(args, check, plain, secure, temp):
+    """Server-Sent Events (doc/SSE): header, events sent as written,
+    reconnecting with Last-Event-ID, HTTP/1.0, TLS, and a page that sees
+    the client go away."""
+    stream = EventStream(plain, b"/sse.kl1")
+    check(" 200 " in stream.status and stream.fields.get("content-type") == "text/event-stream" and
+          stream.chunked and stream.fields.get("cache-control") == "no-store",
+          f"SSE header: {stream.status} {stream.fields}")
+    start = time.monotonic()
+    first = stream.event()
+    times, events, blocks = [], [], []
+    while (event := stream.event()) is not None:
+        blocks.append(event)
+        if "id" in event:
+            events.append(event)
+            times.append(time.monotonic() - start)
+    stream.close()
+    check(first == {"": "klin"}, f"No opening comment: {first}")
+    check(blocks and blocks[0] == {"retry": "1500"}, f"No retry field: {blocks[:1]}")
+    ticks = [e for e in events if e.get("event") == "tick"]
+    check([e["id"] for e in ticks] == ["1", "2", "3"] and
+          ticks[0]["data"] == "event 1\nsecond line", f"SSE events: {events}")
+    # sent as written: 300 ms apart, not all at the end
+    check(len(times) == 3 and times[0] < 0.25 and times[2] - times[0] > 0.45,
+          f"Events not streamed: {times}")
+
+    stream = EventStream(plain, b"/sse.kl1?n=2", b"Last-Event-ID: 41\r\n")
+    ids = []
+    while (event := stream.event()) is not None:
+        if "id" in event:
+            ids.append(event["id"])
+    stream.close()
+    check(ids == ["42", "43"], f"Last-Event-ID not used: {ids}")
+
+    # the stream ends, the connection stays usable (HTTP/1.1; the
+    # iterative server closes every connection)
+    with Connection(plain) as conn:
+        conn.send(b"GET /sse.kl1?n=1 HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        status, headers, body = conn.response()
+        check(" 200 " in status and b"id: 1\ndata: event 1\ndata: second line\n\n" in body,
+              f"SSE over keep-alive: {status} {body!r}")
+        if args.prefork:
+            conn.send(b"GET /static/hello.txt HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            status, _, body = conn.response()
+            check(" 200 " in status and body == b"klin integration test\n",
+                  "Connection not reusable after an event stream")
+
+    # HTTP/1.0: no chunking, the end of the stream closes the connection
+    stream = EventStream(plain, b"/sse.kl1?n=2", version=b"HTTP/1.0")
+    ids = []
+    while (event := stream.event()) is not None:
+        if "id" in event:
+            ids.append(event["id"])
+    stream.close()
+    check(not stream.chunked and ids == ["1", "2"], f"SSE over HTTP/1.0: {ids}")
+
+    stream = EventStream(secure, b"/sse.kl1?n=2", context=client_context(ssl.TLSVersion.TLSv1_3))
+    ids = []
+    while (event := stream.event()) is not None:
+        if "id" in event:
+            ids.append(event["id"])
+    stream.close()
+    check(ids == ["1", "2"], f"SSE over TLS: {ids}")
+
+    # the page waits in sse_wait(); closing the connection ends it at once
+    mark = temp / "sse-closed"
+    stream = EventStream(plain, b"/sse.kl1?n=1&mark=" + str(mark).encode())
+    while (event := stream.event()) is not None and event.get("id") != "1":
+        pass
+    ping = stream.event()
+    stream.close()
+    deadline = time.monotonic() + 3
+    while not mark.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    check(ping == {"": "ping"} and mark.exists() and mark.read_text() == "closed\n",
+          f"Page did not see the client go away: {ping} {mark.exists()}")
+
+
 def run_bad_auth_checks(check, daemon, env, temp):
     """Unsafe or broken auth configurations stop klind at startup, instead
     of serving the realm unprotected (the reason goes to the log)."""
@@ -892,6 +1036,7 @@ def run_server_checks(args, env, output, daemon):
                 run_auth_checks(check, plain, secure)
                 run_header_checks(check, plain, client, secure)
                 run_conditional_checks(check, plain, files)
+                run_sse_checks(args, check, plain, secure, temp)
                 run_keep_alive_checks(args, check, plain, secure, request)
                 check(b"200 OK" in exchange(plain, request), "Server failed after malformed requests")
             finally:

@@ -1,0 +1,56 @@
+KLIN SERVER-SENT EVENTS
+-----------------------
+
+A page can stream events to the browser (the HTML EventSource API,
+"text/event-stream"). Include <klin/sse.h>:
+
+    <%! #include <klin/sse.h> %><%
+        if(sse_start(request, response))
+            return;
+
+        /* wait for my_fd (a pipe, a socket...) with a 15 s keep-alive */
+        for(;;)
+        {
+            int w = sse_wait(request, my_fd, 15000);
+
+            if(w == SSE_CLOSED)
+                break;                      /* the client went away */
+            if(w == SSE_TIMEOUT && sse_comment(response, "ping"))
+                break;
+            if(w == SSE_READY && sse_send(response, "update", id, data))
+                break;
+        }
+    %>
+
+Put nothing before the code block, not even a line break: sse_start()
+sends the header, and the page's output goes to the client as written.
+
+- sse_start(rq, rs): Content-Type text/event-stream, Cache-Control
+  no-store, X-Accel-Buffering no (proxies that buffer, e.g. nginx, pass
+  events on at once); sends the header now.
+- sse_send(rs, event, id, data): one event. event (type) and id are one
+  line each, or NULL; data may hold line breaks (each line becomes a
+  "data:" line, and the browser gets the line breaks back).
+- sse_comment(rs, text): a comment line, to keep an idle stream open
+  through proxies that close silent connections.
+- sse_retry(rs, ms): how long the browser waits before reconnecting.
+- sse_last_event_id(rq): the id of the last event the browser got, sent
+  when it reconnects (Last-Event-ID), so the page can go on from there.
+- sse_wait(rq, fd, ms): wait until fd (-1 for none) is readable
+  (SSE_READY), ms milliseconds pass (SSE_TIMEOUT, -1 for no limit) or the
+  client closes the connection (SSE_CLOSED). It waits in poll(2) on the
+  client socket and fd, and runs the timer's alarms meanwhile.
+
+Every send returns non-zero when the client is gone: stop streaming. A
+send the client does not take within 30 s closes the connection.
+
+On HTTP/1.1 the stream is chunked and the connection can be reused when
+the page ends; on HTTP/1.0 the end of the stream closes it. TLS works the
+same way.
+
+A stream holds its connection, and so a whole worker, for as long as it
+lasts. In the prefork model the watchdog asks the parent for another
+worker after a second (as for any slow page), and the streaming worker
+exits when its stream ends; size prefork.max_child for the number of
+streams expected. The single-process (-d) server serves nothing else
+while a stream is open.

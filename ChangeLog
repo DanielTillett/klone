@@ -37,6 +37,14 @@ Klin 4.0.0:
 	  file stored compressed is cut after it is uncompressed. Encrypted
 	  files get no ETag (it would let anyone test a guess of the content).
 	  New status codes 206 and 416
+	- Server-Sent Events (doc/SSE, <klin/sse.h>): sse_start(), sse_send()
+	  (multi-line data), sse_comment(), sse_retry(), sse_last_event_id()
+	  and sse_wait(), which polls the client socket (to see it close), a
+	  descriptor of the page's and the timer. Built on a new streaming
+	  response mode, response_set_streaming(): the header goes out with
+	  the first write and each io_flush() reaches the client (chunked on
+	  HTTP/1.1). Writes the client does not take in 30 s close the
+	  connection. Also io_get_fd()
 	- timeouts no longer use signals: an alarm (timer.h) runs in ordinary
 	  code when it is due and the process waits for a descriptor
 	  (timerm_wait(), used by the io drivers while an alarm is set, and

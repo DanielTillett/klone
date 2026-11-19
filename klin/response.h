@@ -55,6 +55,8 @@ int response_get_keep_alive(response_t *rs);
 int response_set_body_framing(response_t *rs, ssize_t len, int can_chunk);
 int response_header_sent(response_t *rs);
 int response_is_chunked(response_t *rs);
+int response_set_streaming(response_t *rs);
+int response_is_streaming(response_t *rs);
 int response_has_body(response_t *rs);
 void response_close_connection(response_t *rs);
 

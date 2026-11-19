@@ -1,0 +1,66 @@
+# Copyright (c) 2026 Daniel Tillett. Part of Klin; see the LICENSE file.
+#
+# CMake package for an installed Klin:
+#
+#     find_package(Klin 4 REQUIRED)
+#     target_link_libraries(app PRIVATE Klin::klin)
+#
+# Klin::klin carries the include directory, the static libraries (they
+# depend on each other, so they are linked as one rescanned group where the
+# linker needs it) and OpenSSL and zlib when Klin was built with them.
+# As with LibU, a program that logs defines the syslog facility itself:
+# int facility = LOG_LOCAL0;
+
+cmake_minimum_required(VERSION 3.24)
+include(CMakeFindDependencyMacro)
+
+set(KLIN_WITH_OPENSSL @KLIN_WITH_OPENSSL@)
+set(KLIN_WITH_ZLIB @KLIN_WITH_ZLIB@)
+if(KLIN_WITH_OPENSSL)
+    find_dependency(OpenSSL 3)
+endif()
+if(KLIN_WITH_ZLIB)
+    find_dependency(ZLIB)
+endif()
+
+if(NOT TARGET Klin::klin)
+    # this file is in <prefix>/<libdir>/cmake/Klin
+    get_filename_component(_klin_prefix "${CMAKE_CURRENT_LIST_DIR}/@_klin_config_up@"
+        ABSOLUTE)
+
+    set(_klin_libs "")
+    foreach(_klin_name IN ITEMS @_klin_lib_names@)
+        add_library(Klin::${_klin_name} STATIC IMPORTED)
+        set_target_properties(Klin::${_klin_name} PROPERTIES IMPORTED_LOCATION
+            "${_klin_prefix}/@_klin_rel_libdir@/${CMAKE_STATIC_LIBRARY_PREFIX}${_klin_name}${CMAKE_STATIC_LIBRARY_SUFFIX}")
+        list(APPEND _klin_libs Klin::${_klin_name})
+    endforeach()
+
+    if(CMAKE_C_LINK_GROUP_USING_RESCAN_SUPPORTED
+            OR CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
+        string(REPLACE ";" "," _klin_libs "${_klin_libs}")
+        set(_klin_libs "$<LINK_GROUP:RESCAN,${_klin_libs}>")
+    endif()
+
+    set(_klin_system "")
+    if(KLIN_WITH_OPENSSL)
+        list(APPEND _klin_system OpenSSL::SSL OpenSSL::Crypto)
+    endif()
+    if(KLIN_WITH_ZLIB)
+        list(APPEND _klin_system ZLIB::ZLIB)
+    endif()
+    if(WIN32)
+        list(APPEND _klin_system wsock32 bcrypt)
+    endif()
+
+    add_library(Klin::klin INTERFACE IMPORTED)
+    set_target_properties(Klin::klin PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${_klin_prefix}/@_klin_rel_includedir@"
+        INTERFACE_COMPILE_DEFINITIONS HAVE_CONF_H
+        INTERFACE_LINK_LIBRARIES "${_klin_libs};${_klin_system}")
+
+    unset(_klin_libs)
+    unset(_klin_system)
+    unset(_klin_name)
+    unset(_klin_prefix)
+endif()

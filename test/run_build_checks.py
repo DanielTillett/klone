@@ -34,8 +34,8 @@ def run(command, **kwargs):
     return result.returncode, result.stdout
 
 
-def build(build_dir, args, *defines):
-    command = ["cmake", "-S", str(ROOT), "-B", str(build_dir), "-G", args.generator, *defines]
+def build(build_dir, args, *defines, source=ROOT):
+    command = ["cmake", "-S", str(source), "-B", str(build_dir), "-G", args.generator, *defines]
     if args.make_program:
         command.append(f"-DCMAKE_MAKE_PROGRAM={args.make_program}")
     rc, out = run(command)
@@ -224,6 +224,31 @@ def main():
         check(rc == 0, f"compile/link against the install prefix failed:\n{out[-3000:]}")
         rc, out = run([str(temp / "uses_klin")])
         check(rc == 0 and out.strip() == version, f"wrong version: {out!r}")
+
+        # 4b. ... through the CMake package (find_package(Klin), Klin::klin)
+        #     and through pkg-config, without listing libraries by hand
+        consumer = temp / "consumer"
+        consumer.mkdir()
+        (consumer / "main.c").write_text(program_c.read_text())
+        (consumer / "CMakeLists.txt").write_text(
+            "cmake_minimum_required(VERSION 3.24)\nproject(consumer C)\n"
+            "find_package(Klin 4 REQUIRED)\nadd_executable(consumer main.c)\n"
+            "target_link_libraries(consumer PRIVATE Klin::klin)\n")
+        openssl_root = [line.split("=", 1)[1] for line in cache if line.startswith("OPENSSL_ROOT_DIR:")]
+        rc, out = build(temp / "consumer-build", args, f"-DCMAKE_PREFIX_PATH={prefix}",
+                        *[f"-DOPENSSL_ROOT_DIR={d}" for d in openssl_root if d],
+                        source=consumer)
+        check(rc == 0, f"find_package(Klin) consumer failed:\n{out[-3000:]}")
+        rc, out = run([str(temp / "consumer-build/consumer")])
+        check(rc == 0 and out.strip() == version, f"Klin::klin consumer: wrong version: {out!r}")
+        if shutil.which("pkg-config"):
+            env = {**os.environ, "PKG_CONFIG_PATH": str(lib / "pkgconfig")}
+            rc, flags = run(["pkg-config", "--cflags", "--libs", "klin"], env=env)
+            check(rc == 0, f"pkg-config klin failed:\n{flags}")
+            rc, out = run(["cc", str(program_c), "-o", str(temp / "uses_klin_pc"), *flags.split()])
+            check(rc == 0, f"compile/link with pkg-config klin failed:\n{out[-3000:]}")
+            rc, out = run([str(temp / "uses_klin_pc")])
+            check(rc == 0 and out.strip() == version, f"pkg-config consumer: wrong version: {out!r}")
 
         # 5. ... and so is code written for KLone (renamed Klin) for one
         #    release: old headers and names, and the old command names

@@ -1,0 +1,12 @@
+# relative to this file, so the install prefix can change at install time
+prefix=${pcfiledir}/@_klin_pc_up@
+libdir=${prefix}/@_klin_rel_libdir@
+includedir=${prefix}/@_klin_rel_includedir@
+
+Name: Klin
+Description: Klin web application framework for embedded systems (static libraries)
+Version: @PROJECT_VERSION@
+URL: https://github.com/DanielTillett/klin
+Requires: @_klin_pc_requires@
+Cflags: -I${includedir} -DHAVE_CONF_H
+Libs: -L${libdir} @_klin_pc_libs@

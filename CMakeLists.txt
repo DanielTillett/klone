@@ -49,6 +49,7 @@ option(KLIN_INSTALL_DAEMON_ONLY "Install only the daemon [--install_daemon_only]
 option(KLIN_WITH_OPENSSL "HTTPS, encrypted pages and client sessions (OpenSSL 3)" ON)
 option(KLIN_WITH_ZLIB "Compressed pages and responses (zlib)" ON)
 option(LIBU_ENABLE_SCTP "Build LibU with SCTP support" OFF)
+option(KLIN_BUILD_TESTS "Build the unit tests (run them with ctest)" OFF)
 set(KLIN_DAEMON_NAME "klind" CACHE STRING "Name of the daemon [--daemon_name]")
 set(KLIN_SITE_DIR "" CACHE PATH "Site directory to embed into klind (empty: none)")
 set(KLIN_IMPORT_ARGS "" CACHE STRING
@@ -441,3 +442,75 @@ if(NOT KLIN_INSTALL_DAEMON_ONLY)
     install(FILES doc/man/klind.conf.5 DESTINATION ${CMAKE_INSTALL_MANDIR}/man5)
 endif()
 klone_compat_install("${KLIN_GENERATED_INCLUDE_DIR}")
+
+# ---------------------------------------------------------------------------
+# Package files: find_package(Klin) gives Klin::klin; pkg-config klin
+# ---------------------------------------------------------------------------
+if(NOT KLIN_INSTALL_DAEMON_ONLY)
+    include(CMakePackageConfigHelpers)
+
+    # the libraries an application links, in dependency order (the site and
+    # webapp archives are klind's own)
+    set(_klin_lib_names http utils page backend emb io)
+    if(SSL_OPENSSL)
+        list(APPEND _klin_lib_names tls)
+    endif()
+    list(APPEND _klin_lib_names codec klog)
+    if(ENABLE_HOOKS)
+        list(APPEND _klin_lib_names hook)
+    endif()
+    list(APPEND _klin_lib_names trans u)
+
+    # paths relative to the installed files, so --prefix can change at
+    # install time
+    set(_klin_cmakedir "${CMAKE_INSTALL_LIBDIR}/cmake/Klin")
+    file(RELATIVE_PATH _klin_config_up
+        "${CMAKE_INSTALL_FULL_LIBDIR}/cmake/Klin" "${CMAKE_INSTALL_PREFIX}")
+    file(RELATIVE_PATH _klin_pc_up
+        "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig" "${CMAKE_INSTALL_PREFIX}")
+    file(RELATIVE_PATH _klin_rel_libdir
+        "${CMAKE_INSTALL_PREFIX}" "${CMAKE_INSTALL_FULL_LIBDIR}")
+    file(RELATIVE_PATH _klin_rel_includedir
+        "${CMAKE_INSTALL_PREFIX}" "${CMAKE_INSTALL_FULL_INCLUDEDIR}")
+
+    configure_file(cmake/KlinConfig.cmake.in
+        "${CMAKE_BINARY_DIR}/KlinConfig.cmake" @ONLY)
+    write_basic_package_version_file("${CMAKE_BINARY_DIR}/KlinConfigVersion.cmake"
+        VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)
+    install(FILES "${CMAKE_BINARY_DIR}/KlinConfig.cmake"
+        "${CMAKE_BINARY_DIR}/KlinConfigVersion.cmake"
+        DESTINATION "${_klin_cmakedir}")
+
+    set(_klin_pc_requires "")
+    if(KLIN_WITH_OPENSSL)
+        list(APPEND _klin_pc_requires openssl)
+    endif()
+    if(KLIN_WITH_ZLIB)
+        list(APPEND _klin_pc_requires zlib)
+    endif()
+    string(REPLACE ";" ", " _klin_pc_requires "${_klin_pc_requires}")
+    list(TRANSFORM _klin_lib_names PREPEND "-l" OUTPUT_VARIABLE _klin_pc_libs)
+    string(REPLACE ";" " " _klin_pc_libs "${_klin_pc_libs}")
+    # GNU-style linkers need the cyclic archives grouped (Apple's rescans)
+    if(NOT APPLE AND (CMAKE_C_LINK_GROUP_USING_RESCAN_SUPPORTED
+            OR CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED))
+        set(_klin_pc_libs "-Wl,--start-group ${_klin_pc_libs} -Wl,--end-group")
+    endif()
+    configure_file(cmake/klin.pc.in "${CMAKE_BINARY_DIR}/klin.pc" @ONLY)
+    install(FILES "${CMAKE_BINARY_DIR}/klin.pc"
+        DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
+endif()
+
+# ---------------------------------------------------------------------------
+# Unit tests (KLIN_BUILD_TESTS=ON; ctest -L unit): the real libraries, no
+# stubs (test/regressions.c covers extracted functions on any platform)
+# ---------------------------------------------------------------------------
+if(KLIN_BUILD_TESTS AND UNIX)
+    enable_testing()
+    add_executable(klin_unit_tests test/unit/unit_tests.c)
+    klin_link_group(_unit_libs ${_klind_libs} klin_trans)
+    target_link_libraries(klin_unit_tests PRIVATE klin_settings ${_unit_libs}
+        ${KLIN_SYSTEM_LIBS})
+    add_test(NAME unit COMMAND klin_unit_tests)
+    set_tests_properties(unit PROPERTIES LABELS unit TIMEOUT 60)
+endif()

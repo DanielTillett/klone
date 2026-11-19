@@ -287,14 +287,11 @@ static int cgi_makeenv(request_t *rq, response_t *rs, cgi_env_t *env)
         dbg_err_if(cgi_setenv_addr(env, addr, "REMOTE_ADDR", "REMOTE_PORT"));
 
     /* method */
-    switch(request_get_method(rq))
-    {
-    case HM_GET:    cstr = "GET"; break;
-    case HM_HEAD:   cstr = "HEAD"; break;
-    case HM_POST:   cstr = "POST"; break;
-    default:        cstr = "UNKNOWN"; break;
-    }
-    dbg_err_if(cgi_setenv(env, "REQUEST_METHOD", cstr));
+    dbg_err_if(cgi_setenv(env, "REQUEST_METHOD", request_get_method_name(rq)));
+
+    /* the user of an authentication realm (doc/AUTH) */
+    if((cstr = request_get_auth_user(rq)) != NULL)
+        dbg_err_if(cgi_setenv(env, "REMOTE_USER", cstr));
 
     if(io_is_secure(request_io(rq)))
         dbg_err_if(cgi_setenv(env, "HTTPS", "on"));

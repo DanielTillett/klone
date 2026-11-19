@@ -105,6 +105,14 @@ Set the maximum number of bytes the server is willing to accept for a given HTTP
 \fBpost_maxsize\fR
 the connection is immediately terminated. The default value is 5 MB.
 .TP
+\fBauth\fR
+HTTP authentication (Basic and Digest) of the paths in one or more realms:
+\fBrealm\fR blocks (\fBname\fR, \fBpath\fR patterns, \fBscheme\fR
+\fIdigest\fR, \fIbasic\fR or \fIany\fR, \fBroles\fR, \fBmd5\fR) and
+\fBuser\fR blocks made by \fBklin \-c passwd\fR, here or in
+\fBusers_file\fR; also \fBnonce_lifetime\fR and \fBbasic_over_http\fR.
+Plaintext passwords are refused. See doc/AUTH.
+.TP
 \fBtemp_dir\fR
 Set the base directory where temporary resources (e.g. uploaded files) are created.  When provided, the system default is overridden.  Currently, this value has per-backend scope.
 .SS "SERVER"

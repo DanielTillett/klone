@@ -55,6 +55,11 @@ typedef struct vhost_s
     int rq_config_loaded;   /* the request limits below are set              */
     size_t rq_idle_timeout, rq_post_timeout, rq_post_maxsize;
     char *rq_temp_dir;
+
+    /* HTTP authentication (auth.c): the "auth" block, and the users_file
+       it names (loaded when the vhost is created, owned by the vhost) */
+    u_config_t *auth;
+    u_config_t *auth_users;
 } vhost_t;
 
 typedef struct vhost_list_s vhost_list_t;

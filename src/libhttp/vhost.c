@@ -37,6 +37,8 @@ int vhost_free(vhost_t *v)
     }
     u_free(v->alias);
     u_free(v->rq_temp_dir);
+    if(v->auth_users)
+        u_config_free(v->auth_users);
     u_free(v);
 
     return 0;

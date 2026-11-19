@@ -85,6 +85,19 @@ If, while importing, you don't want to include a set of files you can use the
 
 Arguments \fB\-x\fR, \fB\-Z\fR and \fB\-e\fR may be used more then once.
 
+.SS "Passwd:"
+.HP 6
+
+\fBklin\fR \fB\-c\ passwd\fR [\fB\-r\ \fR\fB\fIrealm\fR\fR] [\fB\-m\fR] [\fB\-n\ \fR\fB\fIiterations\fR\fR] \fB\fIuser\fR\fR
+.PP
+Read a password from the first line of standard input and print a
+\fBuser\fR block for the \fBauth\fR configuration of
+\fBklind.conf\fR(5): a salted PBKDF2\-SHA256 hash of the password for Basic
+authentication and, for each \fIrealm\fR given with \fB\-r\fR (which may be
+used more than once), the SHA\-256 Digest hash. \fB\-m\fR adds MD5 Digest
+hashes, \fB\-n\fR sets the PBKDF2 iteration count (default 100000). See
+doc/AUTH.
+
 .SH "ENVIRONMENT"
 .PP
 The following environment variable affects the execution of

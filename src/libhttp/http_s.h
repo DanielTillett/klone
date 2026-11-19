@@ -35,6 +35,8 @@ struct http_s
     int keep_alive;         /* !0 if enabled                                 */
     int ka_timeout;         /* secs to wait for the next request             */
     int ka_max;             /* max requests per connection                   */
+    /* HTTP authentication: signs the Digest nonces (auth.c) */
+    unsigned char auth_secret[32];
 };
 
 #endif

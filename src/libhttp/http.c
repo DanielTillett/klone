@@ -32,6 +32,7 @@
 #include <klin/hook.h>
 #include <klin/hookprv.h>
 #include <klin/access.h>
+#include <klin/auth.h>
 #include <klin/vhost.h>
 #include <klin/supplier.h>
 #include "http_s.h"
@@ -529,6 +530,10 @@ static int http_print_error_page(http_t *h, request_t *rq, response_t *rs,
     /* disable page caching */
     dbg_err_if(response_disable_caching(rs));
 
+    /* ask for credentials */
+    if(http_status == HTTP_STATUS_UNAUTHORIZED)
+        dbg_if(auth_challenge(h, rq, rs));
+
     /* looking for user provided error page */
     dbg_err_if(u_snprintf(buf, BUFSZ, "error.%d", http_status));
     if((vhost = http_get_vhost(h, rq)) == NULL)
@@ -781,6 +786,10 @@ static int http_serve_page(http_t *h, request_t *rq, response_t *rs,
 
     /* add default header fields */
     dbg_err_if(http_add_default_header(h, rq, rs));
+
+    /* pages in an authentication realm need a user with one of its roles */
+    if((rc = auth_check(h, rq)) != 0)
+        return rc;
 
     /* set default successfull status code */
     dbg_err_if(response_set_status(rs, HTTP_STATUS_OK));
@@ -1045,6 +1054,9 @@ static int http_add_vhost(http_t *http, const char *host, u_config_t *c)
     if((v = u_config_get_subkey_value(c, "index")) != NULL)
         vhost->index = v;
 
+    /* HTTP authentication realms and users (a bad one stops the server) */
+    dbg_err_if(auth_load(http, vhost));
+
     dbg_err_if(vhost_list_add(http->vhosts, vhost));
 
     return 0;
@@ -1124,7 +1136,7 @@ err:
     return ~0;
 }
 
-static int http_create(u_config_t *config, http_t **ph)
+static int http_create(u_config_t *config, int ssl, http_t **ph)
 {
     http_t *h = NULL;
 
@@ -1135,6 +1147,13 @@ static int http_create(u_config_t *config, http_t **ph)
     dbg_err_if(h == NULL);
 
     h->config = config;
+
+    /* known before the vhosts are loaded: their auth realms depend on it */
+    h->ssl = ssl;
+
+    /* the Digest nonce key, drawn before prefork workers fork (they all
+       accept each other's nonces) */
+    dbg_err_if(auth_init_secret(h));
 
     /* persistent connections */
     dbg_err_if(u_config_get_subkey_value_b(config, "keep_alive", 1,
@@ -1214,7 +1233,8 @@ static int http_backend_init(struct backend_s *be)
 
     dbg_err_if (be == NULL);
  
-    dbg_err_if(http_create(be->config, &http));
+    dbg_err_if(http_create(be->config,
+                be->proto != NULL && !strcasecmp(be->proto, "https"), &http));
 
     be->arg = http;
 

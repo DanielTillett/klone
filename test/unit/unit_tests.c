@@ -24,6 +24,9 @@
 #include <klin/io.h>
 #include <klin/timer.h>
 #include <klin/translat.h>
+#ifdef SSL_OPENSSL
+#include <klin/auth.h>
+#endif
 
 /* the syslog facility LibU logs with: the program defines it */
 int facility = LOG_LOCAL0;
@@ -316,6 +319,59 @@ static void test_translate(void)
     }
 }
 
+#ifdef SSL_OPENSSL
+/* HTTP authentication hashes: the RFC 7616 3.9.1 examples, and PBKDF2
+   password hashes */
+static void test_auth(void)
+{
+    static const char nonce[] = "7ypf/xlj9XXwfDPEoM4URrv/xwf94BcCAzFZH4GiTo0v",
+        cnonce[] = "f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ";
+    char ha1[AUTH_HEX_SZ], r[AUTH_HEX_SZ], stored[AUTH_PASSWORD_SZ],
+         other[AUTH_PASSWORD_SZ];
+
+    CHECK(auth_digest_ha1(AUTH_ALG_SHA256, "Mufasa", "http-auth@example.org",
+                "Circle of Life", ha1) == 0);
+    CHECK(!strcmp(ha1, "7987c64c30e25f1b74be53f966b49b90"
+                "f2808aa92faf9a00262392d7b4794232"));
+    CHECK(auth_digest_response(AUTH_ALG_SHA256, ha1, nonce, "00000001",
+                cnonce, "GET", "/dir/index.html", r) == 0);
+    CHECK(!strcmp(r, "753927fa0e85d155564e2e272a28d180"
+                "2ca10daf4496794697cf8db5856cb6c1"));
+
+    CHECK(auth_digest_ha1(AUTH_ALG_MD5, "Mufasa", "http-auth@example.org",
+                "Circle of Life", ha1) == 0);
+    CHECK(auth_digest_response(AUTH_ALG_MD5, ha1, nonce, "00000001",
+                cnonce, "GET", "/dir/index.html", r) == 0);
+    CHECK(!strcmp(r, "8ca523f5e9506fed4657c9700eebdbec"));
+
+    CHECK(auth_alg_from_name("sha-256") == AUTH_ALG_SHA256);
+    CHECK(auth_alg_from_name("MD5") == AUTH_ALG_MD5);
+    CHECK(auth_alg_from_name("SHA-512-256") == 0);
+    CHECK(auth_alg_from_name(NULL) == 0);
+
+    /* salted: the same password hashes differently, both verify */
+    CHECK(auth_password_hash("s3cret pw", 1000, stored, sizeof stored) == 0);
+    CHECK(auth_password_hash("s3cret pw", 1000, other, sizeof other) == 0);
+    CHECK(!strncmp(stored, "pbkdf2-sha256$1000$", 19));
+    CHECK(strcmp(stored, other) != 0);
+    CHECK(auth_password_verify("s3cret pw", stored) == 0);
+    CHECK(auth_password_verify("s3cret pw", other) == 0);
+    CHECK(auth_password_verify("s3cret pX", stored) != 0);
+    CHECK(auth_password_verify("", stored) != 0);
+
+    /* malformed stored values never verify (and plaintext is not a hash) */
+    CHECK(auth_password_verify("s3cret pw", "s3cret pw") != 0);
+    CHECK(auth_password_verify("x", "pbkdf2-sha256$0$AAAA$AAAA") != 0);
+    CHECK(auth_password_verify("x", "pbkdf2-sha256$10$AAAA") != 0);
+    CHECK(auth_password_verify("x", "pbkdf2-sha256$x$$") != 0);
+    stored[strlen(stored) - 3] ^= 1;    /* a changed hash */
+    CHECK(auth_password_verify("s3cret pw", stored) != 0);
+
+    /* a hash that does not fit the buffer is an error */
+    CHECK(auth_password_hash("pw", 1000, stored, 20) != 0);
+}
+#endif
+
 int main(void)
 {
     test_header_fields();
@@ -323,6 +379,9 @@ int main(void)
     test_field_reuse();
     test_timer();
     test_translate();
+#ifdef SSL_OPENSSL
+    test_auth();
+#endif
 
     printf("%d unit checks, %d failures\n", checks, failures);
     return failures ? EXIT_FAILURE : EXIT_SUCCESS;

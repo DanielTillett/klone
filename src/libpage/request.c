@@ -65,6 +65,11 @@ struct request_s
     size_t hdr_end;             /* stream offset of the end of the header   */
     int ka_wait;                /* waiting on a kept-alive connection       */
     int conn_closed;            /* closed or idle before any request byte   */
+    /* HTTP authentication (see auth.c): the realm the path is in, the user
+       who authenticated (both in the configuration), a stale nonce */
+    const char *auth_user;
+    void *auth_realm;
+    int auth_stale;
 
     /* strings, last: request_create() does not zero them */
     char local_addr[256];       /* local address                            */
@@ -1980,6 +1985,61 @@ int request_get_method(request_t *rq)
     dbg_return_if (rq == NULL, HM_UNKNOWN);
 
     return rq->method;
+}
+
+/**
+ * \ingroup request
+ * \brief   Get the method of a request as a string
+ *
+ * \param rq  request object
+ *
+ * \return "GET", "HEAD", "POST", "PUT", "DELETE" or "UNKNOWN"
+ */
+const char *request_get_method_name(request_t *rq)
+{
+    switch(rq ? rq->method : HM_UNKNOWN)
+    {
+    case HM_GET:    return "GET";
+    case HM_HEAD:   return "HEAD";
+    case HM_POST:   return "POST";
+    case HM_PUT:    return "PUT";
+    case HM_DELETE: return "DELETE";
+    default:        return "UNKNOWN";
+    }
+}
+
+/**
+ * \ingroup request
+ * \brief   Get the user who authenticated the request
+ *
+ * \param rq  request object
+ *
+ * \return the user name, or \c NULL if the page is not in an
+ *         authentication realm (see doc/AUTH)
+ */
+const char *request_get_auth_user(request_t *rq)
+{
+    dbg_return_if (rq == NULL, NULL);
+
+    return rq->auth_user;
+}
+
+/* set by auth_check(): 'user' and 'realm' stay owned by the configuration */
+void request_set_auth(request_t *rq, const char *user, void *realm, int stale)
+{
+    rq->auth_user = user;
+    rq->auth_realm = realm;
+    rq->auth_stale = stale;
+}
+
+void *request_get_auth_realm(request_t *rq)
+{
+    return rq ? rq->auth_realm : NULL;
+}
+
+int request_get_auth_stale(request_t *rq)
+{
+    return rq ? rq->auth_stale : 0;
 }
 
 /** 

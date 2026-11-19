@@ -2,9 +2,12 @@
 # Copyright (c) 2026 Daniel Tillett. Part of Klin; see the LICENSE file.
 """Build a test-only embedded page and exercise the real HTTP/TLS daemon."""
 import argparse
+import base64
+import hashlib
 from http.cookies import SimpleCookie
 import os
 from pathlib import Path
+import re
 import signal
 import socket
 import ssl
@@ -398,6 +401,182 @@ def run_keep_alive_checks(args, check, plain, secure, request):
               f"Stalled TLS handshake not dropped in time ({time.time() - start:.1f} s)")
 
 
+PRIVATE, OLD = "Private Area", "Old Clients"
+
+
+def auth_users(klin, temp):
+    """The "user" blocks of the auth configuration, made by klin -c passwd
+    (a few PBKDF2 iterations: the tests check the format, not the cost)."""
+    def user(name, password, roles, *realms, md5=False):
+        command = [str(klin), "-c", "passwd", "-n", "1000"]
+        for realm in realms:
+            command += ["-r", realm]
+        if md5:
+            command.append("-m")
+        block = subprocess.run(command + [name], input=password + "\n", text=True,
+                               capture_output=True, check=True).stdout
+        return block.replace("    roles\n", f"    roles {roles}\n")
+
+    inline = (user("alice", "wonder land", "admin staff", PRIVATE, OLD, md5=True) +
+              user("bob", "builder", "staff", PRIVATE))
+    users_file = temp / "users.conf"
+    users_file.write_text(user("carol", "c4rol!", "admin", PRIVATE))
+    return inline, users_file
+
+
+def auth_config(inline, users_file):
+    return f"""auth
+    {{
+        nonce_lifetime 3
+        users_file {users_file}
+{inline}
+        realm
+        {{
+            name {PRIVATE}
+            path /static/secret*
+            path /whoami.kl1
+            scheme any
+            roles admin
+        }}
+        realm
+        {{
+            name {OLD}
+            path /static/old*
+            md5 yes
+        }}
+    }}"""
+
+
+def digest_header(challenge, user, password, uri, realm=PRIVATE, alg="SHA-256",
+                  method="GET", nc="00000001", cnonce="0a4f113b"):
+    nonce = re.search(r'nonce="([^"]+)"', challenge).group(1)
+    h = (lambda s: hashlib.sha256(s.encode()).hexdigest()) if alg == "SHA-256" else \
+        (lambda s: hashlib.md5(s.encode()).hexdigest())
+    ha1, ha2 = h(f"{user}:{realm}:{password}"), h(f"{method}:{uri}")
+    response = h(f"{ha1}:{nonce}:{nc}:{cnonce}:auth:{ha2}")
+    return (f'Authorization: Digest username="{user}", realm="{realm}", nonce="{nonce}", '
+            f'uri="{uri}", algorithm={alg}, response="{response}", qop=auth, nc={nc}, '
+            f'cnonce="{cnonce}"\r\n').encode()
+
+
+def run_auth_checks(check, plain, secure):
+    """HTTP authentication (doc/AUTH): Digest and Basic, realms, roles."""
+    tls = client_context(ssl.TLSVersion.TLSv1_3)
+
+    def get(port, path, extra=b"", context=None):
+        reply = exchange(port, b"GET " + path.encode() + b" HTTP/1.1\r\nHost: localhost\r\n" +
+                         extra + b"\r\n", context)
+        head, _, body = reply.partition(b"\r\n\r\n")
+        head = head.decode("latin-1")
+        challenges = [line.split(":", 1)[1].strip() for line in head.split("\r\n")
+                      if line.lower().startswith("www-authenticate:")]
+        return head.split("\r\n")[0], challenges, body
+
+    status, challenges, _ = get(plain, "/static/hello.txt")
+    check(" 200 " in status and not challenges, "Unprotected page asked for credentials")
+
+    # plain HTTP: Digest SHA-256 only (Basic would send the password)
+    status, challenges, _ = get(plain, "/static/secret.txt")
+    check(" 401 " in status and len(challenges) == 1 and
+          challenges[0].startswith(f'Digest realm="{PRIVATE}"') and
+          "algorithm=SHA-256" in challenges[0] and 'qop="auth"' in challenges[0],
+          f"Wrong challenge: {status} {challenges}")
+    first = challenges[0]
+    status, _, body = get(plain, "/static/secret.txt",
+                          digest_header(first, "alice", "wonder land", "/static/secret.txt"))
+    check(" 200 " in status and body == b"top secret\n", f"Digest login failed: {status}")
+    for user, password, uri, want in [
+            ("alice", "wonder lanD", "/static/secret.txt", " 401 "),    # wrong password
+            ("nobody", "wonder land", "/static/secret.txt", " 401 "),   # unknown user
+            ("alice", "wonder land", "/static/hello.txt", " 401 "),     # digest of another URI
+            ("bob", "builder", "/static/secret.txt", " 403 "),          # no admin role
+            ("carol", "c4rol!", "/static/secret.txt", " 200 ")]:        # from users_file
+        status, _, _ = get(plain, "/static/secret.txt", digest_header(first, user, password, uri))
+        check(want in status, f"Digest {user} {uri}: {status}, expected {want.strip()}")
+    status, _, _ = get(plain, "/static/secret.txt",
+                       digest_header(first, "alice", "wonder land", "/static/secret.txt",
+                                     alg="MD5"))
+    check(" 401 " in status, "MD5 Digest accepted in a realm without md5")
+    forged = first.replace('nonce="', 'nonce="0', 1).replace('0', '1', 1)
+    status, _, _ = get(plain, "/static/secret.txt",
+                       digest_header(forged, "alice", "wonder land", "/static/secret.txt"))
+    check(" 401 " in status, "Forged nonce accepted")
+    basic = b"Authorization: Basic " + base64.b64encode(b"alice:wonder land") + b"\r\n"
+    status, _, _ = get(plain, "/static/secret.txt", basic)
+    check(" 401 " in status, "Basic accepted over plain HTTP")
+
+    # the page sees the user
+    status, challenges, _ = get(plain, "/whoami.kl1")
+    status, _, body = get(plain, "/whoami.kl1",
+                          digest_header(challenges[0], "carol", "c4rol!", "/whoami.kl1"))
+    check(" 200 " in status and body.strip() == b"user=carol", f"Page did not see the user: {body!r}")
+
+    # a realm that also offers MD5, and requires no role
+    status, challenges, _ = get(plain, "/static/old.txt")
+    check(" 401 " in status and [c.split("algorithm=")[1].split(",")[0] for c in challenges] ==
+          ["SHA-256", "MD5"], f"Wrong MD5 realm challenges: {challenges}")
+    status, _, body = get(plain, "/static/old.txt",
+                          digest_header(challenges[1], "alice", "wonder land", "/static/old.txt",
+                                        realm=OLD, alg="MD5"))
+    check(" 200 " in status and body == b"old client\n", f"MD5 Digest failed: {status}")
+
+    # TLS: Basic too
+    status, challenges, _ = get(secure, "/static/secret.txt", context=tls)
+    check(" 401 " in status and challenges[-1] == f'Basic realm="{PRIVATE}", charset="UTF-8"',
+          f"No Basic challenge over TLS: {challenges}")
+    status, _, body = get(secure, "/static/secret.txt", basic, tls)
+    check(" 200 " in status and body == b"top secret\n", f"Basic login failed: {status}")
+    for credentials, want in [(b"alice:wrong", " 401 "), (b"bob:builder", " 403 "),
+                              (b"alice", " 401 "), (b"carol:c4rol!", " 200 ")]:
+        status, _, _ = get(secure, "/static/secret.txt",
+                           b"Authorization: Basic " + base64.b64encode(credentials) + b"\r\n", tls)
+        check(want in status, f"Basic {credentials!r}: {status}, expected {want.strip()}")
+    # the verified-credentials cache keeps no wrong password
+    status, _, _ = get(secure, "/static/secret.txt", basic, tls)
+    status2, _, _ = get(secure, "/static/secret.txt",
+                        b"Authorization: Basic " + base64.b64encode(b"alice:wonder lanD") + b"\r\n", tls)
+    check(" 200 " in status and " 401 " in status2, "Cached Basic credentials accepted a wrong password")
+
+    # an expired nonce: stale=true, so the client retries without asking
+    time.sleep(4)
+    status, challenges, _ = get(plain, "/static/secret.txt",
+                                digest_header(first, "alice", "wonder land", "/static/secret.txt"))
+    check(" 401 " in status and "stale=true" in challenges[0], f"Expired nonce not stale: {challenges}")
+
+
+def run_bad_auth_checks(check, daemon, env, temp):
+    """Unsafe or broken auth configurations stop klind at startup, instead
+    of serving the realm unprotected (the reason goes to the log)."""
+    port = free_port()
+    hashed = auth_users(daemon.parent / "klin", temp)[0]
+
+    def starts(auth):
+        config = temp / "auth-start.conf"
+        config.write_text(f"server_list one\nallow_root yes\none\n{{\ntype http\n"
+                          f"addr tcp4://127.0.0.1:{port}\ndir_root /www\n"
+                          f"auth\n{{\n{auth}\n}}\n}}\n")
+        process = subprocess.Popen([str(daemon), "-F", "-d", "-f", str(config)], env=env,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            process.wait(timeout=2)
+            return False
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            return True
+
+    realm = "realm\n{\nname R\npath /x*\n%s}\n"
+    check(starts(hashed + realm % ""), "A valid auth configuration was refused")
+    for name, auth in [
+            ("plaintext password", "user\n{\nname eve\npassword hunter2\n}\n" + realm % ""),
+            ("Basic over HTTP", hashed + realm % "scheme basic\n"),
+            ("realm without path", hashed + "realm\n{\nname R\n}\n"),
+            ("unknown scheme", hashed + realm % "scheme ntlm\n"),
+            ("quote in realm", hashed + realm.replace("name R", 'name R"') % ""),
+            ("missing users_file", hashed + "users_file /nonexistent/users\n" + realm % "")]:
+        check(not starts(auth), f"klind started with an unsafe auth configuration ({name})")
+
+
 def run_server_checks(args, env, output, daemon):
     checks = 0
 
@@ -412,6 +591,10 @@ def run_server_checks(args, env, output, daemon):
         (temp / "hello.txt").write_text("klin integration test\n")
         (temp / "a+b.txt").write_text("literal plus\n")
         (temp / "a?b.txt").write_text("encoded question\n")
+        (temp / "secret.txt").write_text("top secret\n")
+        (temp / "old.txt").write_text("old client\n")
+        auth = auth_config(*auth_users(daemon.parent / "klin", temp))
+        run_bad_auth_checks(check, daemon, env, temp)
         cert, key = temp / "cert.pem", temp / "key.pem"
         subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
                         "-keyout", str(key), "-out", str(cert), "-days", "1", "-subj", "/CN=localhost"],
@@ -424,9 +607,9 @@ def run_server_checks(args, env, output, daemon):
         # memlog: a log on this server only (none at the top level), kept in
         # memory, which pages read back with server_foreach_memlog_line()
         for name, port, tls, session, extra in [
-                ("plain", plain, False, "memory", ""),
+                ("plain", plain, False, "memory", auth),
                 ("client", client, False, "client", ""),
-                ("secure", secure, True, "client", ""),
+                ("secure", secure, True, "client", auth),
                 ("files", files, False, f"file\n        file.path {sessions}",
                  "index missing.kl1 pid.kl1"),
                 ("memlog", memlog, False, "memory", "log\n    {\n        type memory\n    }")]:
@@ -585,6 +768,7 @@ def run_server_checks(args, env, output, daemon):
                     check(b"200 OK" in reply and
                           b"memlog probe line 0123456789" in reply.partition(b"\r\n\r\n")[2],
                           f"memory log not read back whole: {reply[:600]!r}")
+                run_auth_checks(check, plain, secure)
                 run_keep_alive_checks(args, check, plain, secure, request)
                 check(b"200 OK" in exchange(plain, request), "Server failed after malformed requests")
             finally:

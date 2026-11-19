@@ -33,12 +33,15 @@
 #include <klin/run.h>
 #include <klin/mime_map.h>
 #include <klin/version.h>
+#include <klin/auth.h>
 #include "pm.h"
 
 int facility = LOG_LOCAL0;
 
 /* command list enums */
-enum command_e { CMD_UNKNOWN, CMD_TRANS, CMD_IMPORT };
+enum command_e { CMD_UNKNOWN, CMD_TRANS, CMD_IMPORT, CMD_PASSWD };
+
+enum { MAX_REALMS = 16 };
 
 /* runtime flags */
 enum flags_e { FLAG_NONE, FLAG_VERBOSE };
@@ -64,6 +67,10 @@ typedef struct
     int import_err;             /* >0 if a file or dir failed import */
     size_t ndir, nfile;         /* dir and file count               */
     size_t nexcl;               /* # of excluded files (-x)         */
+    const char *realm[MAX_REALMS]; /* [passwd] Digest realms (-r)   */
+    size_t nrealm;
+    int md5;                    /* [passwd] MD5 Digest too (-m)     */
+    unsigned long iterations;   /* [passwd] PBKDF2 iterations (-n)  */
 } context_t;
 
 context_t *ctx;
@@ -88,6 +95,9 @@ static void usage(void)
 "    COMMAND LIST:\n"
 "       import        import a directory tree in the embedded filesystem\n"
 "       translate     convert a file or a dynamic web page to a C file\n"
+#ifdef SSL_ON
+"       passwd        hash a password (read from stdin) for an auth user\n"
+#endif
 "\n"
 "\n"
 "    COMMANDS SYNTAX:\n"
@@ -121,6 +131,15 @@ static void usage(void)
 #ifdef HAVE_LIBZ
 "         -z          compress file content\n"
 #endif
+#ifdef SSL_ON
+"\n"
+"       passwd OPTIONS user\n"
+"         -r realm    also write the Digest hashes for this realm (*)\n"
+"         -m          also write MD5 Digest hashes (for old clients)\n"
+"         -n count    PBKDF2 iterations (default 100000)\n"
+"         user        user name; the password is the first line of stdin\n"
+"                     (see doc/AUTH)\n"
+#endif
 "\n";
 
     fprintf(stderr, us, klin_version());
@@ -152,7 +171,7 @@ static int parse_opt(int argc, char **argv)
 
     /* encryption switches */
 #ifdef SSL_ON
-    strcat(opts, "k:e:E");
+    strcat(opts, "k:e:Er:mn:");
 #endif
 
     /* compression switches */
@@ -198,9 +217,27 @@ static int parse_opt(int argc, char **argv)
                 ctx->cmd = CMD_IMPORT;
             else if(!strcasecmp(optarg, "translate"))
                 ctx->cmd = CMD_TRANS;
+#ifdef SSL_ON
+            else if(!strcasecmp(optarg, "passwd"))
+                ctx->cmd = CMD_PASSWD;
+#endif
             else
                 con_err("unknown command: %s", optarg);
             break;
+#ifdef SSL_ON
+        case 'r': /* passwd: Digest realm */
+            klin_die_if(ctx->nrealm == MAX_REALMS, "too many realms");
+            ctx->realm[ctx->nrealm++] = optarg;
+            break;
+        case 'm': /* passwd: MD5 Digest too */
+            ctx->md5 = 1;
+            break;
+        case 'n': /* passwd: PBKDF2 iterations */
+            ctx->iterations = strtoul(optarg, NULL, 10);
+            klin_die_if(ctx->iterations < 1 || ctx->iterations > 100000000,
+                    "bad iteration count");
+            break;
+#endif
         case 'i': /* input file */
             ctx->file_in = u_strdup(optarg);
             warn_err_if(ctx->file_in == NULL);
@@ -622,6 +659,52 @@ err:
     return ~0;
 }
 
+#ifdef SSL_ON
+/* print a "user" block for an auth configuration (doc/AUTH): the PBKDF2
+ * hash Basic checks, and the Digest HA1 of each realm asked for */
+static int command_passwd(void)
+{
+    char pw[1024], hash[AUTH_PASSWORD_SZ], ha1[AUTH_HEX_SZ];
+    const char *user;
+    size_t i, len;
+    int alg;
+
+    usage_if(ctx->narg != 1);
+    user = ctx->arg[0];
+    klin_die_if(strpbrk(user, ":\"\\ \t") != NULL,
+            "a user name cannot contain ':', quotes, backslashes or blanks");
+
+    klin_die_if(fgets(pw, sizeof pw, stdin) == NULL, "no password on stdin");
+    len = strcspn(pw, "\r\n");
+    pw[len] = '\0';
+    klin_die_if(len == 0, "empty password");
+
+    klin_die_if(auth_password_hash(pw, ctx->iterations ? (unsigned int)
+                ctx->iterations : AUTH_PBKDF2_ITERATIONS, hash, sizeof hash),
+            "cannot hash the password");
+
+    printf("user\n{\n    name %s\n    roles\n    password %s\n", user, hash);
+
+    for(i = 0; i < ctx->nrealm; ++i)
+    {
+        for(alg = AUTH_ALG_SHA256; alg >= AUTH_ALG_MD5; --alg)
+        {
+            if(alg == AUTH_ALG_MD5 && !ctx->md5)
+                continue;
+            klin_die_if(auth_digest_ha1(alg, user, ctx->realm[i], pw, ha1),
+                    "cannot hash the password");
+            printf("    digest %s %s %s\n", auth_alg_name(alg), ha1,
+                    ctx->realm[i]);
+        }
+    }
+
+    printf("}\n");
+    memset(pw, 0, sizeof pw);
+
+    return 0;
+}
+#endif
+
 static int dispatch_command(void)
 {
     switch(ctx->cmd)
@@ -632,6 +715,11 @@ static int dispatch_command(void)
     case CMD_IMPORT:
         dbg_err_if(command_import());
         break;
+#ifdef SSL_ON
+    case CMD_PASSWD:
+        dbg_err_if(command_passwd());
+        break;
+#endif
     default:
         con_err("unknown command");
     }

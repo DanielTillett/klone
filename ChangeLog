@@ -15,6 +15,13 @@ Klin 4.0.0:
 	  entries, so they survive a reconfigure. The Windows service keeps
 	  the name kloned. All of it is in cmake/klone_compat.cmake and the
 	  lines marked "before KLone was renamed Klin"
+	- HTTP authentication (doc/AUTH): Basic and Digest (SHA-256, MD5 only
+	  where a realm allows it) in per-path realms with roles, set in a
+	  vhost's "auth" block. Passwords are stored as PBKDF2-SHA256 and Digest
+	  hashes made by the new klin -c passwd; plaintext passwords, and Basic
+	  over plain HTTP, stop klind at startup. Digest nonces are signed and
+	  expire (stale=true). Pages read the user with request_get_auth_user(),
+	  CGIs with REMOTE_USER; request_get_method_name() is new
 	- timeouts no longer use signals: an alarm (timer.h) runs in ordinary
 	  code when it is due and the process waits for a descriptor
 	  (timerm_wait(), used by the io drivers while an alarm is set, and

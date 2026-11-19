@@ -82,9 +82,19 @@ Process-wide state, and what happens to it in a forked child:
     server watchdog and spare flags (server.c)
                               set in the child by server_spawn_child
 
-Signal handlers only set flags (volatile sig_atomic_t) and return; the
-main loop acts on them. The timer's SIGALRM handler is the exception for
-now: it runs the alarm callbacks, which must therefore not allocate or log.
+Signal handlers do only async-signal-safe work: set flags (volatile
+sig_atomic_t), close(2) a descriptor, _exit(2). The main loop acts on the
+flags, and logs. SIGINT/SIGTERM set server->stop (closing a child's
+listening socket, so a blocked accept fails); SIGCHLD sets a flag.
+
+The timer's SIGALRM handler runs the alarm callbacks: it has to, since
+closing the connection is what ends a read blocked past its timeout. So
+alarm callbacks follow the same rule: no malloc/free, no logging, no stdio,
+no OpenSSL. What they may do: set a flag (request_cb_close_socket,
+server_cb_klog_flush), close(2) (io_close of an fd or TLS io only closes
+the descriptor), server_stop(), timerm_reschedule(), and send a ppc
+message (ppc_write writes it in one write(2)). Report errors from them with
+nop_err_if, never dbg_/warn_.
 
 
 NAMES AND TEXT

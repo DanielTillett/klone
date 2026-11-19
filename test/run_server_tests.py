@@ -570,9 +570,14 @@ def run_server_checks(args, env, output, daemon):
                 os.killpg(process.pid, signal.SIGTERM)
                 try:
                     process.wait(timeout=5)
+                    stopped = True
                 except subprocess.TimeoutExpired:
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait()
+                    stopped = False
+            # SIGTERM stops the server by itself (the handler only sets the
+            # stop flag; the main loop logs it and shuts down the children)
+            check(stopped, "SIGTERM did not stop the server within 5 s")
         log_text = log_path.read_text(errors="replace")
         check("ERROR: AddressSanitizer" not in log_text and "ERROR: LeakSanitizer" not in log_text
               and "AddressSanitizer:DEADLYSIGNAL" not in log_text and "runtime error:" not in log_text,

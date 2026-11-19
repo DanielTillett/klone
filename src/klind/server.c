@@ -151,32 +151,26 @@ static void server_kill_children(server_t *s)
     return;
 }
 
-static void server_sigint(int sig)
+/* the signal that stopped the server (logged by server_loop) */
+static volatile sig_atomic_t server_stop_signal = 0;
+
+/* SIGINT and SIGTERM. Only async-signal-safe work here: flags, close(2) and
+ * _exit(2); the logging and the cleanup happen in server_loop() and
+ * app_term() (the handlers used to log and free the embedded files, which
+ * the interrupted code could be using) */
+static void server_sigstop(int sig)
 {
-    u_unused_args(sig);
+    /* a child stopped by the parent dies at once (and must not log: the
+       parent may be dead already, e.g. after "killall klind") */
+    if(sig == SIGTERM && ctx && ctx->pipc)
+        _exit(0);
 
-    u_warn("SIGINT");
+    server_stop_signal = sig;
 
+    /* sets the stop flag and closes a child's listening socket, so that
+       an accept(2) restarted after this handler returns fails at once */
     if(ctx && ctx->server)
-        server_stop(ctx->server);
-    
-    emb_term();
-}
-
-static void server_sigterm(int sig)
-{
-    u_unused_args(sig);
-
-    /* child process die immediately.
-     * note: don't call debug functions because the parent process could be
-     * already dead if the user used the "killall klind" command */
-    if(ctx->pipc)
-        _exit(0); 
-
-    u_warn("SIGTERM");
-
-    if(ctx && ctx->server)
-        server_stop(ctx->server);
+        (void) server_stop(ctx->server);
 }
 
 #ifdef OS_UNIX
@@ -607,14 +601,16 @@ static int server_clients_waiting(void)
     return select(ld + 1, &rdfds, NULL, NULL, &tv) > 0;
 }
 
+/* SIGALRM callback: async-signal-safe, so errors are not logged (nop_err)
+ * and the request to the parent is one write(2) (ppc_write) */
 static int server_cb_spawn_child(talarm_t *al, void *arg)
 {
     server_t *s = (server_t*)arg;
 
-    dbg_err_if (s == NULL);
+    nop_err_if (s == NULL);
 
     /* must be called by a child process */
-    dbg_err_if(ctx->backend == NULL || ctx->pipc == 0);
+    nop_err_if(ctx->backend == NULL || ctx->pipc == 0);
 
     /* ask the parent for a new worker once for a slow request, and every
        second while other clients wait for a worker: each new worker that
@@ -622,7 +618,7 @@ static int server_cb_spawn_child(talarm_t *al, void *arg)
        second (up to max_child) instead of growing by a few workers */
     if(server_clients_waiting() || (server_watchdog_busy && !s->stop))
     {
-        dbg_err_if(server_ppc_cmd_fork_child(s, ctx->backend));
+        nop_err_if(server_ppc_cmd_fork_child(s, ctx->backend));
 
         /* mark the current child process so it will die when it finishes
            serving this connection; its listening socket stays open
@@ -734,16 +730,16 @@ err:
     return ~0;
 }
 
+/* async-signal-safe (signal handlers and SIGALRM callbacks call it): only a
+ * flag and close(2), no logging */
 int server_stop(server_t *s)
 {
-    dbg_err_if (s == NULL);
-    
-    if(ctx->pipc)
-    {   /* child process */
+    if(s == NULL)
+        return ~0;
 
-        dbg_err_if(ctx->backend == NULL);
-
-        /* close child listening sockets to force accept(2) to exit */
+    if(ctx->pipc && ctx->backend)
+    {   /* child process: close the listening socket to force accept(2) to
+           exit */
         U_CLOSE(ctx->backend->ld);
     }
 
@@ -751,8 +747,6 @@ int server_stop(server_t *s)
     s->stop = 1;
 
     return 0;
-err:
-    return ~0;
 }
 
 static int server_listen(server_t *s)
@@ -898,10 +892,11 @@ int server_cb_klog_flush(talarm_t *a, void *arg)
 
     u_unused_args(a);
 
-    dbg_return_if (s == NULL, ~0);
+    /* SIGALRM callback: only a flag, the flush is done by server_loop */
+    if(s == NULL)
+        return ~0;
 
-    /* set a flag to flush the klog object in server_loop */
-    s->klog_flush++;
+    s->klog_flush = 1;
 
     return 0;
 }
@@ -1128,6 +1123,10 @@ int server_loop(server_t *s)
     /* children in fork mode exit here */
     if(ctx->pipc)
         return 0;
+
+    /* logged here, not in the handler */
+    if(server_stop_signal)
+        u_warn("%s", server_stop_signal == SIGINT ? "SIGINT" : "SIGTERM");
 
     /* server shutdown hook */
     hook_call(server_term);
@@ -1510,8 +1509,8 @@ int server_create(u_config_t *config, int foreground, server_t **ps)
     dbg_err_if(server_add_backends(s, list, foreground));
 
     /* init done, set signal handlers */
-    dbg_err_if(u_signal(SIGINT, server_sigint));
-    dbg_err_if(u_signal(SIGTERM, server_sigterm));
+    dbg_err_if(u_signal(SIGINT, server_sigstop));
+    dbg_err_if(u_signal(SIGTERM, server_sigstop));
 #ifdef OS_UNIX 
     dbg_err_if(u_signal(SIGPIPE, SIG_IGN));
     dbg_err_if(u_signal(SIGCHLD, server_sigchld));

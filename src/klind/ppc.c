@@ -38,57 +38,74 @@ err:
     return ~0;
 }
 
+/* read exactly 'size' bytes (a stream may return fewer per read); return
+ * size, 0 on EOF before any byte, -1 on error or EOF in the middle */
 static ssize_t ppc_do_read(int fd, char *data, size_t size)
 {
+    size_t done = 0;
     ssize_t n;
 
     dbg_return_if (fd < 0, -1);
     dbg_return_if (data == NULL, -1);
 
-again:
-    n = read(fd, data, size);
-    if(n < 0 && errno == EINTR)
-        goto again;
+    while(done < size)
+    {
+        n = read(fd, data + done, size - done);
+        if(n < 0 && errno == EINTR)
+            continue;
+        if(n <= 0)
+            return (n == 0 && done == 0) ? 0 : -1;
+        done += (size_t) n;
+    }
 
-    return n;
+    return (ssize_t) size;
 }
 
+/* write all of 'data' */
 static ssize_t ppc_do_write(int fd, const char *data, size_t size)
 {
+    size_t done = 0;
     ssize_t n;
 
     dbg_return_if (fd < 0, -1);
     dbg_return_if (data == NULL, -1);
 
-again:
-    n = write(fd, data, size);
-    if(n < 0 && errno == EINTR)
-        goto again;
+    while(done < size)
+    {
+        n = write(fd, data + done, size - done);
+        if(n < 0 && errno == EINTR)
+            continue;
+        if(n <= 0)
+            return -1;
+        done += (size_t) n;
+    }
 
-    return n;
+    return (ssize_t) size;
 }
 
-ssize_t ppc_write(ppc_t *ppc, int fd, unsigned char cmd, const char *data, 
+/* send a command: header and data go out in one write(2), so a command sent
+ * from a signal handler (the SIGALRM watchdog asks for a new child) cannot
+ * land between the two parts of another one */
+ssize_t ppc_write(ppc_t *ppc, int fd, unsigned char cmd, const char *data,
     size_t size)
 {
-    ssize_t n;
+    char msg[sizeof(ppc_header_t) + PPC_MAX_DATA_SIZE];
     ppc_header_t h;
 
     dbg_return_if (ppc == NULL, -1);
     dbg_return_if (data == NULL, -1);
     dbg_return_if (fd < 0, -1);
+    dbg_return_if (size > PPC_MAX_DATA_SIZE, -1);
 
     memset(&h, 0, sizeof(ppc_header_t));
     h.cmd = cmd;
     h.size = size;
 
-    n = ppc_do_write(fd, (const char*)&h, sizeof(ppc_header_t));
-    if(n <= 0) /* error */
-        return n;
+    memcpy(msg, &h, sizeof h);
+    memcpy(msg + sizeof h, data, size);
 
-    n = ppc_do_write(fd, data, size);
-    if(n <= 0) /* error */
-        return n;
+    if(ppc_do_write(fd, msg, sizeof h + size) < 0)
+        return -1;
 
     return 1;
 }
@@ -113,8 +130,8 @@ ssize_t ppc_read(ppc_t *ppc, int fd, unsigned char *pcmd, char *data,
             "ppc error h.cmd: %d, h.size: %lu", h.cmd, (unsigned long) h.size); 
 
     n = ppc_do_read(fd, data, h.size);
-    if(n <= 0) /* error or eof */
-        return n;
+    if(n < 0 || (n == 0 && h.size)) /* error, or eof after the header */
+        return -1;
 
     *pcmd = h.cmd;
 

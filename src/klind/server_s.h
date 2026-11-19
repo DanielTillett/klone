@@ -9,6 +9,7 @@
 
 #ifndef _KLIN_SERVER_S_H_
 #define _KLIN_SERVER_S_H_
+#include <signal.h>
 #include <stdlib.h>
 #include <klin/ppc.h>
 #include <klin/backend.h>
@@ -38,9 +39,9 @@ struct server_s
     int hfd;                /* highest set fd in fd_sets                    */
     size_t nbackend;        /* # of servers                                 */
     size_t max_child;       /* max # of children                            */
-    int stop;               /* >0 will stop the loop                        */
+    volatile sig_atomic_t stop; /* >0 will stop the loop (set by signals)   */
     int model;              /* server model                                 */
-    int klog_flush;         /* >0 will flush the klog                       */
+    volatile sig_atomic_t klog_flush; /* >0 will flush the klog (SIGALRM)    */
     int allow_root;         /* >0 allow root as the owner of klind process */
     int blind_chroot;       /* if blind chroot mode is enabled or disabled  */
 };

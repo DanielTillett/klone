@@ -82,8 +82,10 @@ int broker_serve(broker_t *b, http_t *h, request_t *rq, response_t *rs)
         nop_err_if (sup == NULL);
     }
 
+    /* If-None-Match, when sent, decides instead (the supplier checks it) */
     ims = request_get_if_modified_since(rq);
-    if(ims && mtime && ims >= mtime)
+    if(ims && mtime && ims >= mtime &&
+            request_get_field_value(rq, "If-None-Match") == NULL)
     {
         response_set_status(rs, HTTP_STATUS_NOT_MODIFIED); 
         dbg_err_if(response_print_header(rs));

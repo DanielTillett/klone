@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -185,7 +186,7 @@ def main():
         restore = [(["cmake", *[f"-D{k}={v}" for k, v in settings.items()], str(tree)], tree),
                    (rebuild, tree)]
         run_build_steps([(["cmake", f"-DKLIN_SITE_DIR={ROOT / 'test/site'}",
-                           "-DKLIN_IMPORT_ARGS=", str(tree)], tree),
+                           "-DKLIN_IMPORT_ARGS=-Z;*range-z.txt", str(tree)], tree),
                          (rebuild, tree)], env, log_path)
         daemon = tree / "bin" / cmake_cache_value(tree, "KLIN_DAEMON_NAME")
         run_server_checks(args, env, output, daemon)
@@ -585,6 +586,85 @@ def run_header_checks(check, plain, client, secure):
               f"Configured security headers not sent on {path!r}: {found}")
 
 
+def run_conditional_checks(check, plain, files):
+    """ETag, If-None-Match and Range on embedded files (one stored as is,
+    one compressed at import: ranges are cut after it is uncompressed)."""
+    def get(path, extra=b"", method=b"GET"):
+        reply = exchange(plain, method + b" " + path + b" HTTP/1.1\r\nHost: localhost\r\n" +
+                         extra + b"\r\n")
+        head, _, body = reply.partition(b"\r\n\r\n")
+        lines = head.decode("latin-1").split("\r\n")
+        fields = {}
+        for line in lines[1:]:
+            name, _, value = line.partition(":")
+            fields[name.strip().lower()] = value.strip()
+        return int(lines[0].split()[1]), fields, body
+
+    for name in ["range.txt", "range-z.txt"]:
+        path = b"/" + name.encode()
+        data = (ROOT / "test/site/www" / name).read_bytes()
+        size = len(data)
+        status, fields, body = get(path)
+        etag = fields.get("etag", "")
+        check(status == 200 and body == data and fields.get("accept-ranges") == "bytes" and
+              re.fullmatch(r'"[0-9a-f]{32}"', etag), f"{name}: no ETag: {status} {fields}")
+        check(etag == f'"{hashlib.md5(data).hexdigest()}"', f"{name}: ETag is not the content's")
+
+        for inm in [etag, f"W/{etag}", f'"nope", {etag}', "*"]:
+            status, fields, body = get(path, f"If-None-Match: {inm}\r\n".encode())
+            check(status == 304 and body == b"" and fields.get("etag") == etag,
+                  f"{name}: If-None-Match {inm}: {status}")
+        status, _, body = get(path, b'If-None-Match: "other"\r\n')
+        check(status == 200 and body == data, f"{name}: a different ETag got {status}")
+        # If-None-Match decides over If-Modified-Since
+        status, _, _ = get(path, b'If-None-Match: "other"\r\n'
+                           b"If-Modified-Since: Fri, 01 Jan 2100 00:00:00 GMT\r\n")
+        check(status == 200, f"{name}: If-Modified-Since won over If-None-Match ({status})")
+
+        for spec, first, last in [("0-99", 0, 99), ("100-", 100, size - 1), ("-50", size - 50, size - 1),
+                                  (f"{size - 10}-{size + 500}", size - 10, size - 1),
+                                  ("5000-5000", 5000, 5000), (f"-{size + 9}", 0, size - 1)]:
+            status, fields, body = get(path, f"Range: bytes={spec}\r\n".encode())
+            check(status == 206 and body == data[first:last + 1] and
+                  fields.get("content-range") == f"bytes {first}-{last}/{size}" and
+                  fields.get("content-length") == str(last - first + 1),
+                  f"{name}: Range {spec}: {status} {fields.get('content-range')} {len(body)}")
+        for spec in [f"{size}-", f"{size + 5}-{size + 9}", "-0"]:
+            status, fields, body = get(path, f"Range: bytes={spec}\r\n".encode())
+            check(status == 416 and body == b"" and fields.get("content-range") == f"bytes */{size}",
+                  f"{name}: unsatisfiable Range {spec}: {status} {fields}")
+        for spec in ["bytes=0-1,5-6", "bytes=5-2", "items=0-1", "bytes=x-1", "bytes=-"]:
+            status, _, body = get(path, f"Range: {spec}\r\n".encode())
+            check(status == 200 and body == data, f"{name}: Range {spec} not ignored: {status}")
+        status, _, body = get(path, f"Range: bytes=0-9\r\nIf-Range: {etag}\r\n".encode())
+        check(status == 206 and body == data[:10], f"{name}: If-Range with the ETag: {status}")
+        status, _, body = get(path, b'Range: bytes=0-9\r\nIf-Range: "changed"\r\n')
+        check(status == 200 and body == data, f"{name}: If-Range with another ETag: {status}")
+        status, fields, body = get(path, b"Range: bytes=0-9\r\n", b"HEAD")
+        check(body == b"", f"{name}: HEAD with Range sent a body")
+
+    # pages have no ETag (their output changes)
+    status, fields, _ = get(b"/pid.kl1")
+    check("etag" not in fields and "accept-ranges" not in fields, "A page got an ETag")
+
+    # sent as stored (send_enc_deflate): another representation, another
+    # ETag, and no ranges of the compressed bytes
+    data = (ROOT / "test/site/www/range-z.txt").read_bytes()
+    deflate = b"Accept-Encoding: deflate\r\n"
+    reply = exchange(files, b"GET /range-z.txt HTTP/1.1\r\nHost: localhost\r\n" + deflate +
+                     b"Range: bytes=0-9\r\n\r\n")
+    head, _, body = reply.partition(b"\r\n\r\n")
+    tag = re.search(rb'(?im)^etag: *("[0-9a-f]{32}-deflate")', head)
+    check(b" 200 " in head.split(b"\r\n")[0] and b"content-encoding: deflate" in head.lower() and
+          tag and b"accept-ranges" not in head.lower() and
+          zlib.decompress(body, -zlib.MAX_WBITS) == data,     # raw deflate (TODO)
+          f"Deflated representation: {head!r}")
+    if tag:
+        reply = exchange(files, b"GET /range-z.txt HTTP/1.1\r\nHost: localhost\r\n" + deflate +
+                         b"If-None-Match: " + tag.group(1) + b"\r\n\r\n")
+        check(b" 304 " in reply.split(b"\r\n")[0], "If-None-Match of the deflated ETag")
+
+
 def run_bad_auth_checks(check, daemon, env, temp):
     """Unsafe or broken auth configurations stop klind at startup, instead
     of serving the realm unprotected (the reason goes to the log)."""
@@ -652,7 +732,7 @@ def run_server_checks(args, env, output, daemon):
                 ("client", client, False, "client", SECURITY_HEADERS),
                 ("secure", secure, True, "client", auth),
                 ("files", files, False, f"file\n        file.path {sessions}",
-                 "index missing.kl1 pid.kl1"),
+                 "index missing.kl1 pid.kl1\n    send_enc_deflate yes"),
                 ("memlog", memlog, False, "memory", "log\n    {\n        type memory\n    }")]:
             blocks.append(f"""{name}
 {{
@@ -811,6 +891,7 @@ def run_server_checks(args, env, output, daemon):
                           f"memory log not read back whole: {reply[:600]!r}")
                 run_auth_checks(check, plain, secure)
                 run_header_checks(check, plain, client, secure)
+                run_conditional_checks(check, plain, files)
                 run_keep_alive_checks(args, check, plain, secure, request)
                 check(b"200 OK" in exchange(plain, request), "Server failed after malformed requests")
             finally:

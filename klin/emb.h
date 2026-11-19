@@ -51,6 +51,8 @@ typedef struct embfile_s
     time_t mtime;           /* time of last modification                      */
     const char *mime_type;  /* guessed mime type                              */
     size_t file_size;       /* size of the source file (not compressed)       */
+    const char *etag;       /* strong ETag of the source file, quoted; NULL   */
+                            /* for encrypted files (it would leak the content)*/
 } embfile_t;
 
 /* embedded dynamic klin page */

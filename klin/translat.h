@@ -13,6 +13,7 @@
 #include <u/libu.h>
 #include <klin/io.h>
 #include <klin/codecs.h>
+#include <klin/md5.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -32,6 +33,7 @@ typedef struct trans_info_s
     int encrypt;
     size_t file_size;
     time_t mtime;
+    char etag[MD5_DIGEST_BUFSZ];    /* static files: MD5 of the source (hex) */
 } trans_info_t;
 
 int translate(trans_info_t*);

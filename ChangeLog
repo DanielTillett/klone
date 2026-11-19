@@ -29,6 +29,14 @@ Klin 4.0.0:
 	  when configured. Each is set or turned off in a vhost's
 	  "security_headers" block. A site framed by another origin needs
 	  x_frame_options no
+	- embedded files: a strong ETag computed when the site is built (MD5 of
+	  the source file; the deflated representation sent as stored has its
+	  own), If-None-Match (304, taking precedence over If-Modified-Since),
+	  and single byte ranges (Range, If-Range; 206, or 416 with
+	  Content-Range: bytes */size); several ranges get the whole file. A
+	  file stored compressed is cut after it is uncompressed. Encrypted
+	  files get no ETag (it would let anyone test a guess of the content).
+	  New status codes 206 and 416
 	- timeouts no longer use signals: an alarm (timer.h) runs in ordinary
 	  code when it is due and the process waits for a descriptor
 	  (timerm_wait(), used by the io drivers while an alarm is set, and

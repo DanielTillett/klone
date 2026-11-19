@@ -30,6 +30,8 @@ enum {
     /**< request accepted but processing not completed */
     HTTP_STATUS_NO_CONTENT                = 204,
     /**< no body returned */
+    HTTP_STATUS_PARTIAL_CONTENT           = 206,
+    /**< a range of the resource (Range request) */
     HTTP_STATUS_MOVED_PERMANENTLY         = 301,
     /**< resource relocated permanently */
     HTTP_STATUS_MOVED_TEMPORARILY         = 302,
@@ -49,6 +51,9 @@ enum {
     HTTP_STATUS_LENGTH_REQUIRED           = 411,
     /**< missing Content-Length header field */
     HTTP_STATUS_REQUEST_TOO_LARGE         = 413,
+    /**< request body too large */
+    HTTP_STATUS_RANGE_NOT_SATISFIABLE     = 416,
+    /**< no part of the requested range is in the resource */
     /**< decryption key is needed - Klin extension */
     HTTP_STATUS_EXT_KEY_NEEDED            = 430,
     /**< request PDU too big */

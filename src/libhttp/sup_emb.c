@@ -145,9 +145,217 @@ err:
     return ~0;
 }
 
+/* Conditional and range requests for embedded files (RFC 9110 13, 14).
+ * The ETag is a digest of the source file made at build time; a file sent
+ * as stored (deflated) is another representation, with its own ETag. Only
+ * single byte ranges are served: a request for several gets the whole file
+ * (200), which RFC 9110 allows. */
+enum { SUPEMB_ETAG_SZ = 64 };
+
+/* does the If-None-Match / If-Range list 'list' match 'etag'? (weak
+ * comparison: a W/ prefix is ignored) */
+static int supemb_etag_in(const char *list, const char *etag)
+{
+    size_t len = strlen(etag);
+    const char *p = list;
+
+    while(p && *p)
+    {
+        p += strspn(p, " \t,");
+        if(*p == '*')
+            return 1;
+        if(!strncmp(p, "W/", 2))
+            p += 2;
+        if(!strncmp(p, etag, len) && (p[len] == '\0' || p[len] == ',' ||
+                    p[len] == ' ' || p[len] == '\t'))
+            return 1;
+        p += strcspn(p, ",");
+    }
+
+    return 0;
+}
+
+/* parse a single "bytes=first-last", "bytes=first-" or "bytes=-suffix"
+ * range of a 'size' byte file. Return 0 and the range, 1 if unsatisfiable,
+ * -1 if the Range should be ignored (bad syntax, several ranges) */
+static int supemb_parse_range(const char *v, size_t size, size_t *pfirst,
+        size_t *plast)
+{
+    unsigned long long a = 0, b = 0;
+    char *end;
+    const char *p;
+    int has_a, has_b;
+
+    if(strncasecmp(v, "bytes=", 6))
+        return -1;
+    p = v + 6;
+    p += strspn(p, " \t");
+    if(strchr(p, ','))
+        return -1;      /* several ranges: the whole file */
+
+    if((has_a = (*p >= '0' && *p <= '9')))
+    {
+        a = strtoull(p, &end, 10);
+        p = end;
+    }
+    if(*p++ != '-')
+        return -1;
+    if((has_b = (*p >= '0' && *p <= '9')))
+    {
+        b = strtoull(p, &end, 10);
+        p = end;
+    }
+    p += strspn(p, " \t");
+    if(*p != '\0' || (!has_a && !has_b) || (has_a && has_b && b < a))
+        return -1;
+
+    if(!has_a)
+    {   /* the last b bytes */
+        if(b == 0 || size == 0)
+            return 1;
+        *pfirst = b >= size ? 0 : size - (size_t) b;
+        *plast = size - 1;
+        return 0;
+    }
+
+    if(a >= size)
+        return 1;
+    *pfirst = (size_t) a;
+    *plast = (!has_b || b >= size) ? size - 1 : (size_t) b;
+
+    return 0;
+}
+
+/* a codec passing on only bytes [first, first + len) of what goes through
+ * it: the range of a file stored compressed, after it is uncompressed */
+typedef struct supemb_range_s
+{
+    codec_t codec;
+    size_t first, len, off;
+} supemb_range_t;
+
+static ssize_t supemb_range_transform(codec_t *c, char *dst, size_t *dcount,
+        const char *src, size_t src_sz)
+{
+    supemb_range_t *r = (supemb_range_t *) c;
+    size_t skip = 0, n = 0;
+
+    if(r->off < r->first)
+        skip = U_MIN(src_sz, r->first - r->off);
+    if(r->off + skip < r->first + r->len)
+        n = U_MIN(U_MIN(src_sz - skip, r->first + r->len - r->off - skip),
+                *dcount);
+    else    /* past the range: drop the rest */
+        skip = src_sz;
+
+    memcpy(dst, src + skip, n);
+    *dcount = n;
+    r->off += skip + n;
+
+    return (ssize_t) (skip + n);
+}
+
+static ssize_t supemb_range_flush(codec_t *c, char *dst, size_t *dcount)
+{
+    u_unused_args(c, dst);
+    *dcount = 0;
+    return CODEC_FLUSH_COMPLETE;
+}
+
+static int supemb_range_free(codec_t *c)
+{
+    U_FREE(c);
+    return 0;
+}
+
+static int supemb_range_create(size_t first, size_t len, codec_t **pc)
+{
+    supemb_range_t *r;
+
+    dbg_return_if ((r = u_zalloc(sizeof *r)) == NULL, ~0);
+
+    r->first = first;
+    r->len = len;
+    r->codec.transform = supemb_range_transform;
+    r->codec.flush = supemb_range_flush;
+    r->codec.free = supemb_range_free;
+    *pc = (codec_t *) r;
+
+    return 0;
+}
+
+/* answer If-None-Match (304) and Range (206 or 416). Return 0 to send the
+ * whole file, 1 when the response is complete (a 304 or 416, or a 206 with
+ * *pfirst and *plen set) */
+static int supemb_conditional(request_t *rq, response_t *rs, embfile_t *e,
+        const char *etag, size_t *pfirst, size_t *plen)
+{
+    char buf[128];
+    const char *v;
+    size_t first = 0, last = 0;
+    time_t t;
+    int rc;
+
+    if(etag == NULL)
+        return 0;
+
+    if((v = request_get_field_value(rq, "If-None-Match")) != NULL &&
+            supemb_etag_in(v, etag))
+    {
+        dbg_err_if(response_set_status(rs, HTTP_STATUS_NOT_MODIFIED));
+        return 1;
+    }
+
+    if(request_get_method(rq) != HM_GET ||
+            (v = request_get_field_value(rq, "Range")) == NULL)
+        return 0;
+
+    /* If-Range: the range only if the file is still the one the client has
+       part of (an ETag, or the exact Last-Modified date) */
+    if((v = request_get_field_value(rq, "If-Range")) != NULL)
+    {
+        if(v[0] == '"' || !strncmp(v, "W/", 2))
+        {
+            if(strcmp(v, etag))
+                return 0;   /* strong comparison only */
+        } else if(u_httpdate_to_tt(v, &t) || t != e->mtime)
+            return 0;
+    }
+
+    v = request_get_field_value(rq, "Range");
+    if((rc = supemb_parse_range(v, e->file_size, &first, &last)) < 0)
+        return 0;
+
+    if(rc == 1)
+    {
+        dbg_err_if(u_snprintf(buf, sizeof buf, "bytes */%lu",
+                    (unsigned long) e->file_size));
+        dbg_err_if(response_set_field(rs, "Content-Range", buf));
+        dbg_err_if(response_set_status(rs, HTTP_STATUS_RANGE_NOT_SATISFIABLE));
+        dbg_err_if(response_set_content_length(rs, 0));
+        return 1;
+    }
+
+    dbg_err_if(u_snprintf(buf, sizeof buf, "bytes %lu-%lu/%lu",
+                (unsigned long) first, (unsigned long) last,
+                (unsigned long) e->file_size));
+    dbg_err_if(response_set_field(rs, "Content-Range", buf));
+    dbg_err_if(response_set_status(rs, HTTP_STATUS_PARTIAL_CONTENT));
+    dbg_err_if(response_set_content_length(rs, last - first + 1));
+    *pfirst = first;
+    *plen = last - first + 1;
+
+    return 1;
+err:
+    return 0;
+}
+
 static int supemb_serve_static(request_t *rq, response_t *rs, embfile_t *e)
 {
-    codec_t *gzip = NULL, *decrypt = NULL;
+    codec_t *gzip = NULL, *decrypt = NULL, *range = NULL;
+    char etag[SUPEMB_ETAG_SZ];
+    const char *tag = NULL;
+    size_t first = 0, len = 0;
     int sai = 0; /* send as is */
     int decrypting = 0, ec = ~0;
 #ifdef SSL_ON
@@ -166,6 +374,33 @@ static int supemb_serve_static(request_t *rq, response_t *rs, embfile_t *e)
 
     /* set HTTP header based on 'e' (we have the cipher key here) */
     dbg_err_if(supemb_static_set_header_fields(rq, rs, e, &sai));
+
+    /* the ETag of what is sent: the deflated data is another
+       representation. Ranges of the file as stored are not served */
+    if(e->etag && !e->encrypted)
+    {
+        if(sai)
+        {   /* "hex" -> "hex-deflate" */
+            dbg_err_if(u_snprintf(etag, sizeof etag, "%.*s-deflate\"",
+                        (int) strlen(e->etag) - 1, e->etag));
+            tag = etag;
+        } else {
+            tag = e->etag;
+            dbg_err_if(response_set_field(rs, "Accept-Ranges", "bytes"));
+        }
+        dbg_err_if(response_set_field(rs, "ETag", tag));
+    }
+
+    /* If-None-Match (304) and Range (206, 416) */
+    if(supemb_conditional(rq, rs, e, sai ? NULL : tag, &first, &len) &&
+            len == 0)
+        return 0;   /* 304 or 416: no body */
+    if(sai && tag && request_get_field_value(rq, "If-None-Match") &&
+            supemb_etag_in(request_get_field_value(rq, "If-None-Match"), tag))
+    {
+        dbg_err_if(response_set_status(rs, HTTP_STATUS_NOT_MODIFIED));
+        return 0;
+    }
 
     /* if this is a HEAD request print the header and exit */
     if(request_get_method(rq) == HM_HEAD)
@@ -203,6 +438,15 @@ static int supemb_serve_static(request_t *rq, response_t *rs, embfile_t *e)
     } 
 #endif
 
+    /* a range of a compressed file: cut it from the uncompressed data
+       (the gzip codec, added in front, runs first) */
+    if(len && gzip)
+    {
+        dbg_err_if(supemb_range_create(first, len, &range));
+        dbg_err_if(io_codec_add_head(response_io(rs), range));
+        range = NULL;
+    }
+
     if(gzip)
     {   /* set gzip filter */
         dbg_err_if(io_codec_add_head(response_io(rs), gzip));
@@ -216,10 +460,14 @@ static int supemb_serve_static(request_t *rq, response_t *rs, embfile_t *e)
         decrypting = 1;
     }
 
-    /* print out page content (the header will be autoprinted by the 
-       response io filter) */
-    dbg_err_if(io_write(response_io(rs), (const char*)e->data, e->size) 
-        < (ssize_t)e->size);
+    /* print out page content (the header will be autoprinted by the
+       response io filter); a range of uncompressed data directly */
+    if(len && !e->comp)
+        dbg_err_if(io_write(response_io(rs), (const char*)e->data + first,
+                    len) < (ssize_t)len);
+    else
+        dbg_err_if(io_write(response_io(rs), (const char*)e->data, e->size)
+            < (ssize_t)e->size);
 
     /* remove and free the gzip/decrypt codecs (if they have been set) */
     dbg_err_if(io_codecs_remove(response_io(rs))); 
@@ -237,6 +485,8 @@ err:
         codec_free(decrypt);
     if(gzip)
         codec_free(gzip);
+    if(range)
+        codec_free(range);
     return ec;
 }
 

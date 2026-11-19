@@ -917,6 +917,18 @@ int translate(trans_info_t *pti)
 
         dbg_err_if(ppctx_free(ppc)); ppc = NULL;
     } else {
+        /* the ETag: a digest of the file as it is served, computed before
+           compression; none for an encrypted file, as it would let anyone
+           test a guess of the content */
+        pti->etag[0] = '\0';
+        if(!pti->encrypt)
+        {
+            con_err_ifm(u_file_open(pti->file_in, O_RDONLY, &tmp),
+                "unable to open %s", pti->file_in);
+            dbg_err_if(u_md5io(tmp, pti->etag));
+            io_free(tmp), tmp = NULL;
+        }
+
         /* check if compression is requested */
 #ifdef HAVE_LIBZ
         if(pti->comp)

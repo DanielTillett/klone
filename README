@@ -168,6 +168,12 @@ X-Frame-Options: SAMEORIGIN, Referrer-Policy and, over HTTPS,
 Strict-Transport-Security; a Content-Security-Policy can be set. Change or
 turn them off per vhost in a "security_headers" block (doc/HEADERS).
 
+Caching and partial downloads: embedded static files carry a strong ETag
+(a digest of the file made when the site is built), answer If-None-Match
+with 304 and serve single byte ranges (206, or 416 when the range is past
+the end; a request for several ranges gets the whole file). Encrypted
+files have no ETag and no ranges. Pages are not affected.
+
 Encrypted pages: give the import a pattern of pages to encrypt and the key
 file, with an absolute path, for example
 -DKLIN_IMPORT_ARGS="-e;*.kl1;-k;/path/to/key". Pages are re-encrypted when

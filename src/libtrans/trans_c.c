@@ -289,11 +289,14 @@ static void print_static_page_block(io_t *out, lang_c_ctx_t *ctx)
     io_printf(out, ";\n"
         "   e.mtime = %lu;                  \n"
         "   e.comp = %d;                    \n"
-        "   e.encrypted = %d;               \n"
-        "}                                  \n",
+        "   e.encrypted = %d;               \n",
         (unsigned long) ctx->ti->mtime,
         ctx->ti->comp,
         ctx->ti->encrypt);
+    /* hex digits only: no escaping needed */
+    if(ctx->ti->etag[0])
+        io_printf(out, "   e.etag = \"\\\"%s\\\"\";\n", ctx->ti->etag);
+    io_printf(out, "}\n");
 }
 
 static void print_dynamic_page_block(io_t *out, lang_c_ctx_t *ctx)

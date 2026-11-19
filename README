@@ -159,6 +159,10 @@ requests iteratively in a single process. -f overrides values in the
 embedded configuration. See klind(8) and klind.conf(5) in doc/man for all
 options.
 
+IP access control: an "access" block allows or denies clients by address
+and network, per path; a client denied everywhere is dropped before the
+TLS handshake (doc/ACCESS).
+
 HTTP authentication: an "auth" block protects paths with Basic or Digest
 (SHA-256) authentication, realms and roles; passwords are stored as hashes
 made by klin -c passwd. See doc/AUTH.

@@ -34,6 +34,7 @@
 #include <klin/access.h>
 #include <klin/auth.h>
 #include <klin/route.h>
+#include <klin/acl.h>
 #include <klin/vhost.h>
 #include <klin/supplier.h>
 #include "http_s.h"
@@ -842,6 +843,10 @@ static int http_serve_page(http_t *h, request_t *rq, response_t *rs,
     /* add default header fields */
     dbg_err_if(http_add_default_header(h, rq, rs));
 
+    /* the client's address may be refused for this path */
+    if((rc = acl_check(h, rq)) != 0)
+        return rc;
+
     /* pages in an authentication realm need a user with one of its roles
        (realms match the path the client asked for, before routing) */
     if((rc = auth_check(h, rq)) != 0)
@@ -970,6 +975,7 @@ static int http_serve(http_t *h, int fd, int keep_alive)
     io_t *conn = NULL, *cout = NULL;
     http_conn_addr_t ca;
     const char *gwi = NULL;
+    vhost_t *top;
     int cgi = 0, nreq, keep = 0, owned = 1;   /* fd is ours to close */
 
     dbg_err_if (h == NULL);
@@ -983,6 +989,15 @@ static int http_serve(http_t *h, int fd, int keep_alive)
         keep_alive = 0;
 
     dbg_err_if(http_get_conn_addr(fd, cgi, &ca));
+
+    /* a client the server's access rules refuse everywhere is dropped
+       before the TLS handshake */
+    if(!cgi && (top = vhost_list_get_n(h->vhosts, 0)) != NULL &&
+            acl_check_conn(top->access, ca.peer))
+    {
+        close(fd);
+        return 0;
+    }
 
     /* from here the connection io closes fd (also when its creation fails,
        e.g. on a failed TLS handshake) */
@@ -1122,8 +1137,9 @@ static int http_add_vhost(http_t *http, const char *host, u_config_t *c)
     /* security headers */
     dbg_err_if(http_load_sec_headers(http, vhost));
 
-    /* REST routes (a bad one stops the server) */
+    /* REST routes and IP access rules (a bad one stops the server) */
     dbg_err_if(route_load(vhost));
+    dbg_err_if(acl_load(vhost));
 
     dbg_err_if(vhost_list_add(http->vhosts, vhost));
 

@@ -70,6 +70,9 @@ typedef struct vhost_s
 
     /* the "routes" block (route.c), or NULL */
     u_config_t *routes;
+
+    /* the "access" block (acl.c), or NULL */
+    u_config_t *access;
 } vhost_t;
 
 typedef struct vhost_list_s vhost_list_t;

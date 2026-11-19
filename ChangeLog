@@ -15,6 +15,12 @@ Klin 4.0.0:
 	  entries, so they survive a reconfigure. The Windows service keeps
 	  the name kloned. All of it is in cmake/klone_compat.cmake and the
 	  lines marked "before KLone was renamed Klin"
+	- IP access control (doc/ACCESS): an "access" block of rules, each
+	  for some paths or all, with allow and deny lines of IPv4/IPv6
+	  addresses, networks and "all"; the first rule for the path decides
+	  (403). A client the first all-paths rule denies is dropped when the
+	  connection is accepted, before TLS. Bad entries stop klind at
+	  startup
 	- HTTP authentication (doc/AUTH): Basic and Digest (SHA-256, MD5 only
 	  where a realm allows it) in per-path realms with roles, set in a
 	  vhost's "auth" block. Passwords are stored as PBKDF2-SHA256 and Digest

@@ -105,6 +105,12 @@ Set the maximum number of bytes the server is willing to accept for a given HTTP
 \fBpost_maxsize\fR
 the connection is immediately terminated. The default value is 5 MB.
 .TP
+\fBaccess\fR
+IP access control: \fBrule\fR blocks with \fBpath\fR patterns (none:
+every path) and \fBallow\fR and \fBdeny\fR lines of addresses,
+networks (\fIaddress/bits\fR) or \fIall\fR. The first rule for the path
+decides (403). See doc/ACCESS.
+.TP
 \fBauth\fR
 HTTP authentication (Basic and Digest) of the paths in one or more realms:
 \fBrealm\fR blocks (\fBname\fR, \fBpath\fR patterns, \fBscheme\fR

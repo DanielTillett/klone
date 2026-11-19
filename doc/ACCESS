@@ -1,0 +1,44 @@
+KLIN IP ACCESS CONTROL
+----------------------
+
+An "access" block in a server or vhost lets clients in, or refuses them,
+by their IP address:
+
+    access
+    {
+        rule
+        {
+            path   /admin/*             # fnmatch(3) patterns, may repeat
+            allow  10.0.0.0/8, 2001:db8::/32
+            deny   all
+        }
+        rule
+        {
+            path   /status.kl1
+            allow  127.0.0.1 ::1
+            deny   all
+        }
+        rule                            # no path: every path
+        {
+            deny   192.0.2.0/24
+        }
+    }
+
+Entries are IPv4 or IPv6 addresses, networks (address/prefix bits) or
+"all", separated by blanks or commas; IPv4 clients of a dual-stack socket
+(::ffff:a.b.c.d) are matched as IPv4.
+
+For a request, the first rule whose path matches decides (a rule without
+a path matches every path): its first allow or deny line naming the
+client's address wins, and a client no line names is let in. A refused
+request gets 403 Forbidden. Paths are the decoded request path the client
+asked for, before routes and aliases, as for authentication realms; IP
+rules are checked before authentication.
+
+When a connection is accepted, if the first rule of the server's access
+block is one for every path and it denies the client, the connection is
+closed at once, before the TLS handshake or any HTTP.
+
+The address is the socket's peer: behind a proxy or load balancer it is
+the proxy's, and X-Forwarded-For is not used. A bad entry, an unknown key
+or a rule with no allow or deny line stops klind at startup.

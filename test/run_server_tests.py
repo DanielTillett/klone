@@ -1104,6 +1104,69 @@ def run_route_checks(args, check, plain):
                   "Keep-alive after a JSON PUT")
 
 
+ACCESS = """access
+    {
+        rule
+        {
+            path /static/private*
+            allow 10.0.0.0/8, 2001:db8::/32
+            deny all
+        }
+        rule
+        {
+            path /static/local*
+            allow 127.0.0.0/8 ::1
+            deny all
+        }
+        rule
+        {
+            path /pid.kl1
+            deny 127.0.0.1/32
+        }
+        rule
+        {
+            deny 192.0.2.0/24
+        }
+    }"""
+
+BLOCKED = """access
+    {
+        rule
+        {
+            allow 10.0.0.0/8
+            deny 127.0.0.1
+        }
+    }"""
+
+
+def run_access_checks(check, client, blocked, temp):
+    """IP access control (doc/ACCESS): rules per path, the first matching
+    rule decides, networks, and clients dropped at connection time."""
+    (temp / "private.txt").write_text("private\n")
+    (temp / "local.txt").write_text("local\n")
+
+    def status(path):
+        reply = exchange(client, b"GET " + path + b" HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        return int(reply.split(b"\r\n")[0].split()[1]), reply.partition(b"\r\n\r\n")[2]
+
+    for path, want, body in [(b"/static/private.txt", 403, None),
+                             (b"/static/local.txt", 200, b"local\n"),
+                             (b"/pid.kl1", 403, None),
+                             (b"/static/hello.txt", 200, b"klin integration test\n")]:
+        code, data = status(path)
+        check(code == want and (body is None or data == body),
+              f"Access to {path!r}: {code}, expected {want}")
+
+    # the all-paths rule of 'blocked' refuses 127.0.0.1: no HTTP at all
+    with socket.create_connection(("127.0.0.1", blocked), timeout=3) as raw:
+        try:
+            raw.sendall(b"GET /static/hello.txt HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            dropped = raw.recv(100) == b""
+        except (ConnectionResetError, BrokenPipeError):
+            dropped = True
+    check(dropped, "A denied client was not dropped at connection time")
+
+
 def run_bad_auth_checks(check, daemon, env, temp):
     """Unsafe or broken auth (and route) configurations stop klind at
     startup, instead of serving the realm unprotected (the reason goes to
@@ -1149,6 +1212,17 @@ def run_bad_auth_checks(check, daemon, env, temp):
                        ("unknown method", "path /a\npage /p.kl1\nmethod GET FETCH")]:
         check(not starts(route % body, "routes"), f"klind started with a bad route ({name})")
 
+    check(starts(route % "allow 10.0.0.0/8, ::1 fe80::/10\ndeny all", "access"),
+          "A valid access rule was refused")
+    for name, body in [("prefix too long", "allow 10.0.0.0/33"),
+                       ("IPv6 prefix too long", "allow ::1/129"),
+                       ("short address", "allow 10.1.2"),
+                       ("host name", "allow localhost"),
+                       ("unknown key", "permit 10.0.0.0/8"),
+                       ("no allow or deny", "path /x")]:
+        check(not starts(route.replace("route", "rule") % body, "access"),
+              f"klind started with a bad access rule ({name})")
+
 
 def run_server_checks(args, env, output, daemon):
     checks = 0
@@ -1172,7 +1246,7 @@ def run_server_checks(args, env, output, daemon):
         subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
                         "-keyout", str(key), "-out", str(cert), "-days", "1", "-subj", "/CN=localhost"],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        plain, client, secure, files, memlog = (free_port() for _ in range(5))
+        plain, client, secure, files, memlog, blocked = (free_port() for _ in range(6))
         sessions = temp / "sessions"
         sessions.mkdir()
         config = temp / "klind.conf"
@@ -1181,11 +1255,12 @@ def run_server_checks(args, env, output, daemon):
         # memory, which pages read back with server_foreach_memlog_line()
         for name, port, tls, session, extra in [
                 ("plain", plain, False, "memory", auth + "\n    " + ROUTES),
-                ("client", client, False, "client", SECURITY_HEADERS),
+                ("client", client, False, "client", SECURITY_HEADERS + "\n    " + ACCESS),
                 ("secure", secure, True, "client", auth),
                 ("files", files, False, f"file\n        file.path {sessions}",
                  "index missing.kl1 pid.kl1\n    send_enc_deflate yes"),
-                ("memlog", memlog, False, "memory", "log\n    {\n        type memory\n    }")]:
+                ("memlog", memlog, False, "memory", "log\n    {\n        type memory\n    }"),
+                ("blocked", blocked, False, "memory", BLOCKED)]:
             blocks.append(f"""{name}
 {{
     type {'https' if tls else 'http'}
@@ -1208,7 +1283,7 @@ def run_server_checks(args, env, output, daemon):
 """)
         # blanks of every kind between the names: all servers must start (a
         # doubled or leading blank used to drop the ones after it)
-        config.write_text("server_list  plain client\tsecure  files memlog\nallow_root yes\n" +
+        config.write_text("server_list  plain client\tsecure  files memlog blocked\nallow_root yes\n" +
                           "\n".join(blocks))
         log_path = output / ("server-prefork-test.log" if args.prefork else "server-test.log")
         with log_path.open("w") as log:
@@ -1347,6 +1422,7 @@ def run_server_checks(args, env, output, daemon):
                 run_sse_checks(args, check, plain, secure, temp)
                 run_websocket_checks(check, plain, secure)
                 run_route_checks(args, check, plain)
+                run_access_checks(check, client, blocked, temp)
                 run_keep_alive_checks(args, check, plain, secure, request)
                 check(b"200 OK" in exchange(plain, request), "Server failed after malformed requests")
             finally:

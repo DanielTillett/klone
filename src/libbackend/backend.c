@@ -50,6 +50,24 @@ err:
     return ~0;
 }
 
+/* read the count 'key' (default 'def') into *pv; a negative value is an
+   error (it used to be written as an int into the size_t, giving a huge
+   count, and on big-endian systems the wrong half of it) */
+static int backend_get_count(u_config_t *config, const char *key, int def,
+        size_t *pv)
+{
+    int v;
+
+    dbg_err_if(u_config_get_subkey_value_i(config, key, def, &v));
+    warn_err_ifm(v < 0, "%s must not be negative (%d)", key, v);
+
+    *pv = (size_t) v;
+
+    return 0;
+err:
+    return ~0;
+}
+
 int backend_create(const char *proto, u_config_t *config, backend_t **pbe)
 {
     backend_t *be = NULL, **pp;
@@ -85,24 +103,24 @@ int backend_create(const char *proto, u_config_t *config, backend_t **pbe)
     if(be->model == SERVER_MODEL_FORK)
     {
         /* max # of child allowed to run at once */
-        dbg_err_if(u_config_get_subkey_value_i(config, "fork.max_child", 
-            SERVER_MAX_BACKEND_CHILD, (int *)&be->max_child));
+        dbg_err_if(backend_get_count(config, "fork.max_child",
+            SERVER_MAX_BACKEND_CHILD, &be->max_child));
     }
 
     if(be->model == SERVER_MODEL_PREFORK)
     {
         /* max # of child allowed to run at once */
-        dbg_err_if(u_config_get_subkey_value_i(config, "prefork.max_child", 
-            SERVER_MAX_BACKEND_CHILD, (int *)&be->max_child));
-        
+        dbg_err_if(backend_get_count(config, "prefork.max_child",
+            SERVER_MAX_BACKEND_CHILD, &be->max_child));
+
         /* # of child to run at startup */
-        dbg_err_if(u_config_get_subkey_value_i(config, "prefork.start_child", 
-            SERVER_PREFORK_START_CHILD, (int *)&be->start_child));
+        dbg_err_if(backend_get_count(config, "prefork.start_child",
+            SERVER_PREFORK_START_CHILD, &be->start_child));
 
         /* max # of requests a child process will handle before it dies */
-        dbg_err_if(u_config_get_subkey_value_i(config, 
-            "prefork.max_requests_per_child", SERVER_PREFORK_MAX_RQ_CHILD, 
-            (int *)&be->max_rq_xchild));
+        dbg_err_if(backend_get_count(config,
+            "prefork.max_requests_per_child", SERVER_PREFORK_MAX_RQ_CHILD,
+            &be->max_rq_xchild));
 
         /* a worker started beyond start_child (e.g. for a burst of clients)
            exits after waiting this long for a connection (0: never) */

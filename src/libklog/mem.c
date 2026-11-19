@@ -196,7 +196,10 @@ static int klog_mem_msg_new (const char *s, int level, klog_mem_msg_t **pmmsg)
     mmsg = u_zalloc(sizeof(klog_mem_msg_t));
     dbg_err_if (mmsg == NULL);
 
-    mmsg->line = u_strndup(s, KLOG_LN_SZ);
+    /* s is at most KLOG_LN_SZ chars (see klog_mem). Not u_strndup(s,
+       KLOG_LN_SZ): LibU's returns NULL when s is shorter than that, so no
+       message was ever stored */
+    dbg_err_if ((mmsg->line = u_strdup(s)) == NULL);
     mmsg->timestamp = time(NULL);
     mmsg->level = level;
 

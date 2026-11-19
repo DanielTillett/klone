@@ -1106,8 +1106,12 @@ int server_loop(server_t *s)
 
     sleep(1);
 
-    /* brute kill children process */
-    if(s->nchild)
+    /* brute kill the children still running (this tested a counter that
+       was never set, so it never happened) */
+#ifdef OS_UNIX
+    server_waitpid(s);
+#endif
+    if(children_count(s->children))
         server_kill_children(s);
 
     return 0;
@@ -1207,8 +1211,9 @@ static int server_log_hook(void *arg, int level, const char *str)
        may happen if a log function is called from inside the hook */
     u_log_set_hook(NULL, NULL, &old, &old_arg);
 
-    /* syslog klog doesn't go through ppc */
-    if(s->klog->type == KLOG_TYPE_SYSLOG || ctx->pipc == 0)
+    /* syslog klog doesn't go through ppc (s->klog is NULL when only the
+       backend has a log: a child then still sends the line to the parent) */
+    if((s->klog && s->klog->type == KLOG_TYPE_SYSLOG) || ctx->pipc == 0)
     {   /* syslog klog or parent context */
         if(s->klog)
             dbg_err_if(klog(s->klog, syslog_to_klog(level), "%s", str));
@@ -1274,7 +1279,7 @@ int server_foreach_memlog_line(server_t *s,
 {
     klog_t *kl = NULL;  
     size_t i;
-    char line[KLOG_LN_SZ];
+    char line[KLOG_LN_SZ + 1];  /* klog_getln writes up to KLOG_LN_SZ + 1 */
 
     /* get the configured klog object and check that's a in-memory klog */
     if(server_get_logger(s, &kl) || kl == NULL || kl->type != KLOG_TYPE_MEM)

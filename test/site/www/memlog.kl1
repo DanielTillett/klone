@@ -1,0 +1,16 @@
+<%!
+    #include <klin/context.h>
+    #include <klin/server.h>
+
+    static int print_line(const char *line, void *arg)
+    {
+        io_printf((io_t *) arg, "[%s]\n", line);
+        return 0;
+    }
+%><%
+    /* log from the page, then read the server's memory log back (in prefork
+       mode both go through the parent) */
+    u_warn("memlog probe line 0123456789");
+    if(server_foreach_memlog_line(ctx->server, print_line, out))
+        io_printf(out, "no log\n");
+%>

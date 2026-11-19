@@ -593,17 +593,19 @@ static int http_get_conn_addr(int fd, int cgi, http_conn_addr_t *ca)
 
     if (cgi)
     {
+        /* the client is the peer, the web server running us the local end
+           (these were swapped) */
         if (getenv("REMOTE_ADDR") && getenv("REMOTE_PORT"))
             (void) u_addr_fmt(getenv("REMOTE_ADDR"), getenv("REMOTE_PORT"),
-                    ca->local, sizeof ca->local);
+                    ca->peer, sizeof ca->peer);
 
         if (getenv("SERVER_ADDR"))
         {
             if ((port = getenv("SERVER_PORT")) == NULL)
                 port = "80";
 
-            (void) u_addr_fmt(getenv("SERVER_ADDR"), port, ca->peer,
-                    sizeof ca->peer);
+            (void) u_addr_fmt(getenv("SERVER_ADDR"), port, ca->local,
+                    sizeof ca->local);
         }
     }
     else
@@ -655,7 +657,7 @@ static int http_serve_request(http_t *h, io_t *cin, io_t *cout, int cgi,
     request_t *rq = NULL;
     response_t *rs = NULL;
     io_t *in = NULL, *out = NULL;
-    int rc = HTTP_STATUS_INTERNAL_SERVER_ERROR, committed;
+    int rc = HTTP_STATUS_INTERNAL_SERVER_ERROR, committed, hooked = 0;
     const char *cstr, *proto;
     vhost_t *vhost;
     const char *uri;
@@ -781,6 +783,7 @@ static int http_serve_request(http_t *h, io_t *cin, io_t *cout, int cgi,
 
     /* call the hook that fires on each request */
     hook_call(request, rq, rs);
+    hooked = 1;
 
     /* on broker_serve error jump to err */
     nop_err_if(rc != 0);
@@ -795,8 +798,9 @@ static int http_serve_request(http_t *h, io_t *cin, io_t *cout, int cgi,
                           not be free'd) that happens during the io_free call */
     return 0;
 err:
-    /* hook get fired also on error */
-    if(rq && rs)
+    /* hook get fired also on error, once (a redirect or a failed page has
+       been through it already) */
+    if(rq && rs && !hooked)
         hook_call(request, rq, rs);
 
     if(rc && rq && rs && response_io(rs))

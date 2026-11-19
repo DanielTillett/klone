@@ -22,12 +22,12 @@ struct ppc_log_get_s
 {
     int bid;                        /* calling backend ID       */
     ssize_t i;                      /* i-th line                */
-    char line[KLOG_LN_SZ];          /* log line                 */
+    char line[KLOG_LN_SZ + 1];      /* log line (klog_getln)    */
 };
 
 typedef struct ppc_log_get_s ppc_log_get_t;
 
-/* client function */
+/* client function; 'line' is at least KLOG_LN_SZ + 1 bytes (as for klog_getln) */
 int server_ppc_cmd_log_get(server_t *s, size_t i, char *line)
 {
     ppc_log_get_t plg;
@@ -56,7 +56,9 @@ int server_ppc_cmd_log_get(server_t *s, size_t i, char *line)
     nop_err_if(plg.i < 0); /* error or eof */
 
     /* copy-out the line */
-    u_strlcpy(line, plg.line, sizeof line);
+    /* sizeof(line) was the size of the pointer: lines came back cut to 7
+       characters */
+    u_strlcpy(line, plg.line, sizeof plg.line);
 
     return 0;
 err:

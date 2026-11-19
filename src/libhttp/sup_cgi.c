@@ -514,8 +514,10 @@ static int cgi_serve(request_t *rq, response_t *rs)
     if(request_get_method(rq) == HM_POST && 
             (clen = request_get_content_length(rq)) > 0)
     {
-        /* build an io_t object to read cgi output */
-        crit_err_sif(io_fd_create(cgi_stdin, O_WRONLY, &cgi_out));
+        /* build an io_t object to write the POSTed data to the cgi; the
+           descriptors are closed here, not by io_free (O_WRONLY was passed
+           as the flags: it is IO_FD_CLOSE, so the pipe was closed twice) */
+        crit_err_sif(io_fd_create(cgi_stdin, IO_FD_NO_FLAGS, &cgi_out));
 
         /* FIXME 
            if the cgi does not read from stdin (and POSTed data is big) 
@@ -531,7 +533,7 @@ static int cgi_serve(request_t *rq, response_t *rs)
     }
 
     /* build an io_t object to read cgi output */
-    crit_err_sif(io_fd_create(cgi_stdout, O_RDONLY, &cgi_in));
+    crit_err_sif(io_fd_create(cgi_stdout, IO_FD_NO_FLAGS, &cgi_in));
 
     /* extract filename part of the fqn */
     crit_err_if((filename = strrchr(fqn, '/')) == NULL);
@@ -581,7 +583,8 @@ static int cgi_serve(request_t *rq, response_t *rs)
     if(cgi_out)
         io_free(cgi_out); 
 
-    close(cgi_stdin);
+    if(cgi_stdin != -1)
+        close(cgi_stdin);
     close(cgi_stdout);
 
     /* wait for the child to finish (FIXME add a max timeout) */

@@ -395,15 +395,19 @@ def run_server_checks(args, env, output, daemon):
         subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
                         "-keyout", str(key), "-out", str(cert), "-days", "1", "-subj", "/CN=localhost"],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        plain, client, secure, files = free_port(), free_port(), free_port(), free_port()
+        plain, client, secure, files, memlog = (free_port() for _ in range(5))
         sessions = temp / "sessions"
         sessions.mkdir()
         config = temp / "klind.conf"
         blocks = []
-        for name, port, tls, session in [("plain", plain, False, "memory"),
-                                         ("client", client, False, "client"),
-                                         ("secure", secure, True, "client"),
-                                         ("files", files, False, f"file\n        file.path {sessions}")]:
+        # memlog: a log on this server only (none at the top level), kept in
+        # memory, which pages read back with server_foreach_memlog_line()
+        for name, port, tls, session, extra in [
+                ("plain", plain, False, "memory", ""),
+                ("client", client, False, "client", ""),
+                ("secure", secure, True, "client", ""),
+                ("files", files, False, f"file\n        file.path {sessions}", ""),
+                ("memlog", memlog, False, "memory", "log\n    {\n        type memory\n    }")]:
             blocks.append(f"""{name}
 {{
     type {'https' if tls else 'http'}
@@ -421,9 +425,10 @@ def run_server_checks(args, env, output, daemon):
     }}
     {f'cert_file {cert}' if tls else ''}
     {f'key_file {key}' if tls else ''}
+    {extra}
 }}
 """)
-        config.write_text("server_list plain client secure files\nallow_root yes\n" + "\n".join(blocks))
+        config.write_text("server_list plain client secure files memlog\nallow_root yes\n" + "\n".join(blocks))
         log_path = output / ("server-prefork-test.log" if args.prefork else "server-test.log")
         with log_path.open("w") as log:
             command = [str(daemon), "-F", "-f", str(config)]
@@ -530,6 +535,15 @@ def run_server_checks(args, env, output, daemon):
                                          cookie_header + b"\r\n\r\n", context)
                         check(b"persisted" not in reply.partition(b"\r\n\r\n")[2],
                               "Accepted a forged client-session MAC")
+                if args.prefork:
+                    # a worker logs to the server's own memory log (there is
+                    # no top-level log) and reads it back through the parent:
+                    # the worker used to crash on the missing top-level log,
+                    # and lines came back cut to 7 characters
+                    reply = exchange(memlog, b"GET /memlog.kl1 HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                    check(b"200 OK" in reply and
+                          b"memlog probe line 0123456789" in reply.partition(b"\r\n\r\n")[2],
+                          f"memory log not read back whole: {reply[:600]!r}")
                 run_keep_alive_checks(args, check, plain, secure, request)
                 check(b"200 OK" in exchange(plain, request), "Server failed after malformed requests")
             finally:
@@ -543,6 +557,20 @@ def run_server_checks(args, env, output, daemon):
         check("ERROR: AddressSanitizer" not in log_text and "ERROR: LeakSanitizer" not in log_text
               and "AddressSanitizer:DEADLYSIGNAL" not in log_text and "runtime error:" not in log_text,
               "Sanitizer errors in server-test.log")
+        if args.prefork:
+            # a negative count is refused at startup (it used to be written
+            # as an int into a size_t, i.e. a huge number of children)
+            bad = temp / "negative.conf"
+            bad.write_text(f"server_list b\nallow_root yes\nb\n{{\n type http\n"
+                           f" addr tcp4://127.0.0.1:{free_port()}\n dir_root /www\n"
+                           " model prefork\n prefork.max_child -1\n}\n")
+            try:
+                result = subprocess.run([str(daemon), "-F", "-f", str(bad)], env=env,
+                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=15)
+                refused = result.returncode != 0
+            except subprocess.TimeoutExpired:
+                refused = False     # it started and kept running
+            check(refused, "prefork.max_child -1 was accepted")
     print(f"{checks} full-server checks passed; log: {log_path}")
 
 

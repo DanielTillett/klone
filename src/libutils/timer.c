@@ -20,6 +20,12 @@
 #include <windows.h>
 #endif
 
+/* pthread_atfork() is in libc here, no thread library is needed */
+#if defined(OS_UNIX) && (defined(__GLIBC__) || defined(__APPLE__))
+#include <pthread.h>
+#define TIMERM_PID_CACHE
+#endif
+
 TAILQ_HEAD(talarm_list_s, talarm_s);
 typedef struct talarm_list_s talarm_list_t;
 
@@ -65,6 +71,39 @@ static volatile sig_atomic_t alarm_pending = 0;
 #define TIMERM_BARRIER()
 #endif
 #endif
+
+#ifdef TIMERM_PID_CACHE
+static pid_t timerm_pid = 0;    /* 0 until known, and again in a child */
+
+static void timerm_forget_pid(void)
+{
+    timerm_pid = 0;
+}
+#endif
+
+/* getpid() is a system call and an alarm is set for each request: remember
+ * the pid, forgetting it after a fork */
+static pid_t timerm_getpid(void)
+{
+#ifdef TIMERM_PID_CACHE
+    static int registered = 0;
+
+    if(timerm_pid == 0)
+    {
+        if(!registered)
+        {
+            if(pthread_atfork(NULL, NULL, timerm_forget_pid))
+                return getpid();
+            registered = 1;
+        }
+        timerm_pid = getpid();
+    }
+
+    return timerm_pid;
+#else
+    return getpid();
+#endif
+}
 
 /* milliseconds of a clock that does not jump with the time of day: alarms
  * are timed in milliseconds so that one never fires early (with whole seconds
@@ -116,7 +155,7 @@ static int timerm_set_next(void)
 static void timerm_run(void)
 {
     talarm_t *al = NULL;
-    pid_t pid = getpid();
+    pid_t pid = timerm_getpid();
     int64_t now = timerm_now();
 
     dbg_err_if(timer == NULL);
@@ -334,7 +373,7 @@ err:
 int timerm_add(int secs, talarm_cb_t cb, void *arg, talarm_t **pa)
 {
     talarm_t *al = NULL;
-    pid_t pid = getpid();
+    pid_t pid = timerm_getpid();
 
     dbg_return_if (cb == NULL, ~0);
     dbg_return_if (pa == NULL, ~0);

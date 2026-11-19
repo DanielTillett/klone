@@ -104,7 +104,39 @@ const char *http_get_status_desc(int status)
     return msg;
 }
 
-static int http_try_resolv(const char *alias, char *dst, const char *uri, 
+/* dst = dir + "/" + uri, with each run of slashes reduced to one: what
+ * u_path_snprintf(dst, sz, '/', "%s/%s", dir, uri) does, without formatting
+ * and in one pass (this is done for every request) */
+static int http_path_join(char *dst, size_t sz, const char *dir,
+        const char *uri)
+{
+    const char *part[3], *s;
+    size_t i, n = 0;
+
+    dbg_err_if(dst == NULL || sz == 0 || dir == NULL || uri == NULL);
+
+    part[0] = dir;
+    part[1] = "/";
+    part[2] = uri;
+
+    for(i = 0; i < 3; ++i)
+    {
+        for(s = part[i]; *s; ++s)
+        {
+            if(*s == '/' && n && dst[n - 1] == '/')
+                continue;
+            dbg_err_if(n + 1 >= sz);
+            dst[n++] = *s;
+        }
+    }
+    dst[n] = '\0';
+
+    return 0;
+err:
+    return ~0;
+}
+
+static int http_try_resolv(const char *alias, char *dst, const char *uri,
         size_t sz)
 {
     static const char *WP = " \t";
@@ -134,7 +166,7 @@ static int http_try_resolv(const char *alias, char *dst, const char *uri,
     dbg_err_if(res == NULL);
 
     /* copy-out the resolved uri to dst */
-    dbg_err_if(u_path_snprintf(dst, sz, '/', "%s/%s", res, uri + strlen(src)));
+    dbg_err_if(http_path_join(dst, sz, res, uri + strlen(src)));
 
     return 0;
 err:
@@ -248,7 +280,7 @@ int http_alias_resolv(http_t *h, request_t *rq, char *dst, const char *uri,
     }
 
     /* alias not found, prepend dir_root to the uri */
-    dbg_err_if(u_path_snprintf(dst, sz, '/', "%s/%s", vhost->dir_root, uri));
+    dbg_err_if(http_path_join(dst, sz, vhost->dir_root, uri));
 
     return 0;
 err:
@@ -315,7 +347,7 @@ static int http_is_valid_index(http_t *h, request_t *rq, const char *uri)
 {
     char resolved[U_FILENAME_MAX] = { 0 };
 
-    dbg_err_if(u_path_snprintf(resolved, U_FILENAME_MAX, '/', "%s/%s", 
+    dbg_err_if(http_path_join(resolved, U_FILENAME_MAX,
             request_get_resolved_filename(rq), uri));
 
     if(broker_is_valid_uri(h->broker, h, rq, resolved, strlen(resolved)))

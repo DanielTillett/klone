@@ -1,6 +1,13 @@
 ChangeLog file of KLone - https://github.com/DanielTillett/klone
 
 KLone 4.0.0:
+	- performance (profiled with perf on Linux): the timer remembers the
+	  process id instead of calling getpid(), a system call, for every
+	  request (pthread_atfork() forgets it in a child; glibc and macOS
+	  only, elsewhere getpid() is still called); the 8 KB response filter
+	  of the last response is reused; the status line and Content-Length
+	  are formatted without snprintf(); alias and dir_root paths are joined
+	  in one pass instead of u_path_snprintf()
 	- performance: header fields keep name and value in one buffer and
 	  freed fields are reused (no allocation for the usual request and
 	  response fields); a vhost's dir_alias/script_alias list and request

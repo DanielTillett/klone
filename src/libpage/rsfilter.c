@@ -65,6 +65,10 @@ struct response_filter_s
     char cbuf[RF_CHUNK_MAX + RF_CHUNK_EXTRA];  /* pending encoded chunk    */
 };
 
+/* the filter of the last response, kept for the next one: at 8 KB it is
+ * too big for the allocator's fast paths */
+static response_filter_t *rf_spare = NULL;
+
 /* queue the header followed by the buffered body (if any) */
 static int rf_init_head(response_filter_t *rf)
 {
@@ -342,7 +346,11 @@ static int rf_free(codec_t *codec)
     rf = (response_filter_t*)codec;
 
     U_FREE(rf->head);
-    U_FREE(rf);
+
+    if(rf_spare == NULL)
+        rf_spare = rf;
+    else
+        U_FREE(rf);
 
     return 0;
 }
@@ -367,7 +375,10 @@ int response_filter_create(request_t *rq, response_t *rs, session_t *ss,
     dbg_err_if (prf == NULL);
 
     /* zero all but the (8 KB of) buffers */
-    rf = u_malloc(sizeof(response_filter_t));
+    if((rf = rf_spare) != NULL)
+        rf_spare = NULL;
+    else
+        rf = u_malloc(sizeof(response_filter_t));
     dbg_err_if(rf == NULL);
     memset(rf, 0, offsetof(response_filter_t, buf));
 

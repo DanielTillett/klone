@@ -311,6 +311,26 @@ err:
     return ~0;
 }
 
+/* write v in decimal and a '\0' to buf (at least 21 bytes); return the
+ * number of digits. snprintf() is slow for this, and it is done for every
+ * status line and Content-Length */
+static size_t response_ultoa(char *buf, unsigned long v)
+{
+    char tmp[24], *p = tmp + sizeof(tmp);
+    size_t n;
+
+    do {
+        *--p = (char) ('0' + v % 10);
+        v /= 10;
+    } while(v);
+
+    n = (size_t) (tmp + sizeof(tmp) - p);
+    memcpy(buf, p, n);
+    buf[n] = '\0';
+
+    return n;
+}
+
 /*
  * \ingroup response
  * \brief   Format a response header
@@ -333,9 +353,10 @@ int response_format_header(response_t *rs, size_t extra, char **pbuf,
 {
     enum { STATUSSZ = 128 };
     char status[STATUSSZ], *buf = NULL, *p;
-    size_t sz, slen = 0, nlen, vlen;
+    const char *desc;
+    size_t sz, slen = 0, nlen, vlen, dlen;
     field_t *f;
-    int i, n, rc;
+    int i, n;
 
     dbg_err_if(rs == NULL);
     dbg_err_if(pbuf == NULL);
@@ -346,14 +367,23 @@ int response_format_header(response_t *rs, size_t extra, char **pbuf,
     dbg_err_if(response_set_body_framing(rs, -1, 0));
     rs->header_sent = 1;
 
-    /* status line (none in CGI mode) */
+    /* status line "HTTP/1.x NNN desc\r\n" (none in CGI mode) */
     if(!rs->cgi)
     {
-        rc = snprintf(status, sizeof(status), "HTTP/1.%d %d %s\r\n",
-                rs->http11 ? 1 : 0, rs->status,
-                http_get_status_desc(rs->status));
-        dbg_err_if(rc < 0 || (size_t) rc >= sizeof(status));
-        slen = (size_t) rc;
+        dbg_err_if(rs->status < 0);
+        desc = http_get_status_desc(rs->status);
+        dlen = strlen(desc);
+        /* "HTTP/1.x " + at most 20 digits + " " + desc + "\r\n" */
+        dbg_err_if(dlen > STATUSSZ - 9 - 21 - 1 - 2);
+
+        memcpy(status, "HTTP/1.x ", 9);
+        status[7] = rs->http11 ? '1' : '0';
+        slen = 9 + response_ultoa(status + 9, (unsigned long) rs->status);
+        status[slen++] = ' ';
+        memcpy(status + slen, desc, dlen);
+        slen += dlen;
+        memcpy(status + slen, "\r\n", 2);
+        slen += 2;
     }
 
     /* "name: value\r\n" per field and the final "\r\n" */
@@ -576,7 +606,7 @@ int response_set_content_length(response_t *rs, size_t sz)
     enum { BUFSZ = 64 };
     char buf[BUFSZ];
 
-    dbg_err_if(u_snprintf(buf, BUFSZ, "%lu", (unsigned long) sz));
+    (void) response_ultoa(buf, (unsigned long) sz);
 
     dbg_err_if(header_set_field(rs->header, "Content-Length", buf));
 
@@ -888,7 +918,6 @@ static size_t response_count_fields(response_t *rs, const char *name)
 int response_set_body_framing(response_t *rs, ssize_t len, int can_chunk)
 {
     char clen[32];
-    int rc;
 
     dbg_return_if (rs == NULL, ~0);
 
@@ -917,8 +946,7 @@ int response_set_body_framing(response_t *rs, ssize_t len, int can_chunk)
     } else if(len >= 0) {
         /* the whole body is known: its measured length wins (it is usually
          * what the page set already, e.g. for a static file) */
-        rc = snprintf(clen, sizeof(clen), "%lu", (unsigned long) len);
-        dbg_err_if(rc < 0 || (size_t) rc >= sizeof(clen));
+        (void) response_ultoa(clen, (unsigned long) len);
         if(response_count_fields(rs, "Content-Length") != 1 ||
                 strcmp(response_get_field_value(rs, "Content-Length"), clen))
         {

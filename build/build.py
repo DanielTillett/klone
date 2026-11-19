@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Daniel Tillett. Part of KLone; see the LICENSE file.
-"""Pinned, reproducible KLone build and test runner (CMake).
+# Copyright (c) 2026 Daniel Tillett. Part of Klin; see the LICENSE file.
+"""Pinned, reproducible Klin build and test runner (CMake).
 
 Runs on Linux (on Windows, through WSL Python) and other POSIX systems with
 CMake 3.24+, a C compiler, OpenSSL 3 and zlib. GNU make is not required: the
@@ -90,7 +90,7 @@ def cmake_build(args, source, output, env, flags):
     configure = ["cmake", "-S", str(source), "-B", str(build), "-G", args.generator,
                  "-DCMAKE_BUILD_TYPE=Debug" if args.sanitize else "-DCMAKE_BUILD_TYPE=Release",
                  f"-DCMAKE_C_FLAGS={flags}",
-                 "-DKLONE_DEBUG=ON", "-DKLONE_ENABLE_SUP_FS=ON", "-DKLONE_SITE_DIR="]
+                 "-DKLIN_DEBUG=ON", "-DKLIN_ENABLE_SUP_FS=ON", "-DKLIN_SITE_DIR="]
     if args.sanitize:
         configure.append("-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined")
     if args.make_program:
@@ -147,11 +147,11 @@ def main():
     env["SOURCE_DATE_EPOCH"] = git("show", "-s", "--format=%ct", "HEAD")
 
     build = cmake_build(args, source, output, env, flags)
-    conf, daemon = build / "include/klone_conf.h", build / "bin/kloned"
+    conf, daemon = build / "include/klin_conf.h", build / "bin/klind"
     if "#define SSL_OPENSSL 1" not in conf.read_text():
         raise RuntimeError("This build requires OpenSSL 3; TLS must not be silently disabled")
 
-    metadata = {"dependencies": lock, "source_sha256": fingerprint, "klone_commit": git("rev-parse", "HEAD"),
+    metadata = {"dependencies": lock, "source_sha256": fingerprint, "klin_commit": git("rev-parse", "HEAD"),
                 "compiler": subprocess.check_output(["cc", "--version"], text=True),
                 "openssl": subprocess.check_output(["openssl", "version"], text=True), "cflags": flags,
                 "cmake": subprocess.check_output(["cmake", "--version"], text=True).splitlines()[0],

@@ -1,5 +1,5 @@
-#include <klone/io.h>
-#include <klone/response.h>
+#include <klin/io.h>
+#include <klin/response.h>
 
 void wa_test(response_t *response);
 

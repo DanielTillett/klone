@@ -3,21 +3,21 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <stdlib.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <u/libu.h>
-#include <klone/server.h>
-#include <klone/os.h>
-#include <klone/context.h>
-#include <klone/utils.h>
-#include <klone/version.h>
+#include <klin/server.h>
+#include <klin/os.h>
+#include <klin/context.h>
+#include <klin/utils.h>
+#include <klin/version.h>
 #include "main.h"
 
 int facility = LOG_LOCAL0;
@@ -28,8 +28,8 @@ context_t  *ctx = &c; /* exported */
 #ifdef OS_WIN
     /* Win32 service name and description */
     enum { SS_NAME_BUFSZ = 64, SS_DESC_BUFSZ = 256 };
-    static char ss_name[SS_NAME_BUFSZ] = "kloned";
-    static char ss_desc[SS_DESC_BUFSZ] = "kloned daemon";
+    static char ss_name[SS_NAME_BUFSZ] = "klind";
+    static char ss_desc[SS_DESC_BUFSZ] = "klind daemon";
 
     int InstallService(); 
     int RemoveService();
@@ -38,7 +38,7 @@ context_t  *ctx = &c; /* exported */
 static void usage (void)
 {
     static const char *us = 
-"Usage: kloned OPTIONS ARGUMENTS                                            \n"
+"Usage: klind OPTIONS ARGUMENTS                                            \n"
 "Version: %s "
 #ifdef SSL_OPENSSL
 "(with OpenSSL)"
@@ -54,14 +54,14 @@ static void usage (void)
 "    -F          run in foreground                                          \n"
 "    -h          display this help                                          \n"
 #ifdef OS_WIN
-"    -i          install KLone Windows service                              \n"
-"    -u          remove KLone Windows service                               \n"
+"    -i          install Klin Windows service                              \n"
+"    -u          remove Klin Windows service                               \n"
 #endif
-"    -V          print KLone version and exit                               \n"
+"    -V          print Klin version and exit                               \n"
 "    -n          do not chdir when daemonizing                              \n"
 "\n";
 
-    fprintf(stderr, us, klone_version());
+    fprintf(stderr, us, klin_version());
 
     exit(1);
 }
@@ -115,11 +115,11 @@ static int parse_opt(int argc, char **argv)
             break;
 
 #ifdef OS_WIN
-        case 'i':   /* install kloned service and exit */
+        case 'i':   /* install klind service and exit */
             ctx->serv_op = SERV_INSTALL;
             break;
 
-        case 'u':   /* uninstall kloned service and exit */
+        case 'u':   /* uninstall klind service and exit */
             ctx->serv_op = SERV_REMOVE;
             break;
 #endif
@@ -399,7 +399,7 @@ err:
 #ifdef HAVE_FORK
 /* daemon(3) equivalent (daemon() is deprecated on macOS): detach from the
  * terminal and redirect the standard streams to /dev/null */
-static int kloned_daemon(int nochdir)
+static int klind_daemon(int nochdir)
 {
     int fd;
 
@@ -444,12 +444,12 @@ int main(int argc, char **argv)
         ctx->cgi = 1;
         
     /* load config and initialize */
-    warn_err_ifm(app_init(), "kloned init error (more info in the log file)");
+    warn_err_ifm(app_init(), "klind init error (more info in the log file)");
 
 #ifdef HAVE_FORK
     /* daemonize if not -F */
     if(ctx->daemon && !ctx->cgi)
-        con_err_ifm(kloned_daemon(ctx->nochdir), "daemon error");
+        con_err_ifm(klind_daemon(ctx->nochdir), "daemon error");
 #endif  /* HAVE_FORK */
 
     /* save the PID in a file */

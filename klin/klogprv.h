@@ -3,14 +3,14 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#ifndef _KLONE_LOGPRV_H_
-#define _KLONE_LOGPRV_H_
+#ifndef _KLIN_LOGPRV_H_
+#define _KLIN_LOGPRV_H_
 
-#include <klone/klog.h>
+#include <klin/klog.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -30,4 +30,4 @@ const char *klog_to_str (int lev);
 }
 #endif 
 
-#endif /* _KLONE_LOGPRV_H_ */
+#endif /* _KLIN_LOGPRV_H_ */

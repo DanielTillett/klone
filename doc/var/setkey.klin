@@ -1,5 +1,5 @@
 <html>
-<head><title>KLone example page: set decryption key</title></head>
+<head><title>Klin example page: set decryption key</title></head>
 <body>
 
 <h4>Set decryption pass phrase:</h4>
@@ -17,7 +17,7 @@ key: <input type="text" name="pp"><br>
     
     if((pp = vars_get_value(args, "pp")) != NULL)
     {
-        session_set(session, "KLONE_CIPHER_KEY", pp);
+        session_set(session, "KLIN_CIPHER_KEY", pp);
         io_printf(out, "Pass phrase saved.<p>");
     }
     

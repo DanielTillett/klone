@@ -3,18 +3,18 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <klone/supplier.h>
-#include <klone/io.h>
-#include <klone/utils.h>
+#include <klin/supplier.h>
+#include <klin/io.h>
+#include <klin/utils.h>
 
 static int fs_is_valid_uri(http_t *h, request_t *rq, const char *uri, 
         size_t len, void **handle, time_t *mtime)

@@ -1,17 +1,18 @@
-KLONE
+KLIN
 -----
 
-KLone is a web application development framework for embedded systems. It
+Klin is a web application development framework for embedded systems. It
 compiles a web server, its configuration and the site's static and dynamic
-(C-scripted) pages into a single executable, kloned.
+(C-scripted) pages into a single executable, klind.
 
-KLone 4.0.0 modernizes KLone 3.1.0 for current toolchains: a CMake build
+Klin is derived from KLone by KoanLogic s.r.l. and was called KLone until
+4.0.0, which modernizes KLone 3.1.0 for current toolchains: a CMake build
 that needs no GNU make, OpenSSL 3 with TLS 1.2 or newer, hardened HTTP
 parsing and sessions, and automated regression, full-server and fuzz tests.
 See SECURITY AND COMPATIBILITY CHANGES below before upgrading an existing
-deployment.
+deployment, and RENAMED FROM KLONE for the names that changed.
 
-Project home: https://github.com/DanielTillett/klone
+Project home: https://github.com/DanielTillett/klin
 Original KoanLogic project (no longer maintained): https://github.com/koanlogic/klone
 
 
@@ -38,8 +39,8 @@ On macOS, with Homebrew:
     export OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)
     python3 build/build.py --test
 
-The daemon is built at .build/release/cmake/bin/kloned and the page
-translator at .build/release/cmake/bin/klone. Build logs and
+The daemon is built at .build/release/cmake/bin/klind and the page
+translator at .build/release/cmake/bin/klin. Build logs and
 build-info.json are in .build/release.
 
 
@@ -50,15 +51,15 @@ build/build.py (below) wraps CMake with pinned dependencies and tests. To
 use CMake directly, fetch the pinned LibU once (python3 build/build.py does
 this, or pass -DLIBU_SOURCE_DIR=<checkout>), then:
 
-    cmake -S . -B out -G Ninja -DKLONE_SITE_DIR=doc/example-site
+    cmake -S . -B out -G Ninja -DKLIN_SITE_DIR=doc/example-site
     cmake --build out
     cmake --install out           # optional; honors CMAKE_INSTALL_PREFIX
 
-The install includes the libraries and all headers (KLone, LibU and the
+The install includes the libraries and all headers (Klin, LibU and the
 generated configuration headers). To build against it, also put OpenSSL's
-headers on the include path; KLone's public headers include them. The
+headers on the include path; Klin's public headers include them. The
 server itself (including the embedded site and emb_init()) is linked by
-the CMake build; the installed libraries do not contain kloned's own
+the CMake build; the installed libraries do not contain klind's own
 sources, as in KLone 3.x.
 
 Multi-configuration generators (Visual Studio, Xcode, Ninja Multi-Config)
@@ -73,30 +74,30 @@ make cannot handle spaces in site paths; use Ninja for those):
 
 Options (KLone 3.x configure equivalents in brackets):
 
-    KLONE_SITE_DIR=<dir>          site to embed into kloned (default: none)
-    KLONE_IMPORT_ARGS=<list>      extra 'klone -c import' options, e.g.
+    KLIN_SITE_DIR=<dir>          site to embed into klind (default: none)
+    KLIN_IMPORT_ARGS=<list>      extra 'klin -c import' options, e.g.
                                   "-z;-x;*.bak" (compression, exclusions,
                                   encryption patterns and key file)
-    KLONE_DEBUG=ON                debug logging and symbols [--enable_debug]
-    KLONE_ENABLE_SUP_FS=ON        serve files from disk [--enable_sup_fs]
-    KLONE_ENABLE_SUP_CGI=ON       external CGIs [--enable_sup_cgi]
-    KLONE_ENABLE_HOOKS=ON         user hooks_setup() [--enable_hooks]
-    KLONE_ENABLE_WARNINGS=ON      extra warnings [--enable_warns]
-    KLONE_DAEMON_NAME=<name>      daemon file name [--daemon_name]
-    KLONE_INSTALL_DAEMON_ONLY=ON  install only kloned [--install_daemon_only]
-    KLONE_WEBAPP_SOURCES=<list>   web application sources [WEBAPP_SRCS]
-    KLONE_WITH_OPENSSL=OFF        build without TLS and encryption
-    KLONE_WITH_ZLIB=OFF           build without compression
+    KLIN_DEBUG=ON                debug logging and symbols [--enable_debug]
+    KLIN_ENABLE_SUP_FS=ON        serve files from disk [--enable_sup_fs]
+    KLIN_ENABLE_SUP_CGI=ON       external CGIs [--enable_sup_cgi]
+    KLIN_ENABLE_HOOKS=ON         user hooks_setup() [--enable_hooks]
+    KLIN_ENABLE_WARNINGS=ON      extra warnings [--enable_warns]
+    KLIN_DAEMON_NAME=<name>      daemon file name [--daemon_name]
+    KLIN_INSTALL_DAEMON_ONLY=ON  install only klind [--install_daemon_only]
+    KLIN_WEBAPP_SOURCES=<list>   web application sources [WEBAPP_SRCS]
+    KLIN_WITH_OPENSSL=OFF        build without TLS and encryption
+    KLIN_WITH_ZLIB=OFF           build without compression
 
 With Doxygen installed, 'cmake --build out --target doc' writes the API
 reference to out/doc.
 
 How it works: CMake runs the platform checks that KLone 3.x's configure ran and
-generates klone_conf.h and LibU's libu_conf.h in the build directory. It
-builds LibU from the pinned checkout without modifying it, then the klone
+generates klin_conf.h and LibU's libu_conf.h in the build directory. It
+builds LibU from the pinned checkout without modifying it, then the klin
 tool, then the site. The site is a small separate CMake project (cmake/site)
-because the klone tool must exist before the site can be imported:
-'klone -c import' writes autogen.cmake, a list of pages, and each page is
+because the klin tool must exist before the site can be imported:
+'klin -c import' writes autogen.cmake, a list of pages, and each page is
 translated to C and compiled into libsite. Editing a page retranslates only
 that page; adding or removing files re-runs the import automatically.
 
@@ -141,30 +142,30 @@ How the runner works:
 BUILDING AND RUNNING A SITE
 ---------------------------
 
-KLone embeds your site at build time. Point KLONE_SITE_DIR at the site
+Klin embeds your site at build time. Point KLIN_SITE_DIR at the site
 directory (its etc/ and www/ trees become the embedded file system) and
 build:
 
-    cmake -S . -B out -G Ninja -DKLONE_SITE_DIR=doc/example-site
+    cmake -S . -B out -G Ninja -DKLIN_SITE_DIR=doc/example-site
     cmake --build out
 
 Then run the daemon in the foreground with a configuration file:
 
-    out/bin/kloned -F -f /path/to/kloned.conf
+    out/bin/klind -F -f /path/to/klind.conf
 
--F keeps kloned attached to the terminal instead of detaching as a daemon;
+-F keeps klind attached to the terminal instead of detaching as a daemon;
 it still uses the configured server model. -d adds debug logging and serves
 requests iteratively in a single process. -f overrides values in the
-embedded configuration. See kloned(8) and kloned.conf(5) in doc/man for all
+embedded configuration. See klind(8) and klind.conf(5) in doc/man for all
 options.
 
 Encrypted pages: give the import a pattern of pages to encrypt and the key
 file, with an absolute path, for example
--DKLONE_IMPORT_ARGS="-e;*.kl1;-k;/path/to/key". Pages are re-encrypted when
-the key file changes. A key given through the KLONE_CIPHER_KEY environment
+-DKLIN_IMPORT_ARGS="-e;*.kl1;-k;/path/to/key". Pages are re-encrypted when
+the key file changes. A key given through the KLIN_CIPHER_KEY environment
 variable is not tracked, so rebuild from clean after changing it.
 
-HTTPS: the certificate in doc/example-site/etc/kloned.pem is a 1024-bit RSA
+HTTPS: the certificate in doc/example-site/etc/klind.pem is a 1024-bit RSA
 key with an MD5 signature that expired in 2006. OpenSSL 3 at the default
 security level of common distributions (tested on Ubuntu) refuses it, so
 an HTTPS server using it will not start. Generate your own certificate
@@ -191,7 +192,7 @@ TESTING
    production MD5 is linked directly.
 2. The full-server tests (81 checks), run twice: once in single-process
    mode and once in the normal prefork model. They temporarily embed the
-   test-only site in test/site, start kloned on temporary localhost ports
+   test-only site in test/site, start klind on temporary localhost ports
    and check static and HEAD responses, dynamic pages, malformed headers and
    URIs, TLS 1.2 and 1.3 negotiation and rejection of TLS 1.0 and 1.1, cookie
    flags, and memory and client-side session persistence over HTTP and
@@ -228,6 +229,33 @@ GNU make on the PATH is made to fail, proving GNU make is not needed. Build
 logs are uploaded.
 
 
+RENAMED FROM KLONE
+------------------
+
+KLone was renamed Klin in 4.0.0. The old names below still work in 4.x and
+will be removed in the next major release:
+
+    KLone                          Klin                 old name in 4.x
+    kloned, klone (commands)       klind, klin          symlinks (Unix install)
+    <klone/X.h>, klone_conf.h      <klin/X.h>,          forwarding headers
+                                   klin_conf.h          (installed too)
+    klone_die, klone_die_if,       klin_die, ...,       aliases, via the
+    klone_version, KLONE_VERSION,  KLIN_*               forwarding headers
+    KLONE_UNCONST, KLONE_FREE ...
+    -DKLONE_* CMake settings       -DKLIN_*             accepted, with a
+                                                        deprecation warning
+    klone_sid (session cookie)     klin_sid             read, never set
+    KLONE_CIPHER_KEY (session      KLIN_CIPHER_KEY      read (saved sessions,
+    variable, environment)                              pages, the klin tool)
+    /index.klone                   /index.klin          both are index pages
+    Server: klone/<version>        Server: klin/...     -
+
+Unchanged: the .kl1 (and .klx, .klc) page extensions, the KL1_CLISES_*
+client-session cookies, the configuration file format and the installed
+library names (libhttp.a, libutils.a ...). kloned.conf files work as they
+are; only the example and manual names changed (klind.conf).
+
+
 SECURITY AND COMPATIBILITY CHANGES
 ----------------------------------
 
@@ -249,7 +277,7 @@ Sessions and cookies
   checked OpenSSL EVP_MAC calls and compare tags in constant time.
   Client-side session IV and encoded-data lengths are bounds-checked.
   Existing client-side sessions may need to be renewed after upgrading.
-  The digest can still be chosen with client.hash_function (kloned.conf(5)).
+  The digest can still be chosen with client.hash_function (klind.conf(5)).
 * Session cookies are sent with Path=/, HttpOnly and SameSite=Lax, plus
   Secure on direct TLS connections. Deletion cookies keep the same scope and
   attributes. Third-party login or embedding flows may need a different
@@ -275,7 +303,7 @@ Persistent connections (keep-alive)
 * Connections stay open for further requests (HTTP/1.1 by default, HTTP/1.0
   with "Connection: keep-alive"), including pipelined requests. Settings:
   keep_alive, keep_alive_timeout (5 s) and keep_alive_max (100 requests),
-  see kloned.conf(5). Off in the iterative model (-d) and in CGI mode.
+  see klind.conf(5). Off in the iterative model (-d) and in CGI mode.
 * Responses to HTTP/1.1 requests use an HTTP/1.1 status line. Every body is
   delimited: pages that fit the 4 KB response buffer get a Content-Length,
   longer ones use chunked transfer coding (HTTP/1.1) or end with the close
@@ -312,8 +340,8 @@ Reliability
 
 * The SIGCHLD handler no longer touches the server object, which may be
   unset during startup or shutdown.
-* Memory leaks found by LeakSanitizer in kloned shutdown, the page
-  translator and the klone tool are fixed.
+* Memory leaks found by LeakSanitizer in klind shutdown, the page
+  translator and the klin tool are fixed.
 
 
 KNOWN LIMITATIONS
@@ -327,7 +355,7 @@ KNOWN LIMITATIONS
   LibU's SCTP support is off by default (LIBU_ENABLE_SCTP).
 * Client-side sessions still use encrypt-then-MAC around AES-CBC. Moving
   that versioned wire format to an AEAD cipher is planned follow-up work.
-* The pinned LibU dependency still has some compiler warnings; KLone's own
+* The pinned LibU dependency still has some compiler warnings; Klin's own
   code builds without warnings (GCC, Clang, Apple Clang).
 * "Expect: 100-continue" is not answered; clients send the body after their
   own timeout.
@@ -341,5 +369,5 @@ The MaKL configure script and GNU makefiles, the skin/ packaging system, the
 CyaSSL backend, OpenSSL TLS-PSK support, the Kilt URL module and the old
 LibU 1.x unit tests (their checks are covered by the regression suite) were
 removed.
-'klone -c import' no longer writes autogen.mk or autogen.dps. KLone 3.1.0 in
+'klin -c import' no longer writes autogen.mk or autogen.dps. KLone 3.1.0 in
 the original KoanLogic repository still has them.

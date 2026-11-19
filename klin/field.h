@@ -3,12 +3,12 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#ifndef _KLONE_FIELD_H_
-#define _KLONE_FIELD_H_
+#ifndef _KLIN_FIELD_H_
+#define _KLIN_FIELD_H_
 
 #include <sys/types.h>
 #include <u/libu.h>

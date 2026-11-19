@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Daniel Tillett. Part of KLone; see the LICENSE file.
+# Copyright (c) 2026 Daniel Tillett. Part of Klin; see the LICENSE file.
 # Build LibU (https://github.com/koanlogic/libu) from the pinned checkout as
 # the static library target 'libu', replacing LibU's MaKL configure/make.
 #
@@ -181,7 +181,7 @@ foreach(_h IN LISTS _libu_headers)
     endforeach()
 endforeach()
 
-# Same module list as LibU's srcs/Makefile with KLone's configure options.
+# Same module list as LibU's srcs/Makefile with Klin's configure options.
 set(_libu_srcs
     toolbox/memory.c toolbox/misc.c toolbox/str.c toolbox/buf.c
     toolbox/log.c toolbox/lexer.c toolbox/test.c toolbox/hmap.c

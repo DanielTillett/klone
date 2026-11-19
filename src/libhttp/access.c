@@ -3,16 +3,16 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 #include <time.h>
 #include <u/libu.h>
-#include <klone/klone.h>
-#include <klone/context.h>
-#include <klone/klog.h>
-#include <klone/access.h>
-#include <klone/server_ppc_cmd.h>
+#include <klin/klin.h>
+#include <klin/context.h>
+#include <klin/klog.h>
+#include <klin/access.h>
+#include <klin/server_ppc_cmd.h>
 
 static inline const char *value_or_dash(const char *v)
 {

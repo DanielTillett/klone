@@ -1,6 +1,6 @@
-#include <klone/context.h>
-#include <klone/hook.h>
-#include <klone/hookprv.h>
+#include <klin/context.h>
+#include <klin/hook.h>
+#include <klin/hookprv.h>
 
 /**
  * \brief   Set a hook that executes when on server startup
@@ -30,7 +30,7 @@ err:
 /**
  * \brief   Set a hook that executes just before quitting the server
  *
- * This hook is called during the shutdown procedure of the Klone server.
+ * This hook is called during the shutdown procedure of the Klin server.
  *
  * Pass a NULL pointer to disable a previously set hook.
  *

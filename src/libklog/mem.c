@@ -3,15 +3,15 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <time.h>
 #include <u/libu.h>
-#include <klone/klog.h>
-#include <klone/klogprv.h>
+#include <klin/klog.h>
+#include <klin/klogprv.h>
 
 static int klog_mem_msg_new (const char *s, int level, klog_mem_msg_t **pmmsg);
 static int klog_mem_msg_push (klog_mem_t *klm, klog_mem_msg_t *mmsg);

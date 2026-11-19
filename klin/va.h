@@ -3,14 +3,14 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#ifndef _KLONE_VA_H_
-#define _KLONE_VA_H_
+#ifndef _KLIN_VA_H_
+#define _KLIN_VA_H_
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <u/libu.h>
 #include <stdarg.h>
 
@@ -25,4 +25,4 @@
     #define VA_COPY_UNAVAIL 1
 #endif
 
-#endif  /* !_KLONE_VA_H_ */
+#endif  /* !_KLIN_VA_H_ */

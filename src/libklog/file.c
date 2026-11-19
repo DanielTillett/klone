@@ -3,7 +3,7 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
@@ -13,8 +13,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <u/libu.h>
-#include <klone/klog.h>
-#include <klone/klogprv.h>
+#include <klin/klog.h>
+#include <klin/klogprv.h>
 
 static void klog_close_file (klog_t *klf);
 static int klog_file (klog_t *klf, int level, const char *fmt, va_list ap);

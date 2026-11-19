@@ -3,11 +3,11 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #ifdef OS_UNIX
 #include <grp.h>
 #endif
@@ -21,19 +21,19 @@
 #include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <klone/server.h>
-#include <klone/backend.h>
-#include <klone/os.h>
-#include <klone/timer.h>
-#include <klone/context.h>
-#include <klone/ppc.h>
-#include <klone/ppc_cmd.h>
-#include <klone/utils.h>
-#include <klone/klog.h>
-#include <klone/hook.h>
-#include <klone/hookprv.h>
-#include <klone/server_ppc_cmd.h>
-#include <klone/emb.h>
+#include <klin/server.h>
+#include <klin/backend.h>
+#include <klin/os.h>
+#include <klin/timer.h>
+#include <klin/context.h>
+#include <klin/ppc.h>
+#include <klin/ppc_cmd.h>
+#include <klin/utils.h>
+#include <klin/klog.h>
+#include <klin/hook.h>
+#include <klin/hookprv.h>
+#include <klin/server_ppc_cmd.h>
+#include <klin/emb.h>
 #include "server_s.h"
 #include "child.h"
 
@@ -169,7 +169,7 @@ static void server_sigterm(int sig)
 
     /* child process die immediately.
      * note: don't call debug functions because the parent process could be
-     * already dead if the user used the "killall kloned" command */
+     * already dead if the user used the "killall klind" command */
     if(ctx->pipc)
         _exit(0); 
 
@@ -379,7 +379,7 @@ static int server_chroot_blind(server_t *s)
     dbg_err_if (s->chroot == NULL);
 
     dbg_err_if(u_path_snprintf(dir, U_PATH_MAX, U_PATH_SEPARATOR,
-        "%s/kloned_blind_chroot_%d.dir", s->chroot, getpid()));
+        "%s/klind_blind_chroot_%d.dir", s->chroot, getpid()));
 
     /* create the blind dir (0100 mode) */
     dbg_err_if(mkdir(dir, BLIND_DIR_MODE ));
@@ -1017,7 +1017,7 @@ int server_loop(server_t *s)
     /* if allow_root is not set check that we're not running as root */
     if(!s->allow_root)
         warn_err_ifm(!getuid() || !geteuid() || !getgid() || !getegid(),
-            "you must set the allow_root config option to run kloned as root");
+            "you must set the allow_root config option to run klind as root");
 
 #elif OS_WIN
     if(s->chroot)
@@ -1186,7 +1186,7 @@ static int server_setup_backend(server_t *s, backend_t *be)
 
     return 0;
 err:
-    u_warn("'addr' syntax has changed with klone 3: check libu URI format");
+    u_warn("'addr' syntax has changed with klin 3: check libu URI format");
     return ~0;
 }
 

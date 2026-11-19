@@ -1,36 +1,36 @@
-.TH "KLONE" "1" "11/03/2005" "KoanLogic Srl" "KoanLogic Srl"
+.TH "KLIN" "1" "11/03/2005" "KoanLogic Srl" "KoanLogic Srl"
 .\" disable hyphenation
 .nh
 .\" disable justification (adjust text to left margin only)
 .ad l
 .SH "NAME"
-klone \- KLone swiss army knife
+klin \- Klin swiss army knife
 .SH "SYNOPSIS"
 .HP 6
-\fBklone\fR [\fB\fIklone_opts\fR\fR] [\fB\-c\ \fR\fB\fIcmd\fR\fR] [\fB\fIcmd_opts\fR\fR] [\fB\fIcmd_args\fR\fR]
+\fBklin\fR [\fB\fIklin_opts\fR\fR] [\fB\-c\ \fR\fB\fIcmd\fR\fR] [\fB\fIcmd_opts\fR\fR] [\fB\fIcmd_args\fR\fR]
 .SH "DESCRIPTION"
 .PP
-\fBklone\fR
+\fBklin\fR
 performs two different tasks depending on the argument supplied to the
 \fB\-c\fR
-switch: import a site directory tree into the KLone building environment (i.e. the embedded file system), or translate static and dynamic pages into C files.
+switch: import a site directory tree into the Klin building environment (i.e. the embedded file system), or translate static and dynamic pages into C files.
 .PP
 .PP
-Both commands are normally run by the CMake build rather than by hand. Pass the site directory when configuring KLone and build:
+Both commands are normally run by the CMake build rather than by hand. Pass the site directory when configuring Klin and build:
 .sp
 .nf
-    $ cmake \-S ${KLONE_SRC_DIR} \-B build \-G Ninja \-DKLONE_SITE_DIR=${SITE_BASE_DIR}
+    $ cmake \-S ${KLIN_SRC_DIR} \-B build \-G Ninja \-DKLIN_SITE_DIR=${SITE_BASE_DIR}
     $ cmake \-\-build build
 .fi
 .sp
 The build runs
-\fB'klone \-c import'\fR
+\fB'klin \-c import'\fR
 on the site directory, then
-\fB'klone \-c translate'\fR
+\fB'klin \-c translate'\fR
 on each page, and links the result into
-\fBkloned\fR.
+\fBklind\fR.
 Extra import options (\fB\-e\fR, \fB\-k\fR, \fB\-x\fR, \fB\-z\fR, \fB\-Z\fR) are given with
-\fB\-DKLONE_IMPORT_ARGS\fR.
+\fB\-DKLIN_IMPORT_ARGS\fR.
 Changed pages are retranslated, and the import is repeated automatically when files are added or removed.
 .SH "OPTIONS"
 .TP
@@ -41,21 +41,21 @@ Display a brief help and exit.
 Enable verbose mode.
 .TP
 \-V
-Print klone version and exit.
+Print klin version and exit.
 .SH "COMMANDS"
 .SS "Translate:"
 .HP 6
 
-\fBklone\fR \fB\-c\ translate\fR \fB\-i\ \fR\fB\fIinfile\fR\fR \fB\-o\ \fR\fB\fIoutfile\fR\fR \fB\-u\ \fR\fB\fIuri\fR\fR [\fB\-E\fR] [\fB\-k\ \fR\fB\fIkeyfile\fR\fR] [\fB\-z\fR]
+\fBklin\fR \fB\-c\ translate\fR \fB\-i\ \fR\fB\fIinfile\fR\fR \fB\-o\ \fR\fB\fIoutfile\fR\fR \fB\-u\ \fR\fB\fIuri\fR\fR [\fB\-E\fR] [\fB\-k\ \fR\fB\fIkeyfile\fR\fR] [\fB\-z\fR]
 .PP
-Translate the active (i.e. a \fI.klone\fR file) or static page \fIinfile\fR
+Translate the active (i.e. a \fI.klin\fR file) or static page \fIinfile\fR
 into C file \fIoutfile\fR. 
 
 The \fB\-u\fR option specifies the \fIuri\fR associated with the translated file. 
 
-The \fB\-E\fR option tells \fBklone\fR to encrypt the file content with the key
+The \fB\-E\fR option tells \fBklin\fR to encrypt the file content with the key
 enclosed in the supplied \fIkeyfile\fR or in the environment variable
-\fBKLONE_CIPHER_KEY\fR using AES\-256 CBC.
+\fBKLIN_CIPHER_KEY\fR using AES\-256 CBC.
 
 The contents of the translated files are compressed based on their MIME type if
 the \fB\-z\fR flag is given.
@@ -63,11 +63,11 @@ the \fB\-z\fR flag is given.
 .SS "Import:"
 .HP 6
 
-\fBklone\fR \fB\-c\ import\fR [\fB\-b\ \fR\fB\fIuri\fR\fR] [\fB\-e\ \fR\fB\fIpattern\fR\fR] [\fB\-x\ \fR\fB\fIpattern\fR\fR] [\fB\-k\ \fR\fB\fIkeyfile\fR\fR] [\fB\-Z\ \fR\fB\fIpattern\fR\fR] [\fB\-z\fR] \fB\fIdir\fR\fR
+\fBklin\fR \fB\-c\ import\fR [\fB\-b\ \fR\fB\fIuri\fR\fR] [\fB\-e\ \fR\fB\fIpattern\fR\fR] [\fB\-x\ \fR\fB\fIpattern\fR\fR] [\fB\-k\ \fR\fB\fIkeyfile\fR\fR] [\fB\-Z\ \fR\fB\fIpattern\fR\fR] [\fB\-z\fR] \fB\fIdir\fR\fR
 .PP
 Import the site tree starting at
 \fIdir\fR
-into the KLone building environment. The command writes
+into the Klin building environment. The command writes
 \fIautogen.cmake\fR,
 the list of pages and how to translate each one, read by the CMake build, and
 \fIregister.c\fR,
@@ -76,7 +76,7 @@ the glue by which the translated pages are linked into the HTTP/S server.
 When the \fB\-e\fR flag is given, the files matching the specified
 \fIpattern\fR will be encrypted using the key enclosed in the supplied
 \fIkeyfile\fR or in the environment variable
-\fBKLONE_CIPHER_KEY\fR. 
+\fBKLIN_CIPHER_KEY\fR. 
 
 The user can choose whether to compress all the imported files based on their MIME type, using the \fB\-z\fR flag, or to select a subset matching the supplied shell \fIpattern\fR.
 
@@ -88,18 +88,18 @@ Arguments \fB\-x\fR, \fB\-Z\fR and \fB\-e\fR may be used more then once.
 .SH "ENVIRONMENT"
 .PP
 The following environment variable affects the execution of
-\fBklone\fR:
+\fBklin\fR:
 .TP
-\fBKLONE_CIPHER_KEY\fR
+\fBKLIN_CIPHER_KEY\fR
 If set,
-\fBklone\fR
+\fBklin\fR
 tries to read the embedded file system encryption key from it. It is be overridden by the
 \fB\-k\fR
 option.
 .SH "DIAGNOSTICS"
 .PP
 The
-\fBklone\fR
+\fBklin\fR
 utility exits with
 \fBEXIT_SUCCESS\fR
 on success, and with
@@ -107,9 +107,9 @@ on success, and with
 if an error occurs.
 .SH "SEE ALSO"
 .PP
-\fBkloned\fR(8),
-\fBkloned.conf\fR(5).
+\fBklind\fR(8),
+\fBklind.conf\fR(5).
 .SH "BUGS"
 .PP
 If you find one, please email it to
-https://github.com/DanielTillett/klone/issues
+https://github.com/DanielTillett/klin/issues

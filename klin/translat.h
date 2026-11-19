@@ -3,16 +3,16 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#ifndef _KLONE_TRANSLAT_H_
-#define _KLONE_TRANSLAT_H_
+#ifndef _KLIN_TRANSLAT_H_
+#define _KLIN_TRANSLAT_H_
 
 #include <u/libu.h>
-#include <klone/io.h>
-#include <klone/codecs.h>
+#include <klin/io.h>
+#include <klin/codecs.h>
 
 #ifdef __cplusplus
 extern "C" {

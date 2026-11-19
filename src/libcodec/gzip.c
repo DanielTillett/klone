@@ -3,15 +3,15 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <u/libu.h>
-#include <klone/codec.h>
-#include <klone/cgzip.h>
-#include <klone/utils.h>
+#include <klin/codec.h>
+#include <klin/cgzip.h>
+#include <klin/utils.h>
 
 #define ZLIB_CONST  /* const next_in */
 #include <zlib.h>

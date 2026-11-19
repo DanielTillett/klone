@@ -3,7 +3,7 @@
     time_t now;
 %>
 <html>
-<head><title>KLone start page</title></head>
+<head><title>Klin start page</title></head>
 <link rel="stylesheet" href="kl.css" type="text/css">
 <body>
 
@@ -11,7 +11,7 @@
 
 <blockquote><table width="750" cellpadding="5"><tr><td bgcolor="white">
 <center>
-<h3>Welcome to KLone (Ver. <%= KLONE_VERSION %>)!</h3>
+<h3>Welcome to Klin (Ver. <%= KLIN_VERSION %>)!</h3>
 </center>
 </td></tr></table></blockquote>
 <p>
@@ -25,12 +25,12 @@
 
 <p>
 
-About KLone:
+About Klin:
 <blockquote><table width="750" cellpadding="5"><tr><td bgcolor="#e0e0ff">
 
-<a href="https://github.com/DanielTillett/klone">Project home</a><br>
-<a href="https://github.com/DanielTillett/klone#readme">Documentation</a><br>
-<a href="https://github.com/DanielTillett/klone/issues">Support</a><br>
+<a href="https://github.com/DanielTillett/klin">Project home</a><br>
+<a href="https://github.com/DanielTillett/klin#readme">Documentation</a><br>
+<a href="https://github.com/DanielTillett/klin/issues">Support</a><br>
 
 </td></tr></table></blockquote>
 

@@ -3,7 +3,7 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
@@ -15,11 +15,11 @@
  * for use in the OpenSSL Toolkit (http://www.openssl.org/)"
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <u/libu.h>
-#include <klone/io.h>
-#include <klone/emb.h>
-#include <klone/tlsprv.h>
+#include <klin/io.h>
+#include <klin/emb.h>
+#include <klin/tlsprv.h>
 
 #ifndef SSL_OPENSSL
 int tls_dummy_decl_stub = 0;

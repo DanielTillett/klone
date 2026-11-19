@@ -3,17 +3,17 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <sys/stat.h>
 #include <stdlib.h>
 #include <string.h>
 #include <u/libu.h>
-#include <klone/emb.h>
-#include <klone/utils.h>
+#include <klin/emb.h>
+#include <klin/utils.h>
 #ifdef HAVE_STRINGS
 #include <strings.h>
 #endif

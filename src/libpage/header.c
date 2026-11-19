@@ -3,15 +3,15 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <u/libu.h>
-#include <klone/os.h>
-#include <klone/header.h>
-#include <klone/utils.h>
+#include <klin/os.h>
+#include <klin/header.h>
+#include <klin/utils.h>
 
 /**
  * \ingroup header

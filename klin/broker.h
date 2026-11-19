@@ -3,17 +3,17 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#ifndef _KLONE_BROKER_H_
-#define _KLONE_BROKER_H_
+#ifndef _KLIN_BROKER_H_
+#define _KLIN_BROKER_H_
 
-#include <klone/http.h>
-#include <klone/request.h>
-#include <klone/response.h>
-#include <klone/page.h>
+#include <klin/http.h>
+#include <klin/request.h>
+#include <klin/response.h>
+#include <klin/page.h>
 
 #ifdef __cplusplus
 extern "C" {

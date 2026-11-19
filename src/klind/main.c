@@ -3,11 +3,11 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <stdio.h>
@@ -16,13 +16,13 @@
 #include <signal.h>
 #include <fcntl.h>
 #include <u/libu.h>
-#include <klone/os.h>
-#include <klone/server.h>
-#include <klone/emb.h>
-#include <klone/context.h>
-#include <klone/utils.h>
-#include <klone/hook.h>
-#include <klone/hookprv.h>
+#include <klin/os.h>
+#include <klin/server.h>
+#include <klin/emb.h>
+#include <klin/context.h>
+#include <klin/utils.h>
+#include <klin/hook.h>
+#include <klin/hookprv.h>
 #include "main.h"
 #include "server_s.h"
 
@@ -104,7 +104,7 @@ int app_init(void)
                     ctx->ext_config);
     } else {
         /* if -f is not used load the default embfs config file */
-        con_err_ifm(u_config_load_from_drv("/etc/kloned.conf", &drv_embfs, 0,
+        con_err_ifm(u_config_load_from_drv("/etc/klind.conf", &drv_embfs, 0,
                     &ctx->config), 
                     "embfs configuration file load error");
     }

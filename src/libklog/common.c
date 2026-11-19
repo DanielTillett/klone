@@ -3,15 +3,15 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <time.h>
 #include <u/libu.h>
-#include <klone/klog.h>
-#include <klone/klogprv.h>
+#include <klin/klog.h>
+#include <klin/klogprv.h>
 
 /* each klog_*_open() will push its private data afterwards */
 int klog_new (int type, int threshold, const char *ident, klog_t **pkl)

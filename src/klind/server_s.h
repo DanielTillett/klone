@@ -3,18 +3,18 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#ifndef _KLONE_SERVER_S_H_
-#define _KLONE_SERVER_S_H_
+#ifndef _KLIN_SERVER_S_H_
+#define _KLIN_SERVER_S_H_
 #include <stdlib.h>
-#include <klone/ppc.h>
-#include <klone/backend.h>
-#include <klone/klog.h>
-#include <klone/timer.h>
-#include <klone_conf.h>
+#include <klin/ppc.h>
+#include <klin/backend.h>
+#include <klin/klog.h>
+#include <klin/timer.h>
+#include <klin_conf.h>
 #include <sys/types.h>
 #ifdef HAVE_SYS_SELECT
 #include <sys/select.h>
@@ -43,7 +43,7 @@ struct server_s
     int stop;               /* >0 will stop the loop                        */
     int model;              /* server model                                 */
     int klog_flush;         /* >0 will flush the klog                       */
-    int allow_root;         /* >0 allow root as the owner of kloned process */
+    int allow_root;         /* >0 allow root as the owner of klind process */
     int blind_chroot;       /* if blind chroot mode is enabled or disabled  */
 };
 

@@ -1,22 +1,22 @@
-.TH "KLONED" "8" "11/03/2005" "KoanLogic Srl" "KoanLogic Srl"
+.TH "KLIND" "8" "11/03/2005" "KoanLogic Srl" "KoanLogic Srl"
 .\" disable hyphenation
 .nh
 .\" disable justification (adjust text to left margin only)
 .ad l
 .SH "NAME"
-kloned \- klone daemon
+klind \- klin daemon
 .SH "SYNOPSIS"
 .HP 7
-\fBkloned\fR [\fB\-d\fR] [\fB\-f\ \fR\fB\fIfile\fR\fR] [\fB\-c\fR] [\fB\-F\fR] [\fB\-h\fR] [\fB\-i\fR] [\fB\-u\fR] [\fB\-p\ \fR\fB\fIfile\fR\fR] [\fB\-n\fR]
+\fBklind\fR [\fB\-d\fR] [\fB\-f\ \fR\fB\fIfile\fR\fR] [\fB\-c\fR] [\fB\-F\fR] [\fB\-h\fR] [\fB\-i\fR] [\fB\-u\fR] [\fB\-p\ \fR\fB\fIfile\fR\fR] [\fB\-n\fR]
 .SH "DESCRIPTION"
 .PP
-\fBkloned\fR
+\fBklind\fR
 merges a web server (or CGI to be plugged into other CGI\-compliant web servers), its compressed configuration, together with the static and dynamic web contents into a single executable file.
 .PP
 The process of creating the
-\fBkloned\fR
+\fBklind\fR
 executable, by embedding the web content into the server process, is documented in the
-\fBklone\fR(1)
+\fBklin\fR(1)
 manual page.
 .SH "OPTIONS"
 .TP
@@ -27,7 +27,7 @@ Enable verbose logging for debugging purposes. HTTP/HTTPS requests are also serv
 Load further configuration parameters from the external file
 \fIconfig_file\fR
 besides those found in the embedded configuration file
-\fIsup://etc/kloned.conf\fR. Parameters in
+\fIsup://etc/klind.conf\fR. Parameters in
 \fIconf_file\fR
 override the values of those with the same name in the embedded configuration file.
 .TP
@@ -36,7 +36,7 @@ Read configuration sections from standard input (until EOF is found), overriding
 values contained in default and custom configuration files. For example:
 .sp
 .nf
-    $ cat << EOF | ./kloned -c
+    $ cat << EOF | ./klind -c
     > app_http
     > {
     > addr      tcp4://*:8081
@@ -49,14 +49,14 @@ will override the default address and root directory values for a previously def
 .TP
 \-F
 If specified, this parameter causes the main
-\fBkloned\fR
+\fBklind\fR
 process to not detach from the terminal. Requests are still served using the configured server model; use
 \-d
 to serve them iteratively.
 .TP
 \-p \fIpid_file\fR
 Save 
-\fBkloned\fR 
+\fBklind\fR 
 daemon pid to 
 \fIpid_file\fR.
 .TP
@@ -68,33 +68,33 @@ Do not change dir when becoming daemon.
 .TP
 \-i
 Install
-\fBkloned\fR
+\fBklind\fR
 service and exit (only available on Windows).
 .TP
 \-u
 Uninstall
-\fBkloned\fR
+\fBklind\fR
 service and exit (only available on Windows).
 .TP
 \-V
-Print klone version and exit.
+Print klin version and exit.
 .SH "FILES"
 .PP
-\fBkloned\fR
+\fBklind\fR
 depends on
-\fIsup://etc/kloned.conf\fR
+\fIsup://etc/klind.conf\fR
 for the configuration of its instances (clones). Additional configuration can be supplied via an external file (the
 \fB\-f\fR
 command line flag): see
-\fBkloned.conf\fR(5)
+\fBklind.conf\fR(5)
 for details on available configuration parameters and their respective values.
 .SH "DIAGNOSTICS"
 .PP
-KLone
+Klin
 is a product targeted for embedded systems, especially those with limited or no disk resources; as such it tries to reduce logging activity to a minumum (at its best, zero logging).
 .PP
 Diagnostics issued by
-\fBkloned\fR
+\fBklind\fR
 are passed to the
 \fBsyslogd\fR(8), subsystem with facility
 \fBLOG_LOCAL0\fR
@@ -105,12 +105,12 @@ and can be routed to a configurable file (see
 for details).
 .PP
 The number and nature of diagnostics available depends on the debug level defined at compile\-time. If you are having problems, compile the
-KLone
+Klin
 application with
 \fBNDEBUG\fR
 unset, configure the syslog daemon appropriately, run your application and peruse the log files. Most messages are reasonably self\-explanatory. At this stage your best bet is still to grep the source code and inspect the conditions that gave rise to the diagnostics you are seeing.
 .PP
-\fBkloned\fR
+\fBklind\fR
 is a service/daemon, as such it will bail out with an
 \fBEXIT_SUCCESS\fR
 exit code only if explicitly requested to terminate (i.e.
@@ -121,20 +121,20 @@ or
 .SH "ENVIRONMENT VARIABLES"
 .PP
 The following environment variables affect the execution of
-\fBkloned\fR:
+\fBklind\fR:
 .TP
 \fBGATEWAY_INTERFACE\fR
 If set,
-\fBkloned\fR
+\fBklind\fR
 assumes it has been run as a CGI script by an external web server.
 .SH "SIGNALS"
 .PP
 To shut down a user's
-\fBkloned\fR
+\fBklind\fR
 process it is recommended that
 \fBSIGKILL \fR\fInot\fR
 be used, except as a last resort. The safe way to terminate a
-\fBkloned\fR
+\fBklind\fR
 is to send it a
 \fBSIGTERM\fR
 or
@@ -142,9 +142,9 @@ or
 signal and wait for it to die on its own.
 .SH "SEE ALSO"
 .PP
-\fBkloned.conf\fR(5),
-\fBklone\fR(1).
+\fBklind.conf\fR(5),
+\fBklin\fR(1).
 .SH "BUGS"
 .PP
 Sure there are some. If you find one, please email it to
-https://github.com/DanielTillett/klone/issues.
+https://github.com/DanielTillett/klin/issues.

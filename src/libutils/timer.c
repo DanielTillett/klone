@@ -3,17 +3,17 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <stdint.h>
 #include <time.h>
 #include <unistd.h>
 #include <signal.h>
-#include <klone/timer.h>
-#include <klone/utils.h>
+#include <klin/timer.h>
+#include <klin/utils.h>
 #include <u/libu.h>
 
 #ifdef OS_WIN

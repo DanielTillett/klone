@@ -1,5 +1,5 @@
-#ifndef _KLONE_PM_H_
-#define _KLONE_PM_H_
+#ifndef _KLIN_PM_H_
+#define _KLIN_PM_H_
 
 /* pattern matching object */
 struct pm_s;

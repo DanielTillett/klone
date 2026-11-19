@@ -3,21 +3,21 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#ifndef _KLONE_REQUEST_H_
-#define _KLONE_REQUEST_H_
+#ifndef _KLIN_REQUEST_H_
+#define _KLIN_REQUEST_H_
 
 #include <sys/types.h>
 #include <time.h>
 #include <u/libu.h>
-#include <klone/header.h>
-#include <klone/io.h>
-#include <klone/http.h>
-#include <klone/vars.h>
-#include <klone/vhost.h>
+#include <klin/header.h>
+#include <klin/io.h>
+#include <klin/http.h>
+#include <klin/vars.h>
+#include <klin/vhost.h>
 
 #ifdef __cplusplus
 extern "C" {

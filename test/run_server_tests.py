@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Daniel Tillett. Part of KLone; see the LICENSE file.
+# Copyright (c) 2026 Daniel Tillett. Part of Klin; see the LICENSE file.
 """Build a test-only embedded page and exercise the real HTTP/TLS daemon."""
 import argparse
 from http.cookies import SimpleCookie
@@ -170,17 +170,17 @@ def main():
     try:
         # Embed the test site (with no import options) for this run only.
         # The original settings are restored afterwards, even if the
-        # fixture fails to build, so the test page never stays in kloned.
+        # fixture fails to build, so the test page never stays in klind.
         settings = {name: cmake_cache_value(tree, name)
-                    for name in ("KLONE_SITE_DIR", "KLONE_IMPORT_ARGS")}
-        rebuild = ["cmake", "--build", str(tree), "--target", "kloned"]
+                    for name in ("KLIN_SITE_DIR", "KLIN_IMPORT_ARGS")}
+        rebuild = ["cmake", "--build", str(tree), "--target", "klind"]
         # 'cmake -D... <existing build dir>' reconfigures with the cached source
         restore = [(["cmake", *[f"-D{k}={v}" for k, v in settings.items()], str(tree)], tree),
                    (rebuild, tree)]
-        run_build_steps([(["cmake", f"-DKLONE_SITE_DIR={ROOT / 'test/site'}",
-                           "-DKLONE_IMPORT_ARGS=", str(tree)], tree),
+        run_build_steps([(["cmake", f"-DKLIN_SITE_DIR={ROOT / 'test/site'}",
+                           "-DKLIN_IMPORT_ARGS=", str(tree)], tree),
                          (rebuild, tree)], env, log_path)
-        daemon = tree / "bin" / cmake_cache_value(tree, "KLONE_DAEMON_NAME")
+        daemon = tree / "bin" / cmake_cache_value(tree, "KLIN_DAEMON_NAME")
         run_server_checks(args, env, output, daemon)
     finally:
         if restore:
@@ -190,7 +190,7 @@ def main():
 def run_keep_alive_checks(args, check, plain, secure, request):
     """Persistent connections: several requests per connection, pipelining,
     response framing (Content-Length, chunked, bodyless) and closing."""
-    hello = b"klone integration test\n"
+    hello = b"klin integration test\n"
 
     def big_page(body):
         lines = body.strip().split(b"\n")
@@ -386,9 +386,9 @@ def run_server_checks(args, env, output, daemon):
         if not condition:
             raise AssertionError(message)
 
-    with tempfile.TemporaryDirectory(prefix="klone-server-test-") as directory:
+    with tempfile.TemporaryDirectory(prefix="klin-server-test-") as directory:
         temp = Path(directory)
-        (temp / "hello.txt").write_text("klone integration test\n")
+        (temp / "hello.txt").write_text("klin integration test\n")
         (temp / "a+b.txt").write_text("literal plus\n")
         (temp / "a?b.txt").write_text("encoded question\n")
         cert, key = temp / "cert.pem", temp / "key.pem"
@@ -396,7 +396,7 @@ def run_server_checks(args, env, output, daemon):
                         "-keyout", str(key), "-out", str(cert), "-days", "1", "-subj", "/CN=localhost"],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         plain, client, secure = free_port(), free_port(), free_port()
-        config = temp / "kloned.conf"
+        config = temp / "klind.conf"
         blocks = []
         for name, port, tls, session in [("plain", plain, False, "memory"),
                                          ("client", client, False, "client"),
@@ -442,7 +442,8 @@ def run_server_checks(args, env, output, daemon):
                         time.sleep(0.1)
                 request = b"GET /static/hello.txt HTTP/1.1\r\nHost: localhost\r\n\r\n"
                 response = exchange(plain, request)
-                check(b"200 OK" in response and response.endswith(b"klone integration test\n"), "GET failed")
+                check(b"200 OK" in response and response.endswith(b"klin integration test\n"), "GET failed")
+                check(b"\r\nServer: klin/" in response, f"Wrong Server header: {response[:300]!r}")
                 head = exchange(plain, request.replace(b"GET", b"HEAD", 1))
                 check(b"200 OK" in head and head.endswith(b"\r\n\r\n"), "HEAD returned a body")
                 for path, body in [(b"a+b.txt", b"literal plus\n"), (b"a%3Fb.txt", b"encoded question\n")]:
@@ -495,7 +496,15 @@ def run_server_checks(args, env, output, daemon):
                                 check(("; Secure" in line) == (context is not None), "Wrong Secure attribute")
                                 parsed = SimpleCookie(line.split(":", 1)[1].strip())
                                 cookies.update({k: v.value for k, v in parsed.items()})
-                    check(len(cookies.get("klone_sid", "")) == 32, "Wrong session ID length")
+                    check(len(cookies.get("klin_sid", "")) == 32, "Wrong session ID length")
+                    if port == plain:
+                        # the cookie's name before KLone was renamed Klin is
+                        # still read, so an upgrade keeps users logged in
+                        old = f"klone_sid={cookies['klin_sid']}".encode()
+                        reply = exchange(port, b"GET /session.kl1 HTTP/1.1\r\nHost: localhost\r\nCookie: " +
+                                         old + b"\r\n\r\n", context)
+                        check(b"persisted" in reply.partition(b"\r\n\r\n")[2],
+                              f"Old klone_sid cookie not accepted: {reply[:400]!r}")
                     if "KL1_CLISES_HMAC" in cookies:
                         tag = cookies["KL1_CLISES_HMAC"]
                         cookies["KL1_CLISES_HMAC"] = ("0" if tag[0] != "0" else "1") + tag[1:]

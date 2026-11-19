@@ -1,7 +1,7 @@
-KLONE TODO
+KLIN TODO
 ----------
 
-Reviewed for KLone 4.0.0 (18 Nov 2026). Items are in priority order within
+Reviewed for Klin 4.0.0 (18 Nov 2026). Items are in priority order within
 each section. Completed work is recorded in the ChangeLog.
 
 
@@ -12,7 +12,7 @@ PLANNED: SECURITY AND CORRECTNESS
   session IDs make symlink attacks impractical today, but /tmp is shared.
 * Session locking: concurrent requests in the same session can overwrite
   each other's session data (lost updates).
-* Disable core dumps in kloned (setrlimit RLIMIT_CORE), with a configuration
+* Disable core dumps in klind (setrlimit RLIMIT_CORE), with a configuration
   option to re-enable them for debugging; dumps can contain session keys and
   user data.
 * HTML-escaped output: <%= expr %> prints its value unescaped, so pages that

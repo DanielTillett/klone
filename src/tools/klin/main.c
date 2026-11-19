@@ -3,11 +3,11 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <sys/stat.h>
 #ifdef HAVE_SYS_DIR
 #include <sys/dir.h>
@@ -25,14 +25,14 @@
 #include <getopt.h>
 #endif
 #include <u/libu.h>
-#include <klone/os.h>
-#include <klone/request.h>
-#include <klone/response.h>
-#include <klone/translat.h>
-#include <klone/utils.h>
-#include <klone/run.h>
-#include <klone/mime_map.h>
-#include <klone/version.h>
+#include <klin/os.h>
+#include <klin/request.h>
+#include <klin/response.h>
+#include <klin/translat.h>
+#include <klin/utils.h>
+#include <klin/run.h>
+#include <klin/mime_map.h>
+#include <klin/version.h>
 #include "pm.h"
 
 int facility = LOG_LOCAL0;
@@ -74,14 +74,14 @@ context_t *ctx;
 static void usage(void)
 {
     static const char * us = 
-"Usage: klone [-hvV] -c COMMAND OPTIONS ARGUMENTS\n"
+"Usage: klin [-hvV] -c COMMAND OPTIONS ARGUMENTS\n"
 "Version: %s - Copyright (c) 2005-2012 KoanLogic s.r.l.\n"
 "Copyright (c) 2026 Daniel Tillett\n"
 "All rights reserved.\n"
 "\n"
 "       -h            display this help\n"
 "       -v            verbose mode\n"
-"       -V            print KLone version and exit\n"
+"       -V            print Klin version and exit\n"
 "       -c command    command to execute (see COMMAND LIST)\n"
 "\n"
 "\n"
@@ -98,7 +98,7 @@ static void usage(void)
 #ifdef SSL_ON
 "         -e pattern  encrypt all files whose URI match the given pattern (*)\n"
 "         -k key_file encryption key filename\n"
-"                     (KLONE_CIPHER_KEY environ var is used if not provided)\n"
+"                     (KLIN_CIPHER_KEY environ var is used if not provided)\n"
 #endif
 #ifdef HAVE_LIBZ
 "         -z          compress all compressable content (based on MIME types)\n"
@@ -123,7 +123,7 @@ static void usage(void)
 #endif
 "\n";
 
-    fprintf(stderr, us, klone_version());
+    fprintf(stderr, us, klin_version());
 
     exit(EXIT_FAILURE);
 }
@@ -213,7 +213,7 @@ static int parse_opt(int argc, char **argv)
             warn_err_if(ctx->base_uri == NULL);
 
             if(ctx->base_uri[0] != '/')
-                klone_die("base URI must be absolute "
+                klin_die("base URI must be absolute "
                           "(i.e. must start with a '/')");
 
             remove_trailing_slash(ctx->base_uri);
@@ -229,12 +229,12 @@ static int parse_opt(int argc, char **argv)
             break;
         case 'u': /* translated page uri */
             /* skip the first char to avoid MSYS path translation bug
-             * (see klone-site.c) */
+             * (see klin-site.c) */
             ctx->uri = u_strdup(1+optarg);
             warn_err_if(ctx->uri == NULL);
 
             if(ctx->uri[0] != '/')
-                klone_die("URI must be absolute (i.e. must start with a '/')");
+                klin_die("URI must be absolute (i.e. must start with a '/')");
 
             remove_trailing_slash(ctx->uri);
 
@@ -245,7 +245,7 @@ static int parse_opt(int argc, char **argv)
         }
     }
 
-    klone_die_if(ctx->cmd == 0, "missing command argument (-c)");
+    klin_die_if(ctx->cmd == 0, "missing command argument (-c)");
     ctx->narg = argc - optind;  /* # of args left */
     ctx->arg = argv + optind;   
 
@@ -285,9 +285,9 @@ static int command_trans(void)
 
     memset(&ti, 0, sizeof(trans_info_t));
 
-    klone_die_if(!ctx->file_in, "input file name required (-i file)");
-    klone_die_if(!ctx->file_out, "output file name required (-o file)");
-    klone_die_if(!ctx->uri, "translated page URI required (-u uri)");
+    klin_die_if(!ctx->file_in, "input file name required (-i file)");
+    klin_die_if(!ctx->file_out, "output file name required (-o file)");
+    klin_die_if(!ctx->uri, "translated page URI required (-u uri)");
 
     if(ctx->verbose)
         u_con("translating %s to %s (uri: %s)", ctx->file_in, ctx->file_out, 
@@ -313,7 +313,9 @@ static int command_trans(void)
     con_err_ifm(ctx->key_file && !ctx->encrypt, "-k used but -E is missing");
 
     /* encryption key */
-    key_env = getenv("KLONE_CIPHER_KEY");
+    key_env = getenv("KLIN_CIPHER_KEY");
+    if(key_env == NULL || !strlen(key_env))
+        key_env = getenv("KLONE_CIPHER_KEY");  /* name before the rename */
     if(key_env && strlen(key_env))
     {
         con_err_ifm(strlen(key_env) != CODEC_CIPHER_KEY_LEN,
@@ -324,7 +326,7 @@ static int command_trans(void)
 		memcpy(ti.key, key_env, strlen(key_env));
     }
 
-    /* if -k has been used the overwrite KLONE_CIPHER_KEY env var (if present)*/
+    /* if -k has been used the overwrite KLIN_CIPHER_KEY env var (if present)*/
     if(ctx->key_file)
     {
         key_found = 1;
@@ -335,7 +337,7 @@ static int command_trans(void)
     if(ctx->encrypt)
     {
         if(!key_found)
-            con_err("encryption key required (use -k or KLONE_CIPHER_KEY "
+            con_err("encryption key required (use -k or KLIN_CIPHER_KEY "
                     "environ variable)");
         ti.encrypt = 1;
     }
@@ -352,7 +354,7 @@ static int command_trans(void)
         ti.comp = 1;
 
     /* be sure that the input file exists */
-    klone_die_if(stat(ctx->file_in, &st), "input file not found");
+    klin_die_if(stat(ctx->file_in, &st), "input file not found");
 
     ti.file_size = st.st_size;
     ti.mtime = st.st_mtime; 
@@ -465,7 +467,7 @@ static int cb_file(struct dirent *de, const char *path , void *arg)
 
     ext = u_match_ext(fullpath, "klx") ? "cc" : "c";
 
-    dbg_err_if(io_printf(ctx->ior, "KLONE_REGISTER(action,%s);\n", uri_md5) <0);
+    dbg_err_if(io_printf(ctx->ior, "KLIN_REGISTER(action,%s);\n", uri_md5) <0);
 
     /* page entry for cmake/site/CMakeLists.txt:
      * md5 ext file uri script zip enc key */
@@ -473,7 +475,7 @@ static int cb_file(struct dirent *de, const char *path , void *arg)
     eq = cmake_bracket_eq(fullpath, uri, key);
     dbg_err_if(eq == NULL);
     dbg_err_if(io_printf(ctx->ioc,
-            "klone_site_page(%s %s [%s[%s]%s] [%s[%s]%s] %d %d %d [%s[%s]%s])\n",
+            "klin_site_page(%s %s [%s[%s]%s] [%s[%s]%s] %d %d %d [%s[%s]%s])\n",
             uri_md5, ext, eq, fullpath, eq, eq, uri, eq, is_a_script ? 1 : 0,
             zip, enc, eq, key, eq) < 0);
 
@@ -512,8 +514,8 @@ static int print_register_header(io_t *out)
 {
     dbg_err_if (out == NULL);
  
-    dbg_err_if(io_printf(out, "#include <klone_conf.h>\n") < 0);
-    dbg_err_if(io_printf(out, "#include <klone/hook.h>\n") < 0);
+    dbg_err_if(io_printf(out, "#include <klin_conf.h>\n") < 0);
+    dbg_err_if(io_printf(out, "#include <klin/hook.h>\n") < 0);
     dbg_err_if(io_printf(out, "static void do_register(int);\n") < 0);
     dbg_err_if(io_printf(out, "void unregister_pages(void);\n") < 0);
     dbg_err_if(io_printf(out, "void register_pages(void);\n") < 0);
@@ -532,7 +534,7 @@ static int print_register_header(io_t *out)
     dbg_err_if(io_printf(out, 
         "static void do_register(int action) {\n") < 0);
     dbg_err_if(io_printf(out,
-        "#define KLONE_REGISTER(a, md5)     \\\n"
+        "#define KLIN_REGISTER(a, md5)     \\\n"
         "    do {                           \\\n"
         "    void module_init_##md5(void);  \\\n"
         "    void module_term_##md5(void);  \\\n"
@@ -549,7 +551,7 @@ static int print_register_footer(io_t *out)
 {
     dbg_err_if (out == NULL);
 
-    dbg_err_if(io_printf(out, "#undef KLONE_REGISTER\n") < 0);
+    dbg_err_if(io_printf(out, "#undef KLIN_REGISTER\n") < 0);
     dbg_err_if(io_printf(out, "}\n") < 0);
 
     return 0;

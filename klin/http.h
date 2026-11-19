@@ -3,12 +3,12 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#ifndef _KLONE_HTTP_H_
-#define _KLONE_HTTP_H_
+#ifndef _KLIN_HTTP_H_
+#define _KLIN_HTTP_H_
 
 #include <u/libu.h>
 
@@ -49,7 +49,7 @@ enum {
     HTTP_STATUS_LENGTH_REQUIRED           = 411,
     /**< missing Content-Length header field */
     HTTP_STATUS_REQUEST_TOO_LARGE         = 413,
-    /**< decryption key is needed - KLone extension */
+    /**< decryption key is needed - Klin extension */
     HTTP_STATUS_EXT_KEY_NEEDED            = 430,
     /**< request PDU too big */
     HTTP_STATUS_INTERNAL_SERVER_ERROR     = 500,

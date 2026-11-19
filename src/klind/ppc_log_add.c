@@ -3,18 +3,18 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <string.h>
-#include <klone/klog.h>
-#include <klone/context.h>
-#include <klone/server.h>
-#include <klone/ppc.h>
-#include <klone/ppc_cmd.h>
-#include <klone/server_ppc_cmd.h>
+#include <klin/klog.h>
+#include <klin/context.h>
+#include <klin/server.h>
+#include <klin/ppc.h>
+#include <klin/ppc_cmd.h>
+#include <klin/server_ppc_cmd.h>
 #include "server_s.h"
 
 /* struct used for ppc command PPC_CMD_LOG_ADD */

@@ -3,11 +3,11 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -20,19 +20,22 @@
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
-#include <klone/ccipher.h>
+#include <klin/ccipher.h>
 #endif 
 #include <u/libu.h>
-#include <klone/session.h>
-#include <klone/request.h>
-#include <klone/response.h>
-#include <klone/vars.h>
-#include <klone/utils.h>
-#include <klone/ses_prv.h>
-#include <klone/codecs.h>
+#include <klin/session.h>
+#include <klin/request.h>
+#include <klin/response.h>
+#include <klin/vars.h>
+#include <klin/utils.h>
+#include <klin/ses_prv.h>
+#include <klin/codecs.h>
 
 enum { DEFAULT_SESSION_EXPIRATION = 60*20 }; /* 20 minutes */
-static const char SID_NAME[] = "klone_sid";
+static const char SID_NAME[] = "klin_sid";
+/* the cookie's name before KLone was renamed Klin: still read for one
+   release, so an upgrade does not log every user out */
+static const char SID_NAME_OLD[] = "klone_sid";
 
 int session_set_cookie(session_t *ss, const char *name, const char *value,
     time_t expire, const char *path, const char *domain, int secure)
@@ -297,7 +300,7 @@ static int session_set_filename(session_t *ss)
     dbg_err_if((a = request_get_addr(ss->rq)) == NULL);
 
     dbg_err_if(u_path_snprintf(ss->filename, U_FILENAME_MAX, 
-            U_PATH_SEPARATOR, "%s/klone_sess_%s_%s", ss->so->path, ss->id, a));
+            U_PATH_SEPARATOR, "%s/klin_sess_%s_%s", ss->so->path, ss->id, a));
 
     return 0;
 err:
@@ -410,6 +413,8 @@ int session_prv_init(session_t *ss, request_t *rq, response_t *rs)
 
     /* if the client has a SID set and it's a good one then use it */
     sid = request_get_cookie(ss->rq, ss->so->name);
+    if(sid == NULL && !strcmp(ss->so->name, SID_NAME))
+        sid = request_get_cookie(ss->rq, SID_NAME_OLD);
     if(sid)
         dbg_err_if(session_prv_set_id(ss, sid));
 
@@ -457,6 +462,10 @@ int session_prv_load_from_io(session_t *ss, io_t *io)
         if(u_string_len(line))
         {
             dbg_err_if(vars_add_urlvar(ss->vars, u_string_c(line), &v));
+
+            /* a session saved before KLone was renamed Klin */
+            if(!strcmp(var_get_name(v), SESSION_KEY_VAR_OLD))
+                dbg_err_if(var_set_name(v, SESSION_KEY_VAR));
 
 #ifdef SSL_ON
             if(!strcmp(var_get_name(v), SESSION_KEY_VAR))

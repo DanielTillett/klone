@@ -3,12 +3,12 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#ifndef _KLONE_LOG_H_
-#define _KLONE_LOG_H_
+#ifndef _KLIN_LOG_H_
+#define _KLIN_LOG_H_
 
 #include <sys/types.h>
 #include <stdarg.h>
@@ -152,4 +152,4 @@ int klog_open_from_config (u_config_t *ls, klog_t **pkl);
 }
 #endif 
 
-#endif  /* _KLONE_LOG_H_ */
+#endif  /* _KLIN_LOG_H_ */

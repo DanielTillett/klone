@@ -3,19 +3,19 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <time.h>
 #include <u/libu.h>
-#include <klone/response.h>
-#include <klone/utils.h>
-#include <klone/io.h>
-#include <klone/codec.h>
-#include <klone/http.h>
-#include <klone/rsfilter.h>
+#include <klin/response.h>
+#include <klin/utils.h>
+#include <klin/io.h>
+#include <klin/codec.h>
+#include <klin/http.h>
+#include <klin/rsfilter.h>
 
 struct response_s
 {

@@ -3,14 +3,14 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#ifndef _KLONE_IO_H_ 
-#define _KLONE_IO_H_
+#ifndef _KLIN_IO_H_ 
+#define _KLIN_IO_H_
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <sys/types.h>
 #include <stdio.h>
 #include <stdarg.h>
@@ -18,7 +18,7 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #endif
-#include <klone/codec.h>
+#include <klin/codec.h>
 
 #ifdef __cplusplus
 extern "C" {

@@ -3,20 +3,20 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#ifndef _KLONE_PAGE_H_
-#define _KLONE_PAGE_H_
+#ifndef _KLIN_PAGE_H_
+#define _KLIN_PAGE_H_
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #ifdef HAVE_STDINT
 #include <stdint.h>
 #endif /* HAVE_STDINT */
 #include <u/libu.h>
-#include <klone/response.h>
-#include <klone/request.h>
+#include <klin/response.h>
+#include <klin/request.h>
 
 #ifdef __cplusplus
 extern "C" {

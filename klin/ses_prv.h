@@ -3,33 +3,35 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#ifndef _KLONE_SESPRV_H_
-#define _KLONE_SESPRV_H_
+#ifndef _KLIN_SESPRV_H_
+#define _KLIN_SESPRV_H_
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #ifdef SSL_OPENSSL
 #include <openssl/hmac.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 #endif
 #include <u/libu.h>
-#include <klone/session.h>
-#include <klone/request.h>
-#include <klone/response.h>
-#include <klone/vars.h>
-#include <klone/http.h>
-#include <klone/atom.h>
-#include <klone/md5.h>
+#include <klin/session.h>
+#include <klin/request.h>
+#include <klin/response.h>
+#include <klin/vars.h>
+#include <klin/http.h>
+#include <klin/atom.h>
+#include <klin/md5.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define SESSION_KEY_VAR      "KLONE_CIPHER_KEY"
+#define SESSION_KEY_VAR      "KLIN_CIPHER_KEY"
+/* its name before KLone was renamed Klin: still read for one release */
+#define SESSION_KEY_VAR_OLD  "KLONE_CIPHER_KEY"
 
 typedef int (*session_load_t)(session_t*);
 typedef int (*session_save_t)(session_t*);

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Daniel Tillett. Part of KLone; see the LICENSE file.
+# Copyright (c) 2026 Daniel Tillett. Part of Klin; see the LICENSE file.
 """Run a bounded libFuzzer smoke test against actual parser/utility libraries."""
 import argparse
 import os
@@ -24,7 +24,7 @@ def main():
     sources = ["src/libpage/header.c", "src/libpage/field.c", "src/libutils/utils.c"]
     source = Path(next(line.split("=", 1)[1]
                        for line in (tree / "CMakeCache.txt").read_text().splitlines()
-                       if line.startswith("KLone_SOURCE_DIR:")))
+                       if line.startswith("Klin_SOURCE_DIR:")))
     libraries = sorted((tree / "lib").glob("*.a"))
     includes = [tree / "include", tree / "libu/include", source]
     command = ["clang", "-std=gnu99", "-fgnu89-inline", "-g", "-O1", "-DHAVE_CONF_H",

@@ -3,16 +3,16 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#ifndef _KLONE_SERVER_H_
-#define _KLONE_SERVER_H_
+#ifndef _KLIN_SERVER_H_
+#define _KLIN_SERVER_H_
 
-#include "klone_conf.h"
-#include <klone/ppc.h>
-#include <klone/klog.h>
+#include "klin_conf.h"
+#include <klin/ppc.h>
+#include <klin/klog.h>
 
 #ifdef __cplusplus
 extern "C" {

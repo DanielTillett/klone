@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Daniel Tillett. Part of KLone; see the LICENSE file.
+# Copyright (c) 2026 Daniel Tillett. Part of Klin; see the LICENSE file.
 """Build-system checks: awkward site file names, page includes, escaped
 compiler flags, import options, incremental rebuilds and the install tree.
 
@@ -8,6 +8,7 @@ Builds in a temporary directory (nothing is written to the checkout):
     python3 test/run_build_checks.py [--generator G] [--make-program P]
 """
 import argparse
+import os
 from pathlib import Path
 import shutil
 import socket
@@ -52,7 +53,7 @@ def free_port():
 
 def fetch_all(daemon, temp, paths):
     port = free_port()
-    config = temp / "kloned.conf"
+    config = temp / "klind.conf"
     config.write_text(f"server_list h\nallow_root yes\nh\n{{\n type http\n addr tcp4://127.0.0.1:{port}\n"
                       " dir_root /www\n}\n")
     process = subprocess.Popen([str(daemon), "-F", "-d", "-f", str(config)],
@@ -87,7 +88,7 @@ def main():
     # any Ninja-based generator (e.g. "CodeBlocks - Ninja"), or a GNU make
     gnu_or_ninja = "Ninja" in args.generator or "GNU Make" in run([program or "make", "--version"])[1]
 
-    with tempfile.TemporaryDirectory(prefix="klone-build-checks-") as directory:
+    with tempfile.TemporaryDirectory(prefix="klin-build-checks-") as directory:
         temp = Path(directory)
         site = temp / "site"
         www = site / "www"
@@ -95,7 +96,10 @@ def main():
         # page include whose name needs escaping in make-style depfiles
         (www / "part#1.inc").write_text("<% io_printf(out, \"part-one\\n\"); %>\n")
         (www / "index.kl1").write_text('<%@ include "part#1.inc" %>\n'
-                                       '<% io_printf(out, "flag=%s\\n", KLONE_CHECK_STR); %>\n')
+                                       '<% io_printf(out, "flag=%s\\n", KLIN_CHECK_STR); %>\n')
+        # a page written for KLone (renamed Klin): old header and names
+        (www / "old.kl1").write_text('<%! #include <klone/utils.h> %>\n'
+                                     '<% io_printf(out, "old=%s\\n", KLONE_VERSION); %>\n')
         names = {"trailing]": "t\n", "x]==]y.txt": "b\n", "hash#name.txt": "h\n", "skip.bak": "s\n",
                  "secret.txt": "encrypted at rest\n"}
         if gnu_or_ninja:
@@ -109,16 +113,21 @@ def main():
         key.write_bytes(b"k" * 32)
 
         # 1. build with escaped compiler flags, exclusion and encryption
-        #    patterns and the optional CGI and file-system suppliers
+        #    patterns and the optional CGI and file-system suppliers; the
+        #    site is given with its name from before KLone was renamed Klin
         b = temp / "build"
         rc, out = build(b, args, f"-DKLONE_SITE_DIR={site}",
-                        f"-DKLONE_IMPORT_ARGS=-x;*.bak;-e;*secret*;-k;{key}",
-                        "-DKLONE_ENABLE_SUP_CGI=ON", "-DKLONE_ENABLE_SUP_FS=ON",
-                        '-DCMAKE_C_FLAGS_RELEASE=-O2 -DKLONE_CHECK_STR=\\"escaped\\"')
+                        f"-DKLIN_IMPORT_ARGS=-x;*.bak;-e;*secret*;-k;{key}",
+                        "-DKLIN_ENABLE_SUP_CGI=ON", "-DKLIN_ENABLE_SUP_FS=ON",
+                        '-DCMAKE_C_FLAGS_RELEASE=-O2 -DKLIN_CHECK_STR=\\"escaped\\"')
         check(rc == 0, f"site build failed:\n{out[-4000:]}")
-        served = fetch_all(b / "bin/kloned", temp, ["index.kl1", *names])
+        check("KLONE_SITE_DIR is now KLIN_SITE_DIR" in " ".join(out.split()),
+              "no deprecation warning for KLONE_SITE_DIR")
+        version = (ROOT / "VERSION").read_text().strip()
+        served = fetch_all(b / "bin/klind", temp, ["index.kl1", "old.kl1", *names])
         check("part-one" in str(served["index.kl1"]), f"page include not served: {served['index.kl1']!r}")
         check("flag=escaped" in str(served["index.kl1"]), f"escaped flag lost: {served['index.kl1']!r}")
+        check(f"old={version}" in str(served["old.kl1"]), f"KLone-era page failed: {served['old.kl1']!r}")
         site_library = (b / "lib").glob("*site*")
         for name, body in names.items():
             if name.endswith(".bak"):
@@ -137,7 +146,7 @@ def main():
         (www / "part#1.inc").write_text("<% io_printf(out, \"part-two\\n\"); %>\n")
         rc, out = run(["cmake", "--build", str(b)])
         check(rc == 0, f"incremental build failed:\n{out[-4000:]}")
-        served = fetch_all(b / "bin/kloned", temp, ["index.kl1"])
+        served = fetch_all(b / "bin/klind", temp, ["index.kl1"])
         check("part-two" in str(served["index.kl1"]), "include change did not rebuild the page")
 
         # 3. spaces with a make that cannot handle them fail clearly
@@ -145,30 +154,48 @@ def main():
             spaced = temp / "spaced site"
             (spaced / "www").mkdir(parents=True)
             (spaced / "www/a.txt").write_text("a\n")
-            rc, out = build(temp / "build-spaced", args, f"-DKLONE_SITE_DIR={spaced}")
+            rc, out = build(temp / "build-spaced", args, f"-DKLIN_SITE_DIR={spaced}")
             # CMake wraps long messages, so compare with whitespace collapsed
             check(rc != 0 and "paths containing spaces need Ninja or GNU make" in " ".join(out.split()),
                   f"no clear error for spaces with {program}:\n{out[-2000:]}")
 
-        # 4. the install tree is enough to compile and link against KLone
+        # 4. the install tree is enough to compile and link against Klin
         prefix = temp / "prefix"
         rc, out = run(["cmake", "--install", str(b), "--prefix", str(prefix)])
         check(rc == 0, f"install failed:\n{out[-2000:]}")
-        program_c = temp / "uses_klone.c"
-        program_c.write_text("#include <klone/klone.h>\n#include <klone/vhost.h>\n#include <klone/hook.h>\n"
-                             "#include <klone/version.h>\n#include <stdio.h>\n"
-                             "int main(void) { return puts(klone_version()) < 0; }\n")
+        program_c = temp / "uses_klin.c"
+        program_c.write_text("#include <klin/klin.h>\n#include <klin/vhost.h>\n#include <klin/hook.h>\n"
+                             "#include <klin/version.h>\n#include <stdio.h>\n"
+                             "int main(void) { return puts(klin_version()) < 0; }\n")
         lib = next(p for p in (prefix / "lib", prefix / "lib64") if p.exists())
-        # KLone's public headers include OpenSSL's, which a consumer supplies
+        # Klin's public headers include OpenSSL's, which a consumer supplies
         # itself (on macOS, Homebrew's OpenSSL is not on the default path)
         cache = (b / "CMakeCache.txt").read_text().splitlines()
         openssl = [line.split("=", 1)[1] for line in cache if line.startswith("OPENSSL_INCLUDE_DIR:")]
         command = ["cc", "-I", str(prefix / "include"), *[f"-I{d}" for d in openssl if d],
-                   str(program_c), "-o", str(temp / "uses_klone"), "-L", str(lib), "-lutils", "-lu"]
+                   str(program_c), "-o", str(temp / "uses_klin"), "-L", str(lib), "-lutils", "-lu"]
         rc, out = run(command)
         check(rc == 0, f"compile/link against the install prefix failed:\n{out[-3000:]}")
+        rc, out = run([str(temp / "uses_klin")])
+        check(rc == 0 and out.strip() == version, f"wrong version: {out!r}")
+
+        # 5. ... and so is code written for KLone (renamed Klin) for one
+        #    release: old headers and names, and the old command names
+        old_c = temp / "uses_klone.c"
+        old_c.write_text("#include <klone/klone.h>\n#include <klone/version.h>\n#include <klone_conf.h>\n"
+                         "#include <stdio.h>\n#include <string.h>\n"
+                         "int main(void) { klone_die_if(strcmp(klone_version(), KLONE_VERSION), \"bad\");\n"
+                         " return puts(klone_version()) < 0; }\n")
+        command[command.index(str(program_c))] = str(old_c)
+        command[command.index(str(temp / "uses_klin"))] = str(temp / "uses_klone")
+        rc, out = run(command)
+        check(rc == 0, f"KLone-era code did not compile against the install prefix:\n{out[-3000:]}")
         rc, out = run([str(temp / "uses_klone")])
-        check(rc == 0 and out.strip() == (ROOT / "VERSION").read_text().strip(), f"wrong version: {out!r}")
+        check(rc == 0 and out.strip() == version, f"wrong version from KLone-era code: {out!r}")
+        if os.name != "nt":
+            for old, new in [("bin/klone", "klin"), ("sbin/kloned", "klind")]:
+                link = prefix / old
+                check(link.is_symlink() and os.readlink(link) == new, f"{old} is not a link to {new}")
 
     print(f"{checks} build-system checks passed ({args.generator}{' ' + program if program else ''})")
 

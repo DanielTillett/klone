@@ -3,11 +3,11 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -15,14 +15,14 @@
 #include <unistd.h>
 #include <limits.h>
 #include <u/libu.h>
-#include <klone/os.h>
-#include <klone/translat.h>
-#include <klone/parser.h>
-#include <klone/utils.h>
-#include <klone/os.h>
-#include <klone/io.h>
-#include <klone/codec.h>
-#include <klone/codecs.h>
+#include <klin/os.h>
+#include <klin/translat.h>
+#include <klin/parser.h>
+#include <klin/utils.h>
+#include <klin/os.h>
+#include <klin/io.h>
+#include <klin/codec.h>
+#include <klin/codecs.h>
 
 #define tr_err(...)             \
     do  { con_p_ctx(p); con_err(__VA_ARGS__); } while(0)
@@ -324,7 +324,7 @@ err:
 int translate_is_a_script(const char *filename)
 {
     static const char *script_ext[] = { 
-        ".klone", ".kl1", ".klc", 
+        ".klin", ".kl1", ".klc", 
         ".klx",  /* C++ page */
         NULL 
     };
@@ -653,7 +653,7 @@ static int parse_directive(parser_t *p, void *arg, const char *buf, size_t sz)
     dbg_return_if (p == NULL, ~0);
     dbg_return_if (buf == NULL, ~0);
     
-    dbg_err_if(io_mem_create(KLONE_UNCONST(buf), sz, 0, &io));
+    dbg_err_if(io_mem_create(KLIN_UNCONST(buf), sz, 0, &io));
 
     while(io_gets(io, line, LINE_BUFSZ) > 0)
         dbg_err_if(process_directive(p, line));

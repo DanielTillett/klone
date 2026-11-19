@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Daniel Tillett. Part of KLone; see the LICENSE file.
+# Copyright (c) 2026 Daniel Tillett. Part of Klin; see the LICENSE file.
 name: Build and test
 # Automatic runs are off (the macOS and bmake jobs fail); start a run by hand
 # from the Actions tab

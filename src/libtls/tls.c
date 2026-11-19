@@ -3,11 +3,11 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <sys/types.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -20,9 +20,9 @@
 #include <openssl/x509_vfy.h>
 #endif
 #include <u/libu.h>
-#include <klone/tls.h>
-#include <klone/utils.h>
-#include <klone/tlsprv.h>
+#include <klin/tls.h>
+#include <klin/utils.h>
+#include <klin/tlsprv.h>
 
 static int tls_sid = 1;
 static int tls_inited = 0; 
@@ -418,7 +418,7 @@ err:
 }
 
 /* 'verify_mode' and 'verify_client' are aliases
- * the former is deprecated and retained only for compatibility with klone 1 */
+ * the former is deprecated and retained only for compatibility with klin 1 */
 static int tls_set_ctx_vmode (u_config_t *cfg, tls_ctx_args_t *cargs)
 {
     const char *v;
@@ -476,7 +476,7 @@ err:
 
 static void tls_free_ctx_args (tls_ctx_args_t *cargs)
 {
-    KLONE_FREE(cargs);
+    KLIN_FREE(cargs);
     return;
 }
 #endif /* SSL_ON */

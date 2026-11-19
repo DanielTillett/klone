@@ -3,25 +3,25 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <stddef.h>
 #include <string.h>
 #include <time.h>
 #include <u/libu.h>
-#include <klone/request.h>
-#include <klone/response.h>
-#include <klone/session.h>
-#include <klone/utils.h>
-#include <klone/io.h>
-#include <klone/codec.h>
-#include <klone/http.h>
-#include <klone/response.h>
-#include <klone/rsfilter.h>
-#include <klone/ses_prv.h>
+#include <klin/request.h>
+#include <klin/response.h>
+#include <klin/session.h>
+#include <klin/utils.h>
+#include <klin/io.h>
+#include <klin/codec.h>
+#include <klin/http.h>
+#include <klin/response.h>
+#include <klin/rsfilter.h>
+#include <klin/ses_prv.h>
 
 /* this filter prints the HTTP header before any body part of the web page.
  * the first RFBUFSZ bytes (at most) of the response will be buffered to

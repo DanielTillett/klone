@@ -3,15 +3,15 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#ifndef _KLONE_HOOK_H_
-#define _KLONE_HOOK_H_
-#include <klone/request.h>
-#include <klone/response.h>
-#include <klone/session.h>
+#ifndef _KLIN_HOOK_H_
+#define _KLIN_HOOK_H_
+#include <klin/request.h>
+#include <klin/response.h>
+#include <klin/session.h>
 
 struct hook_s;
 typedef struct hook_s hook_t;

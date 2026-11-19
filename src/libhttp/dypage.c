@@ -1,7 +1,7 @@
-#include <klone/dypage.h>
-#include <klone/session.h>
-#include <klone/ses_prv.h>
-#include <klone/rsfilter.h>
+#include <klin/dypage.h>
+#include <klin/session.h>
+#include <klin/ses_prv.h>
+#include <klin/rsfilter.h>
 
 const char *dypage_get_param(dypage_args_t *args, const char *key)
 {

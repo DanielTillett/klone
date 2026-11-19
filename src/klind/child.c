@@ -1,4 +1,4 @@
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <u/libu.h>
 #include "child.h"
 

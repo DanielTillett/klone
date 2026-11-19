@@ -3,11 +3,11 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#ifndef _KLONE_CODEC_AES_H__
-#define _KLONE_CODEC_AES_H__
+#ifndef _KLIN_CODEC_AES_H__
+#define _KLIN_CODEC_AES_H__
 
 #endif

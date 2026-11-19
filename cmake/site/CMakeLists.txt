@@ -1,20 +1,20 @@
-# Copyright (c) 2026 Daniel Tillett. Part of KLone; see the LICENSE file.
-# Embedded site library for kloned, built as an external project of the main
-# KLone build once the 'klone' tool exists. This replaces site/Makefile and
+# Copyright (c) 2026 Daniel Tillett. Part of Klin; see the LICENSE file.
+# Embedded site library for klind, built as an external project of the main
+# Klin build once the 'klin' tool exists. This replaces site/Makefile and
 # the autogen.mk/autogen.dps fragments with the autogen.cmake page list that
-# 'klone -c import' writes.
+# 'klin -c import' writes.
 #
 # Cache inputs (set by the parent build):
-#   KLONE_TOOL          path to the built klone tool
-#   KLONE_SITE_DIR      site directory to embed (empty: no pages)
-#   KLONE_IMPORT_ARGS   extra 'klone -c import' options (-z, -Z, -x, -e, -k)
-#   KLONE_SITE_INCLUDE_DIRS, KLONE_SITE_DEFINITIONS, KLONE_SITE_OPTIONS
-#   KLONE_SITE_OUTPUT   full path of the libsite archive to produce
+#   KLIN_TOOL          path to the built klin tool
+#   KLIN_SITE_DIR      site directory to embed (empty: no pages)
+#   KLIN_IMPORT_ARGS   extra 'klin -c import' options (-z, -Z, -x, -e, -k)
+#   KLIN_SITE_INCLUDE_DIRS, KLIN_SITE_DEFINITIONS, KLIN_SITE_OPTIONS
+#   KLIN_SITE_OUTPUT   full path of the libsite archive to produce
 cmake_minimum_required(VERSION 3.24)
-project(klone_site C)
+project(klin_site C)
 
-if(NOT EXISTS "${KLONE_TOOL}")
-    message(FATAL_ERROR "klone tool not found: '${KLONE_TOOL}'")
+if(NOT EXISTS "${KLIN_TOOL}")
+    message(FATAL_ERROR "klin tool not found: '${KLIN_TOOL}'")
 endif()
 
 set(_import_dir "${CMAKE_CURRENT_BINARY_DIR}/import")
@@ -32,32 +32,32 @@ endif()
 file(MAKE_DIRECTORY "${_import_dir}")
 set(_pages "")
 
-if(KLONE_SITE_DIR)
-    get_filename_component(_site "${KLONE_SITE_DIR}" ABSOLUTE)
+if(KLIN_SITE_DIR)
+    get_filename_component(_site "${KLIN_SITE_DIR}" ABSOLUTE)
     if(NOT IS_DIRECTORY "${_site}")
-        message(FATAL_ERROR "KLONE_SITE_DIR is not a directory: '${_site}'")
+        message(FATAL_ERROR "KLIN_SITE_DIR is not a directory: '${_site}'")
     endif()
 
     # Re-run the import whenever a site file is added or removed, or the
-    # klone tool changes (content edits are handled per page below).
-    # FOLLOW_SYMLINKS: 'klone -c import' follows them too
+    # klin tool changes (content edits are handled per page below).
+    # FOLLOW_SYMLINKS: 'klin -c import' follows them too
     file(GLOB_RECURSE _site_files CONFIGURE_DEPENDS FOLLOW_SYMLINKS "${_site}/*")
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${KLONE_TOOL}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${KLIN_TOOL}")
 
     execute_process(
-        COMMAND "${KLONE_TOOL}" -c import ${KLONE_IMPORT_ARGS} "${_site}"
+        COMMAND "${KLIN_TOOL}" -c import ${KLIN_IMPORT_ARGS} "${_site}"
         WORKING_DIRECTORY "${_import_dir}"
         RESULT_VARIABLE _rc
         OUTPUT_VARIABLE _out
         ERROR_VARIABLE _out)
     if(_rc)
-        message(FATAL_ERROR "klone -c import failed (${_rc}):\n${_out}")
+        message(FATAL_ERROR "klin -c import failed (${_rc}):\n${_out}")
     endif()
     string(STRIP "${_out}" _out)
-    message(STATUS "KLone site: ${_out}")
+    message(STATUS "Klin site: ${_out}")
 
-    # klone_site_page(md5 ext file uri is_script compress encrypt key_file)
-    function(klone_site_page md5 ext file uri is_script zip enc key)
+    # klin_site_page(md5 ext file uri is_script compress encrypt key_file)
+    function(klin_site_page md5 ext file uri is_script zip enc key)
         if(ext STREQUAL "cc")
             message(FATAL_ERROR "C++ page '${uri}' is not supported by this build")
         endif()
@@ -89,24 +89,24 @@ if(KLONE_SITE_DIR)
         if(enc)
             list(APPEND _opts -E)
         endif()
-        # the extra leading '/' of -u is stripped by klone (it guards against
+        # the extra leading '/' of -u is stripped by klin (it guards against
         # MSYS path conversion)
         if(enc AND key)
             # a new key must re-encrypt the page, so it is a dependency
             get_filename_component(key "${key}" ABSOLUTE BASE_DIR "${_import_dir}")
             add_custom_command(OUTPUT ${_outputs}
-                COMMAND "${KLONE_TOOL}" -c translate -i "${file}" -o "${_out}"
+                COMMAND "${KLIN_TOOL}" -c translate -i "${file}" -o "${_out}"
                     ${_opts} -k "${key}" -u "/${uri}"
-                DEPENDS "${file}" "${KLONE_TOOL}" "${key}"
+                DEPENDS "${file}" "${KLIN_TOOL}" "${key}"
                 ${_depfile}
                 WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
                 COMMENT "Translating ${uri}"
                 VERBATIM)
         else()
             add_custom_command(OUTPUT ${_outputs}
-                COMMAND "${KLONE_TOOL}" -c translate -i "${file}" -o "${_out}"
+                COMMAND "${KLIN_TOOL}" -c translate -i "${file}" -o "${_out}"
                     ${_opts} -u "/${uri}"
-                DEPENDS "${file}" "${KLONE_TOOL}"
+                DEPENDS "${file}" "${KLIN_TOOL}"
                 ${_depfile}
                 WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
                 COMMENT "Translating ${uri}"
@@ -122,8 +122,8 @@ else()
 endif()
 
 add_library(site STATIC "${_register}" ${_pages})
-get_filename_component(_outdir "${KLONE_SITE_OUTPUT}" DIRECTORY)
-get_filename_component(_outname "${KLONE_SITE_OUTPUT}" NAME_WE)
+get_filename_component(_outdir "${KLIN_SITE_OUTPUT}" DIRECTORY)
+get_filename_component(_outname "${KLIN_SITE_OUTPUT}" NAME_WE)
 string(REGEX REPLACE "^${CMAKE_STATIC_LIBRARY_PREFIX}" "" _outname "${_outname}")
 set_target_properties(site PROPERTIES
     OUTPUT_NAME "${_outname}"
@@ -132,6 +132,6 @@ foreach(_cfg IN LISTS CMAKE_CONFIGURATION_TYPES)
     string(TOUPPER "${_cfg}" _cfg)
     set_target_properties(site PROPERTIES ARCHIVE_OUTPUT_DIRECTORY_${_cfg} "${_outdir}")
 endforeach()
-target_include_directories(site PRIVATE ${KLONE_SITE_INCLUDE_DIRS})
-target_compile_definitions(site PRIVATE ${KLONE_SITE_DEFINITIONS})
-target_compile_options(site PRIVATE ${KLONE_SITE_OPTIONS})
+target_include_directories(site PRIVATE ${KLIN_SITE_INCLUDE_DIRS})
+target_compile_definitions(site PRIVATE ${KLIN_SITE_DEFINITIONS})
+target_compile_options(site PRIVATE ${KLIN_SITE_OPTIONS})

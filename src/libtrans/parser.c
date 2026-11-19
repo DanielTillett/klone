@@ -3,18 +3,18 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <u/libu.h>
-#include <klone/os.h>
-#include <klone/translat.h>
-#include <klone/parser.h>
+#include <klin/os.h>
+#include <klin/translat.h>
+#include <klin/parser.h>
 
 /* parser state */
 enum { 

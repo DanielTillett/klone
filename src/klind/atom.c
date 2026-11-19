@@ -3,14 +3,14 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <u/libu.h>
-#include <klone/utils.h>
-#include <klone/atom.h>
+#include <klin/utils.h>
+#include <klin/atom.h>
 
 int atom_create(const char *id, const char *data, size_t size, void *arg, 
     atom_t **patom)

@@ -3,25 +3,25 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <u/libu.h>
-#include <klone/supplier.h>
-#include <klone/io.h>
-#include <klone/ioprv.h>
-#include <klone/page.h>
-#include <klone/http.h>
-#include <klone/emb.h>
-#include <klone/codecs.h>
-#include <klone/ses_prv.h>
-#include <klone/rsfilter.h>
-#include <klone/dypage.h>
+#include <klin/supplier.h>
+#include <klin/io.h>
+#include <klin/ioprv.h>
+#include <klin/page.h>
+#include <klin/http.h>
+#include <klin/emb.h>
+#include <klin/codecs.h>
+#include <klin/ses_prv.h>
+#include <klin/rsfilter.h>
+#include <klin/dypage.h>
 #include "http_s.h"
 
 static int supemb_is_valid_uri(http_t *h, request_t *rq, const char *uri, 
@@ -86,7 +86,9 @@ static int supemb_get_cipher_key(request_t *rq, response_t *rs, char *key,
     vars = session_get_vars(ss);
     dbg_err_if(vars == NULL);
 
-    v = vars_geti(vars, SESSION_KEY_VAR, 0); 
+    v = vars_geti(vars, SESSION_KEY_VAR, 0);
+    if(v == NULL)   /* set by a page written before the rename */
+        v = vars_geti(vars, SESSION_KEY_VAR_OLD, 0);
     dbg_err_if(v == NULL); /* no such variable */
 
     dbg_err_if(var_get_value_size(v) > keysz);

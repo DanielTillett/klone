@@ -3,14 +3,14 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#ifndef _KLONE_UTILS_H_
-#define _KLONE_UTILS_H_
+#ifndef _KLIN_UTILS_H_
+#define _KLIN_UTILS_H_
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #ifdef HAVE_STDINT
 #include <stdint.h>
 #endif /* HAVE_STDINT */
@@ -20,10 +20,10 @@
 #include <time.h>
 #include <signal.h>
 #include <u/libu.h>
-#include <klone/io.h>
-#include <klone/md5.h>
-#include <klone/os.h>
-#include <klone/mime_map.h>
+#include <klin/io.h>
+#include <klin/md5.h>
+#include <klin/os.h>
+#include <klin/mime_map.h>
 #ifdef SSL_ON
 #include <openssl/evp.h>
 #endif
@@ -32,16 +32,16 @@
 extern "C" {
 #endif
 
-#define KLONE_FREE(p) do {if (p) { free(p); p = NULL; }} while (0)
+#define KLIN_FREE(p) do {if (p) { free(p); p = NULL; }} while (0)
 
 /* drop 'const' from a pointer without a -Wcast-qual warning, for APIs that
  * take or return non-const pointers they do not write through (like
  * strchr(3)) */
-#define KLONE_UNCONST(p) ((void *)(uintptr_t)(const void *)(p))
+#define KLIN_UNCONST(p) ((void *)(uintptr_t)(const void *)(p))
 
-#define klone_die(...) do { u_con(__VA_ARGS__); exit(EXIT_FAILURE); } while(0)
-#define klone_die_if(cond, ...) \
-    do { dbg_ifb(cond) klone_die(__VA_ARGS__); } while(0)
+#define klin_die(...) do { u_con(__VA_ARGS__); exit(EXIT_FAILURE); } while(0)
+#define klin_die_if(cond, ...) \
+    do { dbg_ifb(cond) klin_die(__VA_ARGS__); } while(0)
 
 enum { U_PATH_NOT_FOUND, U_PATH_IN_EMBFS, U_PATH_IN_FS };
 

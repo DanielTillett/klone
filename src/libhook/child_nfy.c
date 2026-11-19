@@ -1,6 +1,6 @@
-#include <klone/context.h>
-#include <klone/hook.h>
-#include <klone/hookprv.h>
+#include <klin/context.h>
+#include <klin/hook.h>
+#include <klin/hookprv.h>
 
 /**
  * \brief   Set a hook to be notified when new children get forked

@@ -3,16 +3,16 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
 #include <u/libu.h>
-#include <klone/supplier.h>
-#include <klone/broker.h>
-#include <klone/request.h>
-#include <klone/http.h>
-#include "klone_conf.h"
+#include <klin/supplier.h>
+#include <klin/broker.h>
+#include <klin/request.h>
+#include <klin/http.h>
+#include "klin_conf.h"
 
 enum { MAX_SUP_COUNT = 8 }; /* max number of suppliers */
 
@@ -129,14 +129,14 @@ int broker_create(broker_t **pb)
     b->sup_list[i++] = &sup_cgi;
 #else
 #ifndef OS_WIN
-    warn("CGI support disabled, build with -DKLONE_ENABLE_SUP_CGI=ON to enable it");
+    warn("CGI support disabled, build with -DKLIN_ENABLE_SUP_CGI=ON to enable it");
 #endif
 #endif
 
 #ifdef ENABLE_SUP_FS
     b->sup_list[i++] = &sup_fs;
 #else
-    warn("File system support disabled, build with -DKLONE_ENABLE_SUP_FS=ON to enable it");
+    warn("File system support disabled, build with -DKLIN_ENABLE_SUP_FS=ON to enable it");
 #endif
 
     b->sup_list[i++] = NULL;

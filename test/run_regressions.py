@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Daniel Tillett. Part of KLone; see the LICENSE file.
+# Copyright (c) 2026 Daniel Tillett. Part of Klin; see the LICENSE file.
 """Compile selected production functions without the legacy MaKL/LibU build.
 
 The C harness provides only the external types/macros and I/O test doubles.
@@ -46,7 +46,7 @@ def main():
     parser.add_argument("--cc", default=os.environ.get("CC", "clang"))
     parser.add_argument("--sanitize", action="store_true")
     args = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix="klone-regressions-") as directory:
+    with tempfile.TemporaryDirectory(prefix="klin-regressions-") as directory:
         temp = Path(directory)
         utility_source = (ROOT / "src/libutils/utils.c").read_text(encoding="utf-8")
         entities = re.search(r"static struct html_entities_s\n\{.*?^\};",

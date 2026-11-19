@@ -3,23 +3,23 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <ctype.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <klone/http.h>
-#include <klone/supplier.h>
-#include <klone/io.h>
-#include <klone/utils.h>
-#include <klone/rsfilter.h>
-#include <klone/vhost.h>
+#include <klin/http.h>
+#include <klin/supplier.h>
+#include <klin/io.h>
+#include <klin/utils.h>
+#include <klin/rsfilter.h>
+#include <klin/vhost.h>
 
 /* holds environment variables passed to the cgi */
 typedef struct cgi_env_s
@@ -268,12 +268,12 @@ static int cgi_makeenv(request_t *rq, response_t *rs, cgi_env_t *env)
 
     u_unused_args(rs);
 
-    dbg_err_if(cgi_setenv(env, "SERVER_SOFTWARE", "klone/" KLONE_VERSION));
+    dbg_err_if(cgi_setenv(env, "SERVER_SOFTWARE", "klin/" KLIN_VERSION));
     dbg_err_if(cgi_setenv(env, "SERVER_PROTOCOL", "HTTP/1.0"));
     dbg_err_if(cgi_setenv(env, "GATEWAY_INTERFACE", "CGI/1.1"));
     dbg_err_if(cgi_setenv(env, "REDIRECT_STATUS", "200"));
 
-    /* klone server address */
+    /* klin server address */
     if ((addr = request_get_addr(rq)) != NULL)
     {
         dbg_err_if(cgi_setenv_addr(env, addr, "SERVER_ADDR", "SERVER_PORT"));
@@ -449,7 +449,7 @@ static int cgi_exec(request_t *rq, response_t *rs, pid_t *pchild,
 
         /* run the cgi (never returns); execve() does not modify argv, its
          * prototype is just not const-qualified */
-        crit_err_sif(execve(argv[0], KLONE_UNCONST(argv), cgi_env.env));
+        crit_err_sif(execve(argv[0], KLIN_UNCONST(argv), cgi_env.env));
 
         /* never reached */
 

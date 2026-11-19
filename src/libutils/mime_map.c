@@ -3,11 +3,11 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include <klone/mime_map.h>
+#include <klin/mime_map.h>
 
 mime_map_t mime_map[] = {
     /* extension    MIME type         0 or 1 (zippable or not) */
@@ -32,7 +32,7 @@ mime_map_t mime_map[] = {
     { "csh",        "application/x-csh",                1 }, 
     { "css",        "text/css",                         1 }, 
     { "kl1",        "text/html",                        1 }, 
-    { "klone",      "text/html",                        1 }, 
+    { "klin",      "text/html",                        1 }, 
     { "dcr",        "application/x-director",           1 }, 
     { "dir",        "application/x-director",           1 }, 
     { "djv",        "image/vnd.djvu",                   1 }, 

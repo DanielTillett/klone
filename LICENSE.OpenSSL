@@ -1,13 +1,13 @@
 OPENSSL LICENSING NOTE
 ----------------------
 
-KLone 4.0.0 and later require OpenSSL 3.0 or newer for HTTPS, encrypted pages
+Klin 4.0.0 and later require OpenSSL 3.0 or newer for HTTPS, encrypted pages
 and client-side sessions. OpenSSL 3 is distributed under the Apache License,
 Version 2.0 (https://www.openssl.org/source/license.html), which can be
-combined with KLone's BSD-style license (see LICENSE). No special linking
+combined with Klin's BSD-style license (see LICENSE). No special linking
 exception is needed.
 
-If you distribute KLone binaries together with OpenSSL, follow the Apache
+If you distribute Klin binaries together with OpenSSL, follow the Apache
 License 2.0 terms for OpenSSL, including its notice requirements.
 
 From 2006 until KLone 3.1.0, KLone was licensed under the GNU GPL with an

@@ -2,7 +2,7 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 /* Isolated regression tests for verbatim production functions.
@@ -19,7 +19,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <klone/md5.h>
+#include <klin/md5.h>
 
 #ifdef _WIN32
 typedef ptrdiff_t ssize_t;
@@ -34,7 +34,7 @@ typedef ptrdiff_t ssize_t;
 #define dbg_ifb(c) if (c)
 #define warn_err_ifm(c, message) dbg_err_if(c)
 #define U_MIN(a, b) ((a) < (b) ? (a) : (b))
-#define KLONE_UNCONST(p) ((void *)(uintptr_t)(const void *)(p))
+#define KLIN_UNCONST(p) ((void *)(uintptr_t)(const void *)(p))
 enum { URLCPY_VERBATIM, URLCPY_ENCODE, URLCPY_DECODE };
 enum { HEXCPY_VERBATIM, HEXCPY_ENCODE, HEXCPY_DECODE };
 enum { HTMLCPY_VERBATIM, HTMLCPY_ENCODE, HTMLCPY_DECODE };

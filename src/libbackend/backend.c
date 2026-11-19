@@ -3,17 +3,17 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
 #include <unistd.h>
-#include <klone/backend.h>
-#include <klone/server.h>
-#include <klone/klog.h>
-#include <klone/context.h>
+#include <klin/backend.h>
+#include <klin/server.h>
+#include <klin/klog.h>
+#include <klin/context.h>
 #include <u/libu.h>
-#include "klone_conf.h"
+#include "klin_conf.h"
 
 extern backend_t be_http;
 

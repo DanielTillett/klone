@@ -1,9 +1,9 @@
-#ifndef _KLONED_CHILD_S_H_
-#define _KLONED_CHILD_S_H_
-#include "klone_conf.h"
+#ifndef _KLIND_CHILD_S_H_
+#define _KLIND_CHILD_S_H_
+#include "klin_conf.h"
 #include <time.h>
 #include <u/libu.h>
-#include <klone/backend.h>
+#include <klin/backend.h>
 
 struct child_s
 {

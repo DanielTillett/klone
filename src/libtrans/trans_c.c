@@ -3,22 +3,22 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <limits.h>
 #include <string.h>
 #include <u/libu.h>
-#include <klone/os.h>
-#include <klone/translat.h>
-#include <klone/parser.h>
-#include <klone/utils.h>
-#include <klone/codecs.h>
+#include <klin/os.h>
+#include <klin/translat.h>
+#include <klin/parser.h>
+#include <klin/utils.h>
+#include <klin/codecs.h>
 
 struct code_block_s;
 
@@ -49,7 +49,7 @@ static const char copyright_hdr[] =
     " * Copyright (c) 2005-2012 by KoanLogic s.r.l. <http://koanlogic.com>  \n"
     " * All rights reserved.                                                \n"
     " *                                                                     \n"
-    " * This file is part of KLone, and as such it is subject to the license\n"
+    " * This file is part of Klin (derived from KLone), and as such it is subject to the license\n"
     " * stated in the LICENSE file which you have received as part of this  \n"
     " * distribution                                                        \n"
     " */                                                                    \n";
@@ -121,8 +121,8 @@ static void print_header(parser_t *p, lang_c_ctx_t *ctx)
     (void)ctx;
 
     io_printf(p->out, "%s", copyright_hdr);
-    io_printf(p->out, "#include <klone/emb.h>\n");
-    io_printf(p->out, "#include <klone/dypage.h>\n");
+    io_printf(p->out, "#include <klin/emb.h>\n");
+    io_printf(p->out, "#include <klin/dypage.h>\n");
 
     file = ctx->ti->uri + strlen(ctx->ti->uri) - 1;
 
@@ -174,7 +174,7 @@ static int print_var_definition(parser_t *p, int comp, const char *varname,
     dbg_err_if(buf == NULL);
 
     /* create an io_t around the HTML block */
-    dbg_err_if(io_mem_create(KLONE_UNCONST(buf), bufsz, 0, &ios));
+    dbg_err_if(io_mem_create(KLIN_UNCONST(buf), bufsz, 0, &ios));
 
 #ifdef HAVE_LIBZ
     /* if compression is enabled zip the data block */
@@ -241,8 +241,8 @@ static void print_code_blocks(parser_t *p, lang_c_ctx_t *ctx)
     }
 
     io_printf(p->out, 
-            "goto klone_script_exit;\n" /* just to avoid a warning */
-            "klone_script_exit:     \n"
+            "goto klin_script_exit;\n" /* just to avoid a warning */
+            "klin_script_exit:     \n"
             "   return;             \n"
             "}                      \n"
             );
@@ -410,27 +410,27 @@ static int cb_html_block(parser_t *p, void *arg, const char *buf, size_t sz)
 
     if(ctx->ti->comp)
     {   /* zip embedded HTML blocks */
-        dbg_err_if(u_snprintf(varname, VARNSZ, "klone_html_zblock_%lu", 
+        dbg_err_if(u_snprintf(varname, VARNSZ, "klin_html_zblock_%lu", 
             (unsigned long) ctx->html_block_cnt));
 
         dbg_err_if(print_var_definition(p, 1 /* zip it */, varname, buf, sz));
 
         dbg_err_if(u_snprintf(code, CODESZ, 
-            "\ndbg_if(u_io_unzip_copy(out, klone_html_zblock_%lu, "
-            "   sizeof(klone_html_zblock_%lu)));\n", 
+            "\ndbg_if(u_io_unzip_copy(out, klin_html_zblock_%lu, "
+            "   sizeof(klin_html_zblock_%lu)));\n", 
             (unsigned long) ctx->html_block_cnt, 
             (unsigned long) ctx->html_block_cnt));
 
     } else {
         /* embedded HTML blocks will not be zipped */
-        dbg_err_if(u_snprintf(varname, VARNSZ, "klone_html_%lu", 
+        dbg_err_if(u_snprintf(varname, VARNSZ, "klin_html_%lu", 
             (unsigned long) ctx->html_block_cnt));
 
         dbg_err_if(print_var_definition(p, 0, varname, buf, sz));
 
         dbg_err_if(u_snprintf(code, CODESZ, 
-            "\ndbg_if(io_write(out, klone_html_%lu, "
-            "   sizeof(klone_html_%lu)) < 0);\n", 
+            "\ndbg_if(io_write(out, klin_html_%lu, "
+            "   sizeof(klin_html_%lu)) < 0);\n", 
             (unsigned long) ctx->html_block_cnt, 
             (unsigned long) ctx->html_block_cnt));
     }
@@ -494,7 +494,7 @@ int translate_opaque_to_c(io_t *in, io_t *out, trans_info_t *ti)
     ctx.ti = ti;
 
     io_printf(out, "%s", copyright_hdr);
-    io_printf(out, "#include <klone/emb.h>\n");
+    io_printf(out, "#include <klin/emb.h>\n");
 
     io_printf(out, "static const char data[] = {\n");
 

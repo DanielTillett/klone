@@ -1,8 +1,8 @@
-#ifndef _KLONE_DYPAGE_H_
-#define _KLONE_DYPAGE_H_
-#include <klone/request.h>
-#include <klone/response.h>
-#include <klone/session.h>
+#ifndef _KLIN_DYPAGE_H_
+#define _KLIN_DYPAGE_H_
+#include <klin/request.h>
+#include <klin/response.h>
+#include <klin/session.h>
 
 #ifdef __cplusplus
 extern "C" {

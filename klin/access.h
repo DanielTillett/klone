@@ -1,9 +1,9 @@
-#ifndef _KLONE_ACCESS_
-#define _KLONE_ACCESS_
+#ifndef _KLIN_ACCESS_
+#define _KLIN_ACCESS_
 #include <u/libu.h>
-#include <klone/header.h>
-#include <klone/request.h>
-#include <klone/response.h>
+#include <klin/header.h>
+#include <klin/request.h>
+#include <klin/response.h>
 
 int access_log(http_t*, u_config_t *, request_t *, response_t *);
 

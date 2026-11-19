@@ -3,11 +3,11 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
@@ -18,13 +18,13 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <u/libu.h>
-#include <klone/os.h>
-#include <klone/io.h>
-#include <klone/codecs.h>
-#include <klone/emb.h>
-#include <klone/mime_map.h>
-#include <klone/version.h>
-#include <klone/utils.h>
+#include <klin/os.h>
+#include <klin/io.h>
+#include <klin/codecs.h>
+#include <klin/emb.h>
+#include <klin/mime_map.h>
+#include <klin/version.h>
+#include <klin/utils.h>
 #ifdef SSL_ON
 #include <openssl/rand.h>
 #endif
@@ -233,14 +233,14 @@ char *u_strnstr(const char *buf, const char *sub, size_t buflen)
     dbg_return_if (buf == NULL || sub == NULL, NULL);
     len = strlen(sub);
     if (len == 0)
-        return KLONE_UNCONST(buf);
+        return KLIN_UNCONST(buf);
     if (len > buflen)
         return NULL;
 
     /* Never form a search range beyond the caller's buffer. */
     for (i = 0; i <= buflen - len && buf[i] != '\0'; ++i)
         if (strncmp(buf + i, sub, len) == 0)
-            return KLONE_UNCONST(buf + i);
+            return KLIN_UNCONST(buf + i);
 
     return NULL;
 }
@@ -620,10 +620,10 @@ static int u_hex2ch(char c)
 void u_print_version_and_exit(void)
 {
     static const char *vv = 
-    "KLone %s - Copyright (c) 2005-2012 KoanLogic s.r.l., (c) 2026 Daniel Tillett - "
+    "Klin %s (derived from KLone) - Copyright (c) 2005-2012 KoanLogic s.r.l., (c) 2026 Daniel Tillett - "
     "All rights reserved. \n\n";
 
-    fprintf(stderr, vv, klone_version());
+    fprintf(stderr, vv, klin_version());
 
     exit(EXIT_FAILURE);
 }
@@ -832,7 +832,7 @@ char *u_stristr(const char *string, const char *sub)
     for(p = string; *p; ++p)
     {
         if(strncasecmp(p, sub, len) == 0)
-            return KLONE_UNCONST(p);
+            return KLIN_UNCONST(p);
     }
 
 err: /* fall through */
@@ -860,7 +860,7 @@ char* u_strnrchr(const char *s, char c, size_t len)
     
     for(; i >= 0; --i)
         if(s[i] == c)
-            return KLONE_UNCONST(s + i); /* found */
+            return KLIN_UNCONST(s + i); /* found */
 err:
     return NULL;
 }
@@ -884,7 +884,7 @@ int u_tmpfile_open (const char *tmpdir, io_t **pio)
     int fd = -1;
     unsigned int i;
     char tmpf[U_FILENAME_MAX];
-    const char *pfx = "kloned_tmp_";
+    const char *pfx = "klind_tmp_";
     /* Mimic tempnam(3) directory search for backwards compatibility. */
     const char *dirs[] = {
         tmpdir,
@@ -1365,7 +1365,7 @@ int u_io_unzip_copy(io_t *out, const char *data, size_t sz)
     dbg_return_if (data == NULL, ~0);
     
     /* create an io_t around the HTML block */
-    dbg_err_if(io_mem_create(KLONE_UNCONST(data), sz, 0, &ios));
+    dbg_err_if(io_mem_create(KLIN_UNCONST(data), sz, 0, &ios));
 
     /* apply a gzip codec */
     dbg_err_if(codec_gzip_create(GZIP_UNCOMPRESS, &zip));

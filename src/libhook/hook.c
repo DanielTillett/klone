@@ -1,7 +1,7 @@
 #include <stdlib.h>
 #include <u/libu.h>
-#include <klone/hook.h>
-#include <klone/hookprv.h>
+#include <klin/hook.h>
+#include <klin/hookprv.h>
 
 int hook_create(hook_t **phook)
 {

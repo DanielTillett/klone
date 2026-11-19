@@ -3,14 +3,14 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <klone/version.h>
+#include <klin/version.h>
 #include <u/libu.h>
 
 /**
@@ -20,15 +20,15 @@
  */
 
 /**
- * \brief   Return KLone version string (x.y.z)
+ * \brief   Return Klin version string (x.y.z)
  * 
- * Return KLone version string in the format x.y.z.
+ * Return Klin version string in the format x.y.z.
  *
  * \return the version string
  */
-const char *klone_version(void)
+const char *klin_version(void)
 {
-    return KLONE_VERSION;
+    return KLIN_VERSION;
 }
 
 /**

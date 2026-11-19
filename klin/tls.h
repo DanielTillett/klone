@@ -3,14 +3,14 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#ifndef _KLONE_TLS_H_
-#define _KLONE_TLS_H_
+#ifndef _KLIN_TLS_H_
+#define _KLIN_TLS_H_
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <u/libu.h>
 #ifdef SSL_ON
 #include <openssl/ssl.h>
@@ -28,4 +28,4 @@ SSL_CTX *tls_load_init_ctx (u_config_t *);
 
 #endif /* SSL_ON */
 
-#endif /* !_KLONE_TLS_H */
+#endif /* !_KLIN_TLS_H */

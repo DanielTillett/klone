@@ -1,7 +1,7 @@
 <%!
-    #include <klone/klog.h>
-    #include <klone/context.h>
-    #include <klone/server.h>
+    #include <klin/klog.h>
+    #include <klin/context.h>
+    #include <klin/server.h>
 
     static int print_log_cb(const char* line, void* arg)
     {

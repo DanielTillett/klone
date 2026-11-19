@@ -3,17 +3,17 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include <klone/emb.h>
-#include <klone/io.h>
-#include <klone/codecs.h>
+#include <klin/emb.h>
+#include <klin/io.h>
+#include <klin/codecs.h>
 #include <u/libu.h>
 #include <u/toolbox/hmap.h>
 
-/* these are klone-site autogen functions */
+/* these are klin-site autogen functions */
 void register_pages(void);
 void unregister_pages(void);
 
@@ -125,7 +125,7 @@ int emb_open(const char *file, io_t **pio)
     
     dbg_err_if(emb_lookup(file, (embres_t**)&e) || e->res.type != ET_FILE);
 
-    dbg_err_if(io_mem_create(KLONE_UNCONST(e->data), e->size, 0, &io));
+    dbg_err_if(io_mem_create(KLIN_UNCONST(e->data), e->size, 0, &io));
 
 #ifdef HAVE_LIBZ
     if(e->comp)
@@ -233,7 +233,7 @@ err:
 static int listadd (const void *val, const void *arg)
 {
     size_t i;
-    const char **list = KLONE_UNCONST(arg);
+    const char **list = KLIN_UNCONST(arg);
     const embres_t *res = (const embres_t *) val;
 
     /* Skip over already filled slots. */

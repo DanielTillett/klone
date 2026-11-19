@@ -4,7 +4,7 @@ libu
 .build/
 build-*/
 out/
-# in-tree artefacts (e.g. from running klone by hand)
+# in-tree artefacts (e.g. from running klin by hand)
 *.o
 *.a
 pg_*.c

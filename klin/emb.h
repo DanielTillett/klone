@@ -3,21 +3,21 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#ifndef _KLONE_EMB_H_
-#define _KLONE_EMB_H_
+#ifndef _KLIN_EMB_H_
+#define _KLIN_EMB_H_
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <sys/stat.h>
 #ifdef HAVE_STDINT
 #include <stdint.h>
 #endif /* HAVE_STDINT */
 #include <u/libu.h>
-#include <klone/klone.h>
-#include <klone/dypage.h>
+#include <klin/klin.h>
+#include <klin/dypage.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -53,7 +53,7 @@ typedef struct embfile_s
     size_t file_size;       /* size of the source file (not compressed)       */
 } embfile_t;
 
-/* embedded dynamic klone page */
+/* embedded dynamic klin page */
 typedef struct embpage_s
 {
     embres_t res;           /* any emb resource must start with a embres_t  */

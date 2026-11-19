@@ -3,16 +3,16 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#ifndef _KLONE_CODECS_H_
-#define _KLONE_CODECS_H_
+#ifndef _KLIN_CODECS_H_
+#define _KLIN_CODECS_H_
 
-#include <klone/rsfilter.h>
-#include <klone/cnull.h>
-#include <klone/cgzip.h>
-#include <klone/ccipher.h>
+#include <klin/rsfilter.h>
+#include <klin/cnull.h>
+#include <klin/cgzip.h>
+#include <klin/ccipher.h>
 
 #endif

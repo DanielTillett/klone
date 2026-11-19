@@ -3,17 +3,17 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <unistd.h>
 #include <u/libu.h>
-#include <klone/va.h>
-#include <klone/io.h>
-#include <klone/ioprv.h>
-#include <klone/codec.h>
+#include <klin/va.h>
+#include <klin/io.h>
+#include <klin/ioprv.h>
+#include <klin/codec.h>
 
 enum io_type_e io_type(io_t *io);
 

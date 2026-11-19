@@ -3,11 +3,11 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <sys/types.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -16,24 +16,24 @@
 #include <openssl/err.h>
 #endif 
 #include <u/libu.h>
-#include <klone/utils.h>
-#include <klone/os.h>
-#include <klone/server.h>
-#include <klone/context.h>
-#include <klone/broker.h>
-#include <klone/request.h>
-#include <klone/ses_prv.h>
-#include <klone/response.h>
-#include <klone/backend.h>
-#include <klone/io.h>
-#include <klone/timer.h>
-#include <klone/tls.h>
-#include <klone/ses_prv.h>
-#include <klone/hook.h>
-#include <klone/hookprv.h>
-#include <klone/access.h>
-#include <klone/vhost.h>
-#include <klone/supplier.h>
+#include <klin/utils.h>
+#include <klin/os.h>
+#include <klin/server.h>
+#include <klin/context.h>
+#include <klin/broker.h>
+#include <klin/request.h>
+#include <klin/ses_prv.h>
+#include <klin/response.h>
+#include <klin/backend.h>
+#include <klin/io.h>
+#include <klin/timer.h>
+#include <klin/tls.h>
+#include <klin/ses_prv.h>
+#include <klin/hook.h>
+#include <klin/hookprv.h>
+#include <klin/access.h>
+#include <klin/vhost.h>
+#include <klin/supplier.h>
 #include "http_s.h"
 
 enum {
@@ -401,8 +401,9 @@ static int http_get_default_index(http_t *h, request_t *rq, char *cindex,
         "/index.html", 
         "/index.htm", 
         "/index.klx", 
-        "/index.klone", 
-        "/index.klc", 
+        "/index.klin",
+        "/index.klone", /* before KLone was renamed Klin */
+        "/index.klc",
         NULL 
     };
 
@@ -533,12 +534,12 @@ static int http_print_error_page(http_t *h, request_t *rq, response_t *rs,
         "<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">"
         "<html><head><title>%d %s</title></head>\n"
         "<body><h1>%s</h1><p>URL: %s</p><hr>"
-        "<address>KLone/%s web server</address>"
+        "<address>Klin/%s web server</address>"
         "</body></html>",
         http_status, http_get_status_desc(http_status),
         http_get_status_desc(http_status),
         (request_get_uri(rq) ? request_get_uri(rq) : ""),
-        KLONE_VERSION);
+        KLIN_VERSION);
     dbg_err_if(n < 0);
     len = U_MIN((size_t) n, sizeof page - 1);
 
@@ -818,7 +819,7 @@ static int http_serve(http_t *h, int fd, int keep_alive)
     dbg_err_if (fd < 0);
 
     if(fd == 0 && (gwi = getenv("GATEWAY_INTERFACE")) != NULL)
-        cgi++; /* klone is being used as a CGI */
+        cgi++; /* klin is being used as a CGI */
 
     /* the web server running the CGI owns the connection */
     if(cgi || !h->keep_alive)
@@ -914,7 +915,7 @@ static int http_add_vhost(http_t *http, const char *host, u_config_t *c)
     vhost->http = http;
 
     /* set defaults */
-    vhost->server_sig = "klone/" KLONE_VERSION;
+    vhost->server_sig = "klin/" KLIN_VERSION;
     vhost->dir_root = "";
     vhost->index = NULL;
     vhost->send_enc_deflate = 0; 

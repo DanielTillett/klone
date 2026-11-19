@@ -3,15 +3,15 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <u/libu.h>
 #include <stdlib.h>
-#include <klone/cgi.h>
-#include <klone/request.h>
+#include <klin/cgi.h>
+#include <klin/request.h>
 
 int cgi_set_request(request_t *rq)
 {
@@ -25,7 +25,7 @@ int cgi_set_request(request_t *rq)
     /* dbg_err_if(request_set_filename(rq, getenv("SCRIPT_NAME"))); */
 
     /* use PATH_INFO as script name i.e. 
-        http://site/cgi-bin/kloned/path/to/script.kl1 */
+        http://site/cgi-bin/klind/path/to/script.kl1 */
     if((ev = getenv("PATH_INFO")) != NULL)
         dbg_err_if(request_set_filename(rq, ev));
     else

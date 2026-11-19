@@ -3,11 +3,11 @@
  * Copyright (c) 2026 Daniel Tillett
  * All rights reserved.
  *
- * This file is part of KLone, and as such it is subject to the license stated
+ * This file is part of Klin (derived from KLone), and as such it is subject to the license stated
  * in the LICENSE file which you have received as part of this distribution.
  */
 
-#include "klone_conf.h"
+#include "klin_conf.h"
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <stdlib.h>
@@ -15,14 +15,14 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <u/libu.h>
-#include <klone/session.h>
-#include <klone/request.h>
-#include <klone/response.h>
-#include <klone/vars.h>
-#include <klone/utils.h>
-#include <klone/emb.h>
-#include <klone/ses_prv.h>
-#include <klone/codecs.h>
+#include <klin/session.h>
+#include <klin/request.h>
+#include <klin/response.h>
+#include <klin/vars.h>
+#include <klin/utils.h>
+#include <klin/emb.h>
+#include <klin/ses_prv.h>
+#include <klin/codecs.h>
 #ifdef SSL_ON
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
@@ -302,7 +302,7 @@ int session_client_module_init(u_config_t *config, session_opt_t *so)
     EVP_MAC_free(mac);
     dbg_err_if(so->hmac_ctx == NULL);
     params[0] = OSSL_PARAM_construct_utf8_string(OSSL_MAC_PARAM_DIGEST,
-        KLONE_UNCONST(EVP_MD_get0_name(so->hash)), 0);
+        KLIN_UNCONST(EVP_MD_get0_name(so->hash)), 0);
     params[1] = OSSL_PARAM_construct_end();
 
     /* gen HMAC key */

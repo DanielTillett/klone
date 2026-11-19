@@ -35,11 +35,8 @@
 int u_uri_normalize(char *path)
 {
     enum { SLASH = '/', BACKSLASH = '\\' };
-    u_string_t *s = NULL;
+    char *pp, *r, *w, *seg;
     size_t len;
-    char delim[2];
-    char *pp, *tok, *src; 
-    const char *cs;
     int trsl = 0; /* trailing slash */
 
     dbg_err_if(path == NULL);
@@ -50,50 +47,48 @@ int u_uri_normalize(char *path)
             *pp = SLASH;
 
     /* must be an absolute path (i.e. must start with a slash) */
-    dbg_err_if(path[0] != SLASH); 
+    dbg_err_if(path[0] != SLASH);
 
-    if(path[strlen(path)-1] == SLASH)
+    if(pp[-1] == SLASH)
         trsl = 1;
 
-    dbg_err_if(u_snprintf(delim, sizeof(delim), "%c", SLASH));
-
-    dbg_err_if(u_string_create(NULL, 0, &s));
-
-    /* alloc a reasonable buffer immediately */
-    dbg_err_if(u_string_reserve(s, strlen(path) + 1));
-
-    /* foreach name=value pair... */
-    for(src = path; (tok = strtok_r(src, delim, &pp)) != NULL; src = NULL)
+    /* rewrite in place: the output ('/seg' for each kept segment) is never
+       longer than the input read so far */
+    for(r = w = path; *r; )
     {
-        if(!strcmp(tok, ""))
-            continue; /* double slash */
-        else if(!strcmp(tok, "."))
+        while(*r == SLASH)
+            ++r;    /* double slash */
+        if(*r == '\0')
+            break;
+
+        for(seg = r; *r && *r != SLASH; ++r)
+            ;
+        len = (size_t) (r - seg);
+
+        if(len == 1 && seg[0] == '.')
             continue; /* /./ */
-        else if(!strcmp(tok, "..")) {
+
+        if(len == 2 && seg[0] == '.' && seg[1] == '.')
+        {
             /* eat last dir */
-            len = u_string_len(s);
-            cs = u_string_c(s);
-            for(; len && cs[len - 1] != SLASH; --len)
-                continue;
-            /* crop */
-            dbg_err_if(u_string_set_length(s, (len ? --len : 0) ));
-        } else {
-            dbg_err_if(u_string_aprintf(s, "%c%s", SLASH, tok));
+            while(w > path && w[-1] != SLASH)
+                --w;
+            if(w > path)
+                --w;
+            continue;
         }
+
+        *w++ = SLASH;
+        memmove(w, seg, len);
+        w += len;
     }
 
-    if(!u_string_len(s) || trsl)
-        dbg_err_if(u_string_aprintf(s, "%c", SLASH));
-
-    /* copy out */
-    strcpy(path, u_string_c(s));
-
-    u_string_free(s);
+    if(w == path || trsl)
+        *w++ = SLASH;
+    *w = '\0';
 
     return 0;
 err:
-    if(s)
-        u_string_free(s);
     return ~0;
 }
 

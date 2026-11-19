@@ -29,6 +29,7 @@ int vhost_free(vhost_t *v)
 {
     dbg_err_if(v == NULL);
 
+    u_free(v->alias);
     u_free(v);
 
     return 0;

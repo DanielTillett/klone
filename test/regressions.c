@@ -268,8 +268,10 @@ static void test_lengths(void)
 
 static void test_paths(void)
 {
-    const char *input[] = {"/", "/..", "/../../a", "/a/b/../c/", "/a/../../..", "\\a\\b\\..\\c"};
-    const char *expected[] = {"/", "/", "/a", "/a/c/", "/", "/a/c"};
+    const char *input[] = {"/", "/..", "/../../a", "/a/b/../c/", "/a/../../..", "\\a\\b\\..\\c",
+                           "//a//b", "/a/./b/.", "/a/b/..", "/.../x", "/a/b/c/../../d/", "/a/../"};
+    const char *expected[] = {"/", "/", "/a", "/a/c/", "/", "/a/c",
+                              "/a/b", "/a/b", "/a", "/.../x", "/a/d/", "/"};
     char buffer[128];
     size_t i;
     for (i = 0; i < sizeof(input) / sizeof(*input); ++i) {

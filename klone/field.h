@@ -34,6 +34,8 @@ typedef struct field_s
     char *name;              /* field name           */
     char *value;             /* field value          */
     params_t *params;        /* param list           */
+    char *buf;               /* holds name and value */
+    size_t bufsz;            /* ... and its size     */
 } field_t;
 
 /* field list */

@@ -2028,29 +2028,39 @@ static int request_load_config(request_t *rq)
 
     dbg_err_if((vhost = http_get_vhost(rq->http, rq)) == NULL);
 
-    /* vhost can override those fields */
-    dbg_err_if((c = vhost->config) == NULL);
-    
-    /* defaults */
-    rq->idle_timeout = REQUEST_DEFAULT_IDLE_TIMEOUT;
-    rq->post_timeout = REQUEST_DEFAULT_POST_TIMEOUT;
-    rq->post_maxsize = REQUEST_DEFAULT_POST_MAXSIZE;
-    rq->temp_dir = NULL;    /* use system default */
+    /* read the vhost's settings once, not for every request */
+    if(!vhost->rq_config_loaded)
+    {
+        /* vhost can override those fields */
+        dbg_err_if((c = vhost->config) == NULL);
 
-    /* idle timeout */
-    if((v = u_config_get_subkey_value(c, "idle_timeout")) != NULL)
-        rq->idle_timeout = U_MAX(1, atoi(v));
+        /* defaults */
+        vhost->rq_idle_timeout = REQUEST_DEFAULT_IDLE_TIMEOUT;
+        vhost->rq_post_timeout = REQUEST_DEFAULT_POST_TIMEOUT;
+        vhost->rq_post_maxsize = REQUEST_DEFAULT_POST_MAXSIZE;
 
-    /* post timeout */
-    if((v = u_config_get_subkey_value(c, "post_timeout")) != NULL)
-        rq->post_timeout = U_MAX(5, atoi(v));
+        /* idle timeout */
+        if((v = u_config_get_subkey_value(c, "idle_timeout")) != NULL)
+            vhost->rq_idle_timeout = U_MAX(1, atoi(v));
 
-    /* post maxsize */
-    if((v = u_config_get_subkey_value(c, "post_maxsize")) != NULL)
-        rq->post_maxsize = U_MAX(1024, atoi(v));
+        /* post timeout */
+        if((v = u_config_get_subkey_value(c, "post_timeout")) != NULL)
+            vhost->rq_post_timeout = U_MAX(5, atoi(v));
 
-    /* temp dir to use on file upload.  when 'NULL' use system default */
-    rq->temp_dir = u_config_get_subkey_value(c, "temp_dir");
+        /* post maxsize */
+        if((v = u_config_get_subkey_value(c, "post_maxsize")) != NULL)
+            vhost->rq_post_maxsize = U_MAX(1024, atoi(v));
+
+        /* temp dir to use on file upload.  when 'NULL' use system default */
+        vhost->rq_temp_dir = u_config_get_subkey_value(c, "temp_dir");
+
+        vhost->rq_config_loaded = 1;
+    }
+
+    rq->idle_timeout = vhost->rq_idle_timeout;
+    rq->post_timeout = vhost->rq_post_timeout;
+    rq->post_maxsize = vhost->rq_post_maxsize;
+    rq->temp_dir = vhost->rq_temp_dir;
 
     return 0;
 err:

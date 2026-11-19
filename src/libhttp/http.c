@@ -185,12 +185,51 @@ err:
     return NULL;
 }
 
-int http_alias_resolv(http_t *h, request_t *rq, char *dst, const char *uri, 
+/* collect the vhost's dir_alias and then cgi.script_alias values once (they
+ * are tried in this order for every request) */
+static int http_load_aliases(vhost_t *vhost)
+{
+    u_config_t *config, *cgi = NULL;
+    size_t n = 0;
+    int i;
+
+    /* count them */
+    for(i = 0; !u_config_get_subkey_nth(vhost->config,"dir_alias", i, &config);
+        ++i)
+        ++n;
+    if(!u_config_get_subkey(vhost->config, "cgi", &cgi))
+        for(i = 0; !u_config_get_subkey_nth(cgi, "script_alias", i, &config);
+            ++i)
+            ++n;
+    else
+        cgi = NULL;
+
+    if(n)
+    {
+        dbg_err_if((vhost->alias = u_zalloc(n * sizeof(char*))) == NULL);
+
+        n = 0;
+        for(i = 0; !u_config_get_subkey_nth(vhost->config,"dir_alias", i,
+                    &config); ++i)
+            vhost->alias[n++] = u_config_get_value(config);
+        for(i = 0; cgi && !u_config_get_subkey_nth(cgi, "script_alias", i,
+                    &config); ++i)
+            vhost->alias[n++] = u_config_get_value(config);
+    }
+
+    vhost->nalias = n;
+    vhost->alias_loaded = 1;
+
+    return 0;
+err:
+    return ~0;
+}
+
+int http_alias_resolv(http_t *h, request_t *rq, char *dst, const char *uri,
         size_t sz)
 {
-    u_config_t *config, *cgi;
     vhost_t *vhost;
-    int i;
+    size_t i;
 
     dbg_err_if (h == NULL);
     dbg_err_if (dst == NULL);
@@ -198,23 +237,14 @@ int http_alias_resolv(http_t *h, request_t *rq, char *dst, const char *uri,
 
     dbg_err_if((vhost = http_get_vhost(h, rq)) == NULL);
 
-    /* for each dir_alias config item */
-    for(i = 0; !u_config_get_subkey_nth(vhost->config,"dir_alias", i, &config); 
-        ++i)
-    {
-        if(!http_try_resolv(u_config_get_value(config), dst, uri, sz))
-            return 0;   /* alias found, uri resolved */
-    }
+    if(!vhost->alias_loaded)
+        dbg_err_if(http_load_aliases(vhost));
 
-    /* if there's a cgi tree also try to resolv script_alias rules */
-    if(!u_config_get_subkey(vhost->config, "cgi", &cgi))
+    /* try each dir_alias, then each script_alias */
+    for(i = 0; i < vhost->nalias; ++i)
     {
-        for(i = 0; !u_config_get_subkey_nth(cgi, "script_alias", i, &config);
-            ++i)
-        {
-            if(!http_try_resolv(u_config_get_value(config), dst, uri, sz))
-                return 0;   /* alias found, uri resolved */
-        }
+        if(!http_try_resolv(vhost->alias[i], dst, uri, sz))
+            return 0;   /* alias found, uri resolved */
     }
 
     /* alias not found, prepend dir_root to the uri */

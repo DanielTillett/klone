@@ -1,6 +1,12 @@
 ChangeLog file of KLone - https://github.com/DanielTillett/klone
 
 KLone 4.0.0:
+	- performance: header fields keep name and value in one buffer and
+	  freed fields are reused (no allocation for the usual request and
+	  response fields); a vhost's dir_alias/script_alias list and request
+	  limits (idle_timeout, post_timeout, post_maxsize, temp_dir) are read
+	  from the configuration once, not for every request; u_uri_normalize()
+	  works in place without allocating
 	- prefork: a worker started beyond prefork.start_child (e.g. for a
 	  burst of clients) exits after waiting prefork.idle_timeout seconds
 	  (default 10, 0 = never) for a client, so the pool and its memory

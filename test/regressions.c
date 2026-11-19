@@ -125,18 +125,21 @@ static ssize_t io_read(io_t *io, char *buf, size_t size)
     memcpy(buf, io->data + io->offset, n); io->offset += n;
     return (ssize_t)n;
 }
-static int u_getline_limit(io_t *io, u_string_t *s, size_t limit)
+/* one line per call, like the real one: at most size - 1 bytes (a partial
+   line if it does not fit), 0 at the end, -1 on a read error */
+static ssize_t io_get_until(io_t *io, char stop_at, char *buf, size_t size)
 {
     const char *line = io->lines[io->offset];
     size_t n;
-    if (!line || fail_clear) return -1;
-    n = strlen(line);
-    if (n > limit || n == 0 || line[n - 1] != '\n') return -1;
+    (void)stop_at;
+    if (fail_clear) return -1;
+    if (!line) { buf[0] = 0; return 0; }
+    n = U_MIN(strlen(line), size - 1);
+    memcpy(buf, line, n); buf[n] = 0;
     ++io->offset;
-    if (u_string_set_length(s, 0)) return -1;
-    return u_string_append(s, line, n - 1);
+    return (ssize_t)n;
 }
-static int header_process_line(header_t *h, u_string_t *s, int mode)
+static int header_process_line(header_t *h, const char *s, int mode)
 { (void)h; (void)s; (void)mode; ++processed; return fail_process ? -1 : 0; }
 typedef struct { size_t off, size; } io_mem_t;
 
@@ -320,7 +323,7 @@ static void test_headers_and_seek(void)
     CHECK(header_load_ex(&h, &io, 0) != 0 && live_strings == 0);
     fail_process = 0; fail_clear = 1; io.offset = 0;
     CHECK(header_load_ex(&h, &io, 0) != 0 && live_strings == 0);
-    fail_process = 0;
+    fail_process = 0; fail_clear = 0;
     {
         const char *incomplete[] = {"X: one\r\n", NULL};
         const char *folded[] = {"X: one\r\n", " two\r\n", "\r\n", NULL};
@@ -334,6 +337,17 @@ static void test_headers_and_seek(void)
         many[258] = "\r\n"; many[259] = NULL;
         io.offset = 0; io.lines = many;
         CHECK(header_load_ex(&h, &io, 0) != 0 && live_strings == 0);
+    }
+    {
+        /* 8192 bytes with the '\n' is the longest line accepted */
+        static char fit[8193], over[8194];
+        const char *ok[] = {fit, "\r\n", NULL}, *bad[] = {over, "\r\n", NULL};
+        memset(fit, 'a', 8191); memcpy(fit, "X: ", 3); fit[8191] = '\n';
+        memset(over, 'a', 8192); memcpy(over, "X: ", 3); over[8192] = '\n';
+        processed = 0; io.offset = 0; io.lines = ok;
+        CHECK(header_load_ex(&h, &io, 0) == 0 && processed == 1);
+        io.offset = 0; io.lines = bad;
+        CHECK(header_load_ex(&h, &io, 0) != 0);
     }
     io.lines = lines;
     fail_clear = 0; io.offset = 1; fail_process = 1;

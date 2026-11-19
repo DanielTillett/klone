@@ -8,6 +8,7 @@
  */
 
 #include "klone_conf.h"
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -47,8 +48,6 @@ struct request_s
     char *content_encoding;     /* 7bit/8bit/base64/qp, etc                 */
 	size_t content_length;      /* content-length http header field         */
     time_t if_modified_since;   /* time_t IMS header                        */
-    char local_addr[256];       /* local address                            */
-    char peer_addr[256];        /* peer address                             */
     int cgi;                    /* if running in cgi mode                   */
     size_t idle_timeout;        /* max # of secs to wait for the request    */
     size_t post_timeout;        /* max # of secs for reading POSTed data    */
@@ -65,6 +64,10 @@ struct request_s
     size_t hdr_end;             /* stream offset of the end of the header   */
     int ka_wait;                /* waiting on a kept-alive connection       */
     int conn_closed;            /* closed or idle before any request byte   */
+
+    /* strings, last: request_create() does not zero them */
+    char local_addr[256];       /* local address                            */
+    char peer_addr[256];        /* peer address                             */
 };
 
 typedef struct upload_info_s    /* uploaded file info struct         */
@@ -678,9 +681,6 @@ int request_set_uri(request_t *rq, const char *uri,
     /* normalize the URI (remove /../, /./, ecc) */
     dbg_err_if(u_uri_normalize(cp));
 
-    /* set filename is case there's not path_info and/or file does not exists */
-    dbg_err_if(request_set_filename(rq, cp));
-
     /* look for path_info */
     fn = cp;                    /* filename     */
     pi = fn + strlen(fn);       /* path_info    */
@@ -688,17 +688,21 @@ int request_set_uri(request_t *rq, const char *uri,
     {
         if(is_valid_uri == NULL || is_valid_uri(arg, fn, pi - fn))
         {
-            dbg_err_if(request_set_filename(rq, fn));
-            rq->filename[pi-fn] = 0; /* trunc */
-            if(strlen(pi))
+            if(*pi)
                 dbg_err_if(request_set_path_info(rq, pi));
+            *pi = 0; /* trunc */
             break;
         } else {
+            /* file pointed by this uri does not exists: the filename is the
+               whole path (fn is untouched), with no path_info */
             if((p = u_strnrchr(fn, '/', pi - fn)) == NULL)
-                break; /* file pointed by this uri does not exists */
+                break;
             pi = p; /* try again */
         }
     }
+
+    /* set once, when it is known */
+    dbg_err_if(request_set_filename(rq, fn));
 
     return 0;
 err:
@@ -1782,12 +1786,13 @@ int request_parse_header(request_t *rq,
 
     /* Chunked transfer coding is not implemented. Reject it explicitly, and
      * reject every duplicate Content-Length, even equal values. */
-    dbg_err_if(header_get_field(rq->header, "Transfer-Encoding") != NULL);
     for (i = 0; i < header_field_count(rq->header); ++i)
     {
         field = header_get_fieldn(rq->header, i);
         if (!strcasecmp(field_get_name(field), "Content-Length"))
             ++lengths;
+        else
+            dbg_err_if(!strcasecmp(field_get_name(field), "Transfer-Encoding"));
     }
     dbg_err_if(lengths > 1);
     if (lengths)
@@ -2074,8 +2079,11 @@ int request_create(http_t *http, request_t **prq)
     dbg_return_if (prq == NULL, ~0);
     dbg_return_if (http == NULL, ~0);
 
-    rq = u_zalloc(sizeof(request_t));
+    /* zero all but the (512 bytes of) address strings */
+    rq = u_malloc(sizeof(request_t));
     dbg_err_if(rq == NULL);
+    memset(rq, 0, offsetof(request_t, local_addr));
+    rq->local_addr[0] = rq->peer_addr[0] = '\0';
 
     dbg_err_if(header_create(&rq->header));
 

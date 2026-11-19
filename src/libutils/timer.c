@@ -123,11 +123,12 @@ static int64_t timerm_now(void)
 #endif
 }
 
-/* raise SIGALRM in 'ms' milliseconds unless it is already due sooner */
-static int timerm_set_alarm(int64_t ms)
+/* raise SIGALRM in 'ms' milliseconds (from 'now') unless it is already due
+ * sooner */
+static int timerm_set_alarm(int64_t now, int64_t ms)
 {
     int64_t secs = (ms + 999) / 1000;     /* alarm(2) counts whole seconds */
-    int64_t n = timerm_now() + secs * 1000;
+    int64_t n = now + secs * 1000;
 
     if(secs > 0 && (timer->next == 0 || n < timer->next))
     {
@@ -140,13 +141,12 @@ static int timerm_set_alarm(int64_t ms)
     return 0;
 }
 
-static int timerm_set_next(void)
+static int timerm_set_next(int64_t now)
 {
     talarm_t *al = NULL;
-    int64_t now = timerm_now();
 
     if((al = TAILQ_FIRST(&timer->alist)) != NULL)
-        timerm_set_alarm(U_MAX(1, al->expire - now));
+        timerm_set_alarm(now, U_MAX(1, al->expire - now));
 
     return 0;
 }
@@ -193,7 +193,7 @@ static void timerm_run(void)
 
     /* prepare for the next alarm */
     if(TAILQ_FIRST(&timer->alist))
-        timerm_set_next();
+        timerm_set_next(timerm_now());
 
 err:
     return;
@@ -334,6 +334,29 @@ err:
     return ~0;
 }
 
+/* the first time a (forked) process changes the alarm list: drop the alarms
+ * inherited from the parent, and forget its SIGALRM, which fork() does not
+ * inherit (the alarm of the child would otherwise wait behind them, unset) */
+static void timerm_adopt(void)
+{
+    static pid_t list_pid = 0;
+    pid_t pid = timerm_getpid();
+    talarm_t *al, *next;
+
+    if(list_pid == pid)
+        return;
+    list_pid = pid;
+
+    for(al = TAILQ_FIRST(&timer->alist); al != NULL; al = next)
+    {
+        next = TAILQ_NEXT(al, np);
+        if(al->owner != pid)
+            TAILQ_REMOVE(&timer->alist, al, np);
+    }
+
+    timer->next = 0;
+}
+
 /* use this function if you need to re-set the alarm in the signal
  * handler (don't timerm_del() on the alarm) */
 int timerm_reschedule(talarm_t *al, int secs, talarm_cb_t cb, void *arg)
@@ -350,6 +373,8 @@ int timerm_reschedule(talarm_t *al, int secs, talarm_cb_t cb, void *arg)
 
     dbg_err_if(timerm_block_alarms());
 
+    timerm_adopt();
+
     /* insert al ordered by the expire field (smaller first) */
     TAILQ_FOREACH(item, &timer->alist, np)
         if(al->expire < item->expire)
@@ -360,8 +385,10 @@ int timerm_reschedule(talarm_t *al, int secs, talarm_cb_t cb, void *arg)
     else
         TAILQ_INSERT_TAIL(&timer->alist, al, np);
 
-    /* set the timer for the earliest alarm */
-    timerm_set_next();
+    /* set the timer if this is the earliest alarm (a later one is set by
+       timerm_run() when the earlier ones are done) */
+    if(TAILQ_FIRST(&timer->alist) == al)
+        timerm_set_next(now);
                                                               
     dbg_err_if(timerm_unblock_alarms());                      
                                                               
@@ -433,8 +460,8 @@ int timerm_del(talarm_t *a)
     if(timerm_alarm_pending(a))
         TAILQ_REMOVE(&timer->alist, a, np);
 
-    /* set the timer for the earliest alarm */
-    timerm_set_next();
+    /* the SIGALRM already set stays: it can only come early for the alarms
+       left, and timerm_run() then sets it again for the earliest one */
 
     dbg_err_if(timerm_unblock_alarms());
 

@@ -45,6 +45,8 @@ int response_print_header(response_t *rs);
 int response_print_header_to_io(response_t *rs, io_t *io);
 int response_format_header(response_t *rs, size_t extra, char **pbuf,
         size_t *plen);
+int response_format_header_reuse(response_t *rs, size_t extra, char **pbuf,
+        size_t *pcap, size_t *plen);
 size_t response_get_max_header_size(response_t *rs);
 
 /* connection persistence (HTTP keep-alive) */

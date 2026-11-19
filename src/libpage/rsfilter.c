@@ -39,7 +39,8 @@ enum {
 
 enum {
     RF_CHUNK_MAX = RFBUFSZ,     /* max data bytes per chunk                  */
-    RF_CHUNK_EXTRA = 16         /* size line ("1000\r\n") and trailing CRLF  */
+    RF_CHUNK_EXTRA = 16,        /* size line ("1000\r\n") and trailing CRLF  */
+    RF_HBUF_KEEP = 16384        /* max header buffer kept for the next one   */
 };
 
 struct response_filter_s
@@ -63,6 +64,9 @@ struct response_filter_s
     /* the buffers must be the last items: they are not zeroed on creation */
     char buf[RFBUFSZ];
     char cbuf[RF_CHUNK_MAX + RF_CHUNK_EXTRA];  /* pending encoded chunk    */
+    char *hbuf;             /* memory of 'head', kept when the filter is   */
+    size_t hcap;            /* reused (header + body is too big for the    */
+                            /* allocator's fast paths)                     */
 };
 
 /* the filter of the last response, kept for the next one: at 8 KB it is
@@ -80,7 +84,9 @@ static int rf_init_head(response_filter_t *rf)
 
     body = (!rf->no_body && rf->off) ? rf->off + RF_CHUNK_EXTRA : 0;
 
-    dbg_err_if(response_format_header(rf->rs, body, &rf->head, &rf->hlen));
+    dbg_err_if(response_format_header_reuse(rf->rs, body, &rf->hbuf, &rf->hcap,
+                &rf->hlen));
+    rf->head = rf->hbuf;
     rf->hoff = 0;
 
     if(body)
@@ -180,8 +186,8 @@ static ssize_t rf_drain(response_filter_t *rf, char *dst, size_t dsz)
             return c;
         }
 
-        /* all sent */
-        U_FREE(rf->head);
+        /* all sent (the memory stays in rf->hbuf) */
+        rf->head = NULL;
     }
 
     if(rf->coff < rf->clen)
@@ -345,12 +351,19 @@ static int rf_free(codec_t *codec)
 
     rf = (response_filter_t*)codec;
 
-    U_FREE(rf->head);
-
     if(rf_spare == NULL)
+    {
+        /* don't keep the memory of an unusually large header */
+        if(rf->hcap > RF_HBUF_KEEP)
+        {
+            U_FREE(rf->hbuf);
+            rf->hcap = 0;
+        }
         rf_spare = rf;
-    else
+    } else {
+        U_FREE(rf->hbuf);
         U_FREE(rf);
+    }
 
     return 0;
 }
@@ -378,8 +391,11 @@ int response_filter_create(request_t *rq, response_t *rs, session_t *ss,
     if((rf = rf_spare) != NULL)
         rf_spare = NULL;
     else
-        rf = u_malloc(sizeof(response_filter_t));
-    dbg_err_if(rf == NULL);
+    {
+        dbg_err_if((rf = u_malloc(sizeof(response_filter_t))) == NULL);
+        rf->hbuf = NULL;
+        rf->hcap = 0;
+    }
     memset(rf, 0, offsetof(response_filter_t, buf));
 
     rf->rq = rq;

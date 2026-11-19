@@ -27,8 +27,10 @@ enum {
 
 typedef struct
 {
-     fields_t fields;         
+     fields_t fields;
      size_t nfields;
+     field_t *cur;      /* last field returned by header_get_fieldn() ... */
+     size_t curidx;     /* ... and its index (cur is NULL after a change) */
 } header_t;
 
 int header_create(header_t**);

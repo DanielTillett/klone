@@ -351,6 +351,36 @@ static size_t response_ultoa(char *buf, unsigned long v)
 int response_format_header(response_t *rs, size_t extra, char **pbuf,
         size_t *plen)
 {
+    size_t cap = 0;
+
+    dbg_return_if (pbuf == NULL, ~0);
+
+    *pbuf = NULL;
+
+    return response_format_header_reuse(rs, extra, pbuf, &cap, plen);
+}
+
+/*
+ * \ingroup response
+ * \brief   Format a response header into a reused buffer
+ *
+ * Like response_format_header(), but \p *pbuf (\p *pcap bytes, or NULL and
+ * 0) is used if large enough, and replaced by a larger one otherwise; the
+ * caller frees it when done with all the headers formatted in it.
+ *
+ * \param rs        response object
+ * \param extra     spare bytes needed after the header
+ * \param pbuf      the buffer, to be freed with u_free()
+ * \param pcap      its size
+ * \param plen      the length of the header in \p *pbuf
+ *
+ * \return
+ *  - \c 0 if successful
+ *  - \c ~0 on error (\p *pbuf and \p *pcap are left as they were)
+ */
+int response_format_header_reuse(response_t *rs, size_t extra, char **pbuf,
+        size_t *pcap, size_t *plen)
+{
     enum { STATUSSZ = 128 };
     char status[STATUSSZ], *buf = NULL, *p;
     const char *desc;
@@ -360,6 +390,7 @@ int response_format_header(response_t *rs, size_t extra, char **pbuf,
 
     dbg_err_if(rs == NULL);
     dbg_err_if(pbuf == NULL);
+    dbg_err_if(pcap == NULL);
     dbg_err_if(plen == NULL);
 
     /* the caller writes the body itself: its length must already be in
@@ -394,7 +425,10 @@ int response_format_header(response_t *rs, size_t extra, char **pbuf,
         sz += strlen(f->name) + strlen(f->value) + 4;
     }
 
-    dbg_err_if((buf = u_malloc(sz + extra)) == NULL);
+    if(*pbuf && *pcap >= sz + extra)
+        buf = *pbuf;
+    else
+        dbg_err_if((buf = u_malloc(sz + extra)) == NULL);
 
     memcpy(buf, status, slen);
     for(i = 0, p = buf + slen; i < n; ++i)
@@ -413,12 +447,18 @@ int response_format_header(response_t *rs, size_t extra, char **pbuf,
     }
     memcpy(p, "\r\n", 2);
 
-    *pbuf = buf;
+    if(buf != *pbuf)
+    {
+        U_FREE(*pbuf);
+        *pbuf = buf;
+        *pcap = sz + extra;
+    }
     *plen = sz;
 
     return 0;
 err:
-    U_FREE(buf);
+    if(pbuf && buf != *pbuf)
+        U_FREE(buf);
     return ~0;
 }
 

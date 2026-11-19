@@ -1,6 +1,21 @@
 ChangeLog file of KLone - https://github.com/DanielTillett/klone
 
 KLone 4.0.0:
+	- performance: request header lines are read straight from the
+	  connection buffer into a stack buffer and parsed there (no string
+	  object per line); header_get_fieldn() goes on from the last field
+	  returned, so loops over all fields are no longer quadratic; the
+	  timer reads the clock once per change, sets SIGALRM only for a new
+	  earliest alarm and leaves it set when an alarm is deleted (an early
+	  SIGALRM is harmless: the alarms are set again); the response filter
+	  keeps its header buffer when reused; request_t no longer zeroes its
+	  512 bytes of address strings; the request filename is copied once.
+	  A per-request memory arena was measured and not done: all allocation
+	  is ~8% of user time and the zeroing would remain
+	- timer: a forked process drops the alarms inherited from its parent
+	  (and its SIGALRM, which fork() does not inherit) the first time it
+	  sets one; its own alarm could otherwise wait, never set, behind the
+	  parent's (e.g. the log flush timer of the kloned parent)
 	- performance (profiled with perf on Linux): the timer remembers the
 	  process id instead of calling getpid(), a system call, for every
 	  request (pthread_atfork() forgets it in a child; glibc and macOS

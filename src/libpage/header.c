@@ -110,11 +110,23 @@ field_t *header_get_fieldn(header_t *h, size_t idx)
     dbg_goto_if (h == NULL, notfound);
     nop_goto_if (idx >= h->nfields, notfound);
 
-    TAILQ_FOREACH(f, &h->fields, np)
+    /* fields are usually read in order (for i in 0..n): go on from the last
+       one returned instead of walking the list from the start every time */
+    if(h->cur && idx >= h->curidx)
+    {
+        f = h->cur;
+        i = h->curidx;
+    } else
+        f = TAILQ_FIRST(&h->fields);
+
+    for(; f; f = TAILQ_NEXT(f, np), ++i)
     {
         if(i == idx)
+        {
+            h->cur = f;
+            h->curidx = i;
             return f;
-        ++i;
+        }
     }
 
 notfound:
@@ -241,6 +253,7 @@ int header_del_field(header_t *h, field_t *f)
 
     TAILQ_REMOVE(&h->fields, f, np);
     h->nfields--;
+    h->cur = NULL;
 
     return 0;
 }
@@ -263,25 +276,26 @@ int header_add_field(header_t *h, field_t *f)
 
     TAILQ_INSERT_TAIL(&h->fields, f, np);
     h->nfields++;
+    h->cur = NULL;
 
     return 0;
 }
 
-static int header_process_line(header_t *h, u_string_t *line, int mode)
+static int header_process_line(header_t *h, const char *line, int mode)
 {
     field_t *ex, *f = NULL;
 
     dbg_err_if (h == NULL);
     dbg_err_if (line == NULL);
-    
-    if(!u_string_len(line))
+
+    if(line[0] == '\0')
         return 0;
 
     /* alloc a new field */
     dbg_err_if(field_create(NULL, NULL, &f));
 
     /* parse and set name, value and params */
-    dbg_err_if(field_set_from_line(f, u_string_c(line)));
+    dbg_err_if(field_set_from_line(f, line));
 
     /* add to this header */
     switch(mode)
@@ -357,33 +371,36 @@ int header_load_from_cgienv(header_t *h)
 int header_load_ex(header_t *h, io_t *io, int mode)
 {
     enum { MAX_FIELDS = 256, MAX_LINE = 8192, MAX_TOTAL = 65536 };
-    u_string_t *line = NULL;
+    /* a line, its '\n' and one more byte to tell that it is too long */
+    char text[MAX_LINE + 2];
     size_t count = 0, total = 0, len;
-    const char *text;
+    ssize_t rc;
 
     dbg_err_if(h == NULL || io == NULL);
-    dbg_err_if(u_string_create(NULL, 0, &line));
     for (;;)
     {
-        dbg_err_if(u_getline_limit(io, line, MAX_LINE));
-        len = u_string_len(line);
-        dbg_err_if(len + 1 > MAX_TOTAL - total);
-        total += len + 1;
-        text = u_string_c(line);
+        /* each line is read straight from the io buffer and parsed in
+           place: no string object to grow and free for every line */
+        rc = io_get_until(io, '\n', text, sizeof(text));
+        dbg_err_if(rc <= 0);    /* EOF or a read error */
+        len = (size_t) rc;
+        /* too long, or EOF before the end of the line */
+        dbg_err_if(len > MAX_LINE || text[len - 1] != '\n');
+        dbg_err_if(memchr(text, '\0', len) != NULL);
+        dbg_err_if(len > MAX_TOTAL - total);
+        total += len;
+        text[--len] = '\0';
         if (len && text[len - 1] == '\r')
-            dbg_err_if(u_string_set_length(line, --len));
+            text[--len] = '\0';
         if (len == 0)
             break;
         /* Obsolete line folding and embedded CR are ambiguous to proxies. */
         dbg_err_if(u_isblank(text[0]) || memchr(text, '\r', len) != NULL);
         dbg_err_if(++count > MAX_FIELDS);
-        dbg_err_if(header_process_line(h, line, mode));
+        dbg_err_if(header_process_line(h, text, mode));
     }
-    u_string_free(line);
     return 0;
 err:
-    if (line)
-        u_string_free(line);
     return ~0;
 }
 

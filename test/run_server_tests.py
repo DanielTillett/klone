@@ -544,6 +544,47 @@ def run_auth_checks(check, plain, secure):
     check(" 401 " in status and "stale=true" in challenges[0], f"Expired nonce not stale: {challenges}")
 
 
+SECURITY_HEADERS = """security_headers
+    {
+        x_frame_options DENY
+        referrer_policy no
+        content_security_policy default-src 'self'; frame-ancestors 'none'
+    }"""
+
+
+def run_header_checks(check, plain, client, secure):
+    """Security headers (doc/HEADERS): the defaults, a vhost's own values,
+    HSTS over HTTPS only, and on error pages too."""
+    def fields(port, path, context=None):
+        reply = exchange(port, b"GET " + path + b" HTTP/1.1\r\nHost: localhost\r\n\r\n", context)
+        head = reply.partition(b"\r\n\r\n")[0].decode("latin-1").split("\r\n")
+        found = {}
+        for line in head[1:]:
+            name, _, value = line.partition(":")
+            found.setdefault(name.strip().lower(), []).append(value.strip())
+        return head[0], found
+
+    defaults = {"x-content-type-options": ["nosniff"], "x-frame-options": ["SAMEORIGIN"],
+                "referrer-policy": ["strict-origin-when-cross-origin"]}
+    for path in [b"/static/hello.txt", b"/pid.kl1", b"/missing.txt"]:
+        status, found = fields(plain, path)
+        check(all(found.get(k) == v for k, v in defaults.items()),
+              f"Default security headers missing on {path!r} ({status}): {found}")
+        check("strict-transport-security" not in found and "content-security-policy" not in found,
+              f"HSTS or CSP sent by default over HTTP: {found}")
+
+    status, found = fields(secure, b"/static/hello.txt", client_context(ssl.TLSVersion.TLSv1_3))
+    check(found.get("strict-transport-security") == ["max-age=31536000"] and
+          found.get("x-content-type-options") == ["nosniff"], f"No HSTS over HTTPS: {found}")
+
+    for path in [b"/static/hello.txt", b"/missing.txt"]:
+        status, found = fields(client, path)
+        check(found.get("x-frame-options") == ["DENY"] and "referrer-policy" not in found and
+              found.get("content-security-policy") == ["default-src 'self'; frame-ancestors 'none'"]
+              and found.get("x-content-type-options") == ["nosniff"],
+              f"Configured security headers not sent on {path!r}: {found}")
+
+
 def run_bad_auth_checks(check, daemon, env, temp):
     """Unsafe or broken auth configurations stop klind at startup, instead
     of serving the realm unprotected (the reason goes to the log)."""
@@ -608,7 +649,7 @@ def run_server_checks(args, env, output, daemon):
         # memory, which pages read back with server_foreach_memlog_line()
         for name, port, tls, session, extra in [
                 ("plain", plain, False, "memory", auth),
-                ("client", client, False, "client", ""),
+                ("client", client, False, "client", SECURITY_HEADERS),
                 ("secure", secure, True, "client", auth),
                 ("files", files, False, f"file\n        file.path {sessions}",
                  "index missing.kl1 pid.kl1"),
@@ -769,6 +810,7 @@ def run_server_checks(args, env, output, daemon):
                           b"memlog probe line 0123456789" in reply.partition(b"\r\n\r\n")[2],
                           f"memory log not read back whole: {reply[:600]!r}")
                 run_auth_checks(check, plain, secure)
+                run_header_checks(check, plain, client, secure)
                 run_keep_alive_checks(args, check, plain, secure, request)
                 check(b"200 OK" in exchange(plain, request), "Server failed after malformed requests")
             finally:

@@ -163,6 +163,11 @@ HTTP authentication: an "auth" block protects paths with Basic or Digest
 (SHA-256) authentication, realms and roles; passwords are stored as hashes
 made by klin -c passwd. See doc/AUTH.
 
+Security headers: responses carry X-Content-Type-Options: nosniff,
+X-Frame-Options: SAMEORIGIN, Referrer-Policy and, over HTTPS,
+Strict-Transport-Security; a Content-Security-Policy can be set. Change or
+turn them off per vhost in a "security_headers" block (doc/HEADERS).
+
 Encrypted pages: give the import a pattern of pages to encrypt and the key
 file, with an absolute path, for example
 -DKLIN_IMPORT_ARGS="-e;*.kl1;-k;/path/to/key". Pages are re-encrypted when

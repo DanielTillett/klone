@@ -113,6 +113,15 @@ HTTP authentication (Basic and Digest) of the paths in one or more realms:
 \fBusers_file\fR; also \fBnonce_lifetime\fR and \fBbasic_over_http\fR.
 Plaintext passwords are refused. See doc/AUTH.
 .TP
+\fBsecurity_headers\fR
+Security headers sent with every response: \fBx_content_type_options\fR
+(default \fInosniff\fR), \fBx_frame_options\fR (default
+\fISAMEORIGIN\fR), \fBreferrer_policy\fR (default
+\fIstrict\-origin\-when\-cross\-origin\fR), \fBcontent_security_policy\fR
+(not sent by default) and \fBstrict_transport_security\fR (default
+\fImax\-age=31536000\fR, HTTPS only). The value \fIno\fR leaves a header
+out. See doc/HEADERS.
+.TP
 \fBtemp_dir\fR
 Set the base directory where temporary resources (e.g. uploaded files) are created.  When provided, the system default is overridden.  Currently, this value has per-backend scope.
 .SS "SERVER"

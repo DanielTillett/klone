@@ -22,6 +22,9 @@ LIST_HEAD(vhost_list_s, vhost_s);
 struct http_s;
 struct klog_s;
 
+/* the security headers of http.c's http_sec_headers table */
+enum { VHOST_SEC_HEADERS = 5 };
+
 /* a dir_alias or cgi.script_alias "src dst" value, split once */
 typedef struct vhost_alias_s
 {
@@ -60,6 +63,10 @@ typedef struct vhost_s
        it names (loaded when the vhost is created, owned by the vhost) */
     u_config_t *auth;
     u_config_t *auth_users;
+
+    /* security header values sent with every response (NULL: not sent), in
+       the order of http.c's http_sec_headers table */
+    const char *sec_header[VHOST_SEC_HEADERS];
 } vhost_t;
 
 typedef struct vhost_list_s vhost_list_t;

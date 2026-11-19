@@ -22,6 +22,13 @@ Klin 4.0.0:
 	  over plain HTTP, stop klind at startup. Digest nonces are signed and
 	  expire (stale=true). Pages read the user with request_get_auth_user(),
 	  CGIs with REMOTE_USER; request_get_method_name() is new
+	- security headers (doc/HEADERS), on by default for every response:
+	  X-Content-Type-Options: nosniff, X-Frame-Options: SAMEORIGIN,
+	  Referrer-Policy: strict-origin-when-cross-origin and, over HTTPS,
+	  Strict-Transport-Security: max-age=31536000; Content-Security-Policy
+	  when configured. Each is set or turned off in a vhost's
+	  "security_headers" block. A site framed by another origin needs
+	  x_frame_options no
 	- timeouts no longer use signals: an alarm (timer.h) runs in ordinary
 	  code when it is due and the process waits for a descriptor
 	  (timerm_wait(), used by the io drivers while an alarm is set, and

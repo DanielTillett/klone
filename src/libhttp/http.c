@@ -482,8 +482,49 @@ err:
     return ~0;
 }
 
+/* Security headers sent by default with every response, pages and error
+ * pages alike, set in a "security_headers" block: each key takes the
+ * header's value, or "no" to leave it out (doc/HEADERS). A page can still
+ * change or remove them (response_set_field, response_del_field) */
+static const struct {
+    const char *key, *name, *value;
+    int tls_only;               /* sent over HTTPS only */
+} http_sec_headers[VHOST_SEC_HEADERS] = {
+    { "x_content_type_options", "X-Content-Type-Options", "nosniff", 0 },
+    { "x_frame_options", "X-Frame-Options", "SAMEORIGIN", 0 },
+    { "referrer_policy", "Referrer-Policy", "strict-origin-when-cross-origin",
+        0 },
+    /* no default: a policy depends on the site's scripts and styles */
+    { "content_security_policy", "Content-Security-Policy", NULL, 0 },
+    { "strict_transport_security", "Strict-Transport-Security",
+        "max-age=31536000", 1 }
+};
+
+/* read the vhost's security header values */
+static int http_load_sec_headers(http_t *h, vhost_t *vhost)
+{
+    u_config_t *c = u_config_get_child(vhost->config, "security_headers");
+    const char *v;
+    size_t i;
+
+    for(i = 0; i < VHOST_SEC_HEADERS; ++i)
+    {
+        v = c ? u_config_get_subkey_value(c, http_sec_headers[i].key) : NULL;
+        if(v == NULL)
+            v = http_sec_headers[i].value;
+        else if(!strcasecmp(v, "no"))
+            v = NULL;
+        if(http_sec_headers[i].tls_only && !h->ssl)
+            v = NULL;
+        vhost->sec_header[i] = v;
+    }
+
+    return 0;
+}
+
 static int http_add_default_header(http_t *h, request_t *rq, response_t *rs)
 {
+    size_t i;
     vhost_t *vhost;
     time_t now;
 
@@ -497,6 +538,11 @@ static int http_add_default_header(http_t *h, request_t *rq, response_t *rs)
 
     now = time(NULL);
     dbg_err_if(response_set_date(rs, now));
+
+    for(i = 0; i < VHOST_SEC_HEADERS; ++i)
+        if(vhost->sec_header[i])
+            dbg_err_if(response_set_field(rs, http_sec_headers[i].name,
+                        vhost->sec_header[i]));
 
     return 0;
 err:
@@ -1056,6 +1102,9 @@ static int http_add_vhost(http_t *http, const char *host, u_config_t *c)
 
     /* HTTP authentication realms and users (a bad one stops the server) */
     dbg_err_if(auth_load(http, vhost));
+
+    /* security headers */
+    dbg_err_if(http_load_sec_headers(http, vhost));
 
     dbg_err_if(vhost_list_add(http->vhosts, vhost));
 

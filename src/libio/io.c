@@ -1293,6 +1293,32 @@ int io_get_fd(io_t *io)
     }
 }
 
+/**
+ * \ingroup basic
+ * \brief  Count the bytes that have arrived but not been read yet
+ *
+ * Data in the io's read buffer (and, for TLS, decrypted by OpenSSL) that a
+ * poll(2) on the descriptor would not report.
+ *
+ * \param io    the \c io_t object
+ *
+ * \return the number of bytes
+ */
+size_t io_pending(io_t *io)
+{
+    size_t n;
+
+    dbg_return_if (io == NULL, 0);
+
+    n = io->rcount;
+#ifdef SSL_ON
+    if(io->type == IO_TYPE_SSL)
+        n += io_ssl_pending(io);
+#endif
+
+    return n;
+}
+
 int io_is_secure(io_t *io)
 {
     dbg_err_if(io == NULL);

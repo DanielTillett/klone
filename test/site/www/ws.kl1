@@ -1,0 +1,43 @@
+<%!
+    #include <stdlib.h>
+    #include <string.h>
+    #include <klin/ws.h>
+%><%
+    /* a WebSocket echo: "bye" closes (1000), "protocol" answers the
+       subprotocol chosen; ?max=N limits messages to N bytes */
+    const char *max = request_get_arg(request, "max"), *data;
+    size_t len;
+    int type, w, rc;
+    ws_t *ws;
+
+    if(ws_accept(request, response, "chat, echo", 0, &ws))
+        return;
+    if(max)
+        ws_set_max_message(ws, (size_t) atoi(max));
+
+    while((w = ws_wait(ws, -1, 10000)) != WS_CLOSED)
+    {
+        if(w == WS_TIMEOUT)
+        {
+            if(ws_ping(ws))
+                break;
+            continue;
+        }
+        if((rc = ws_recv(ws, &type, &data, &len)) == WS_CLOSED)
+            break;
+        if(rc)
+            continue;   /* WS_AGAIN: no whole message yet */
+        if(type == WS_TEXT && !strcmp(data, "bye"))
+        {
+            ws_close(ws, 1000, "bye");
+            break;
+        }
+        if(type == WS_TEXT && !strcmp(data, "protocol"))
+            rc = ws_send(ws, WS_TEXT, ws_protocol(ws), strlen(ws_protocol(ws)));
+        else
+            rc = ws_send(ws, type, data, len);
+        if(rc)
+            break;
+    }
+    ws_free(ws);
+%>

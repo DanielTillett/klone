@@ -45,6 +45,15 @@ Klin 4.0.0:
 	  the first write and each io_flush() reaches the client (chunked on
 	  HTTP/1.1). Writes the client does not take in 30 s close the
 	  connection. Also io_get_fd()
+	- WebSockets (RFC 6455, doc/WEBSOCKET, <klin/ws.h>): ws_accept()
+	  (handshake, subprotocol choice; another site's Origin is refused
+	  unless WS_ANY_ORIGIN), ws_wait() (poll(2) on the client, a
+	  descriptor of the page's and the timer), ws_recv() (fragmented
+	  messages, pings answered, the close handshake, UTF-8 checked, 1 MB
+	  limit by default), ws_send(), ws_ping(), ws_close(). Protocol errors
+	  close with 1002, 1007 or 1009; a frame must be read or written within
+	  30 s. Also io_pending(), response_set_header_sent(), status codes
+	  101 and 426
 	- timeouts no longer use signals: an alarm (timer.h) runs in ordinary
 	  code when it is due and the process waits for a descriptor
 	  (timerm_wait(), used by the io drivers while an alarm is set, and

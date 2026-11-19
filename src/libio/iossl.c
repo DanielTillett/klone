@@ -82,6 +82,17 @@ int io_ssl_get_fd(io_t *io)
     return io_ssl->fd;
 }
 
+/* bytes OpenSSL has decrypted and not yet handed out */
+size_t io_ssl_pending(io_t *io)
+{
+    io_ssl_t *io_ssl = (io_ssl_t*)io;
+    int n;
+
+    dbg_return_if (io_ssl == NULL || io_ssl->io.type != IO_TYPE_SSL, 0);
+
+    return (n = SSL_pending(io_ssl->ssl)) > 0 ? (size_t) n : 0;
+}
+
 static ssize_t io_ssl_read(io_ssl_t *io_ssl, char *buf, size_t size)
 {
     int c, rc;

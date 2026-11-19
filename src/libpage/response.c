@@ -869,6 +869,13 @@ int response_header_sent(response_t *rs)
     return rs->header_sent;
 }
 
+/* the header has been written by other means (a WebSocket handshake):
+   nothing more is printed for this response */
+void response_set_header_sent(response_t *rs)
+{
+    rs->header_sent = 1;
+}
+
 /**
  * \ingroup response
  * \brief   Tell if the response body is sent with chunked encoding

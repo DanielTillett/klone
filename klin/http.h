@@ -30,6 +30,8 @@ enum {
     /**< request accepted but processing not completed */
     HTTP_STATUS_NO_CONTENT                = 204,
     /**< no body returned */
+    HTTP_STATUS_SWITCHING_PROTOCOLS       = 101,
+    /**< the connection changes protocol (WebSocket) */
     HTTP_STATUS_PARTIAL_CONTENT           = 206,
     /**< a range of the resource (Range request) */
     HTTP_STATUS_MOVED_PERMANENTLY         = 301,
@@ -54,6 +56,8 @@ enum {
     /**< request body too large */
     HTTP_STATUS_RANGE_NOT_SATISFIABLE     = 416,
     /**< no part of the requested range is in the resource */
+    HTTP_STATUS_UPGRADE_REQUIRED          = 426,
+    /**< the client must switch protocol (version) */
     /**< decryption key is needed - Klin extension */
     HTTP_STATUS_EXT_KEY_NEEDED            = 430,
     /**< request PDU too big */

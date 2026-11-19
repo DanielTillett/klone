@@ -178,6 +178,10 @@ Server-Sent Events: a page streams events with sse_start(), sse_send()
 and sse_wait(), which waits for the page's own descriptor, a timeout or
 the client going away (doc/SSE).
 
+WebSockets: a page accepts a WebSocket with ws_accept() and exchanges
+messages with ws_wait(), ws_recv() and ws_send(); pages of other sites are
+refused by default (doc/WEBSOCKET).
+
 Encrypted pages: give the import a pattern of pages to encrypt and the key
 file, with an absolute path, for example
 -DKLIN_IMPORT_ARGS="-e;*.kl1;-k;/path/to/key". Pages are re-encrypted when

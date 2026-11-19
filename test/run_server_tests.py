@@ -809,6 +809,191 @@ def run_sse_checks(args, check, plain, secure, temp):
           f"Page did not see the client go away: {ping} {mark.exists()}")
 
 
+class WebSocket:
+    """A WebSocket client (RFC 6455) that can also send what a correct
+    client would not."""
+    GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+    def __init__(self, port, path=b"/ws.kl1", extra=b"", context=None, origin=True,
+                 key=None, version=b"13"):
+        raw = socket.create_connection(("127.0.0.1", port), timeout=5)
+        self.sock = context.wrap_socket(raw, server_hostname="localhost") if context else raw
+        self.key = key if key is not None else base64.b64encode(os.urandom(16))
+        host = b"127.0.0.1:" + str(port).encode()
+        request = (b"GET " + path + b" HTTP/1.1\r\nHost: " + host + b"\r\n"
+                   b"Upgrade: websocket\r\nConnection: keep-alive, Upgrade\r\n"
+                   b"Sec-WebSocket-Version: " + version + b"\r\n")
+        if self.key:
+            request += b"Sec-WebSocket-Key: " + self.key + b"\r\n"
+        if origin is True:
+            request += b"Origin: http" + (b"s" if context else b"") + b"://" + host + b"\r\n"
+        elif origin:
+            request += b"Origin: " + origin + b"\r\n"
+        self.sock.sendall(request + extra + b"\r\n")
+        self.buf = b""
+        while b"\r\n\r\n" not in self.buf:
+            self._recv()
+        head, self.buf = self.buf.split(b"\r\n\r\n", 1)
+        lines = head.decode("latin-1").split("\r\n")
+        self.status = int(lines[0].split()[1])
+        self.fields = {}
+        for line in lines[1:]:
+            name, _, value = line.partition(":")
+            self.fields[name.strip().lower()] = value.strip()
+
+    def accepted(self):
+        want = base64.b64encode(hashlib.sha1(self.key + self.GUID.encode()).digest()).decode()
+        return (self.status == 101 and self.fields.get("upgrade", "").lower() == "websocket" and
+                self.fields.get("sec-websocket-accept") == want)
+
+    def _recv(self):
+        data = self.sock.recv(65536)
+        if not data:
+            raise EOFError
+        self.buf += data
+
+    def _take(self, n):
+        while len(self.buf) < n:
+            self._recv()
+        data, self.buf = self.buf[:n], self.buf[n:]
+        return data
+
+    def send_frame(self, op, payload=b"", fin=True, mask=True, rsv=0):
+        head = bytes([(0x80 if fin else 0) | rsv | op])
+        n = len(payload)
+        bit = 0x80 if mask else 0
+        if n < 126:
+            head += bytes([bit | n])
+        elif n < 65536:
+            head += bytes([bit | 126]) + n.to_bytes(2, "big")
+        else:
+            head += bytes([bit | 127]) + n.to_bytes(8, "big")
+        if mask:
+            key = os.urandom(4)
+            payload = bytes(b ^ key[i % 4] for i, b in enumerate(payload))
+            head += key
+        self.sock.sendall(head + payload)
+
+    def send(self, data):
+        self.send_frame(1 if isinstance(data, str) else 2,
+                        data.encode() if isinstance(data, str) else data)
+
+    def frame(self):
+        """(opcode, payload) of the next frame from the server, None at EOF."""
+        try:
+            b0, b1 = self._take(2)
+            if b1 & 0x80:
+                return ("masked", b"")       # a server must not mask
+            n = b1 & 0x7F
+            if n == 126:
+                n = int.from_bytes(self._take(2), "big")
+            elif n == 127:
+                n = int.from_bytes(self._take(8), "big")
+            return (b0 & 0x0F, self._take(n))
+        except (EOFError, ConnectionResetError, socket.timeout, ssl.SSLError):
+            return None
+
+    def close_code(self):
+        """The code of the close frame the server sends next (skipping data)."""
+        while (frame := self.frame()) is not None:
+            if frame[0] == 8:
+                return int.from_bytes(frame[1][:2], "big") if len(frame[1]) >= 2 else 1005
+        return None
+
+    def close(self):
+        self.sock.close()
+
+
+def run_websocket_checks(check, plain, secure):
+    """WebSockets (doc/WEBSOCKET): handshake, echo of every frame form,
+    control frames, protocol errors and limits, refused handshakes, TLS."""
+    ws = WebSocket(plain, extra=b"Sec-WebSocket-Protocol: echo, chat\r\n")
+    check(ws.accepted() and ws.fields.get("sec-websocket-protocol") == "chat",
+          f"WebSocket handshake: {ws.status} {ws.fields}")
+    for message in ["hello", "héllo ☃ \U0001F600", "x" * 125, "y" * 126, "z" * 70000]:
+        ws.send(message)
+        check(ws.frame() == (1, message.encode()), f"Text echo of {len(message)} chars")
+    ws.send(bytes(range(256)) * 300)
+    check(ws.frame() == (2, bytes(range(256)) * 300), "Binary echo")
+    ws.send("")
+    check(ws.frame() == (1, b""), "Empty message echo")
+    # a fragmented message with a ping between its parts
+    ws.send_frame(1, b"frag", fin=False)
+    ws.send_frame(9, b"are you there")
+    check(ws.frame() == (10, b"are you there"), "Ping not answered with its payload")
+    ws.send_frame(0, b"men", fin=False)
+    ws.send_frame(0, b"ted")
+    check(ws.frame() == (1, b"fragmented"), "Fragmented message")
+    ws.send_frame(10, b"unsolicited pong")    # ignored
+    ws.send("protocol")
+    check(ws.frame() == (1, b"chat"), "Chosen subprotocol not seen by the page")
+    # the client closes: the server answers with the same code
+    ws.send_frame(8, (4001).to_bytes(2, "big") + b"client done")
+    check(ws.close_code() == 4001, "Close not echoed")
+    check(ws.frame() is None, "Connection not closed after the close handshake")
+    ws.close()
+
+    # the page closes
+    ws = WebSocket(plain)
+    ws.send("bye")
+    code = ws.close_code()
+    ws.send_frame(8, (1000).to_bytes(2, "big"))
+    check(code == 1000 and ws.frame() is None, f"Page close: {code}")
+    ws.close()
+
+    # protocol errors: the server closes with the right code
+    for name, send, want in [
+            ("unmasked frame", lambda w: w.send_frame(1, b"x", mask=False), 1002),
+            ("RSV bit", lambda w: w.send_frame(1, b"x", rsv=0x40), 1002),
+            ("unknown opcode", lambda w: w.send_frame(3, b"x"), 1002),
+            ("fragmented ping", lambda w: w.send_frame(9, b"x", fin=False), 1002),
+            ("long ping", lambda w: w.send_frame(9, b"x" * 126), 1002),
+            ("stray continuation", lambda w: w.send_frame(0, b"x"), 1002),
+            ("new message inside a message",
+             lambda w: (w.send_frame(1, b"a", fin=False), w.send_frame(1, b"b")), 1002),
+            ("invalid UTF-8", lambda w: w.send_frame(1, b"\xc3\x28"), 1007),
+            ("surrogate in UTF-8", lambda w: w.send_frame(1, b"\xed\xa0\x80"), 1007),
+            ("overlong UTF-8", lambda w: w.send_frame(1, b"\xc0\xaf"), 1007),
+            ("UTF-8 cut short", lambda w: w.send_frame(1, b"ok \xe2\x82"), 1007)]:
+        ws = WebSocket(plain)
+        send(ws)
+        code = ws.close_code()
+        ws.close()
+        check(code == want, f"{name}: close code {code}, expected {want}")
+    ws = WebSocket(plain, b"/ws.kl1?max=1000")
+    ws.send("a" * 1000)
+    ok = ws.frame() == (1, b"a" * 1000)
+    ws.send_frame(1, b"b" * 600, fin=False)
+    ws.send_frame(0, b"c" * 600)
+    code = ws.close_code()
+    ws.close()
+    check(ok and code == 1009, f"Message limit: {ok} {code}")
+
+    # refused handshakes
+    for name, kwargs, want in [
+            ("another site's page", {"origin": b"http://evil.example"}, 403),
+            ("version 8", {"version": b"8"}, 426),
+            ("no key", {"key": b""}, 400),
+            ("short key", {"key": base64.b64encode(b"x" * 10)}, 400)]:
+        ws = WebSocket(plain, **kwargs)
+        ws.close()
+        check(ws.status == want and not ws.accepted(), f"Handshake with {name}: {ws.status}")
+    ws = WebSocket(plain, origin=False)
+    check(ws.accepted(), "Handshake without Origin (not a browser) refused")
+    ws.close()
+    reply = exchange(plain, b"GET /ws.kl1 HTTP/1.1\r\nHost: localhost\r\n\r\n")
+    check(b" 400 " in reply.split(b"\r\n")[0], "A plain GET of a WebSocket page was not refused")
+
+    # TLS
+    ws = WebSocket(secure, context=client_context(ssl.TLSVersion.TLSv1_3))
+    ws.send("over tls")
+    ok = ws.accepted() and ws.frame() == (1, b"over tls")
+    ws.send("z" * 70000)
+    ok = ok and ws.frame() == (1, b"z" * 70000)
+    ws.close()
+    check(ok, "WebSocket over TLS")
+
+
 def run_bad_auth_checks(check, daemon, env, temp):
     """Unsafe or broken auth configurations stop klind at startup, instead
     of serving the realm unprotected (the reason goes to the log)."""
@@ -1037,6 +1222,7 @@ def run_server_checks(args, env, output, daemon):
                 run_header_checks(check, plain, client, secure)
                 run_conditional_checks(check, plain, files)
                 run_sse_checks(args, check, plain, secure, temp)
+                run_websocket_checks(check, plain, secure)
                 run_keep_alive_checks(args, check, plain, secure, request)
                 check(b"200 OK" in exchange(plain, request), "Server failed after malformed requests")
             finally:

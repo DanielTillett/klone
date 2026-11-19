@@ -1,10 +1,20 @@
 # Copyright (c) 2026 Daniel Tillett. Part of Klin; see the LICENSE file.
 name: Build and test
-# Automatic runs are off (the macOS and bmake jobs fail); start a run by hand
-# from the Actions tab
-on: workflow_dispatch
+# Linux (GCC release, sanitizers, BSD make) on every push and pull request.
+# macOS and Windows run weekly and by hand from the Actions tab: hosted macOS
+# runners are often not available for hours, and the Windows (MinGW) build
+# is a compile check, not a supported platform (README, KNOWN LIMITATIONS)
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   linux:
     runs-on: ubuntu-24.04
@@ -18,47 +28,19 @@ jobs:
         with:
           persist-credentials: false
       - name: Install build tools
-        run: sudo apt-get update && sudo apt-get install -y build-essential clang libclang-rt-dev libssl-dev zlib1g-dev python3 git cmake ninja-build
+        run: sudo apt-get update && sudo apt-get install -y build-essential clang libclang-rt-dev libssl-dev zlib1g-dev python3 git cmake ninja-build pkg-config
       - name: Build and test (CMake + Ninja)
         run: python3 build/build.py --test ${{ matrix.mode == 'sanitize' && '--sanitize' || '' }}
-      - name: Fuzz parser smoke test
+      - name: Fuzz smoke test (parsers and page translator)
         if: matrix.mode == 'release'
         run: python3 test/run_fuzz.py --build .build/release/cmake --runs 10000
-      - name: Build-system checks (site names, includes, flags, install)
+      - name: Build-system checks (site names, includes, flags, install, packages)
         if: matrix.mode == 'release'
         run: python3 test/run_build_checks.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: build-logs-${{ matrix.mode }}
-          path: |
-            .build/${{ matrix.mode }}/*.log
-            .build/${{ matrix.mode }}/build-info.json
-
-  macos:
-    runs-on: macos-15
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        mode: [release, sanitize]
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - name: Install build tools
-        run: |
-          brew install cmake ninja openssl@3
-          echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
-      - name: Build and test (CMake + Ninja, Apple Clang)
-        run: python3 build/build.py --test ${{ matrix.mode == 'sanitize' && '--sanitize' || '' }}
-      - name: Build-system checks
-        if: matrix.mode == 'release'
-        run: python3 test/run_build_checks.py
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
-        with:
-          name: build-logs-macos-${{ matrix.mode }}
           path: |
             .build/${{ matrix.mode }}/*.log
             .build/${{ matrix.mode }}/build-info.json
@@ -93,3 +75,66 @@ jobs:
           path: |
             .build/release/*.log
             .build/release/build-info.json
+
+  macos:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: macos-15
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [release, sanitize]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install build tools
+        run: |
+          brew install cmake ninja openssl@3
+          echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+      - name: Build and test (CMake + Ninja, Apple Clang)
+        run: python3 build/build.py --test ${{ matrix.mode == 'sanitize' && '--sanitize' || '' }}
+      - name: Build-system checks
+        if: matrix.mode == 'release'
+        run: python3 test/run_build_checks.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: build-logs-macos-${{ matrix.mode }}
+          path: |
+            .build/${{ matrix.mode }}/*.log
+            .build/${{ matrix.mode }}/build-info.json
+
+  # Native Windows: does the MinGW (UCRT64) build still compile and link?
+  windows-mingw:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
+        with:
+          msystem: UCRT64
+          install: >-
+            git python
+            mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-openssl
+            mingw-w64-ucrt-x86_64-zlib
+      - name: Fetch the pinned LibU
+        run: python -c "import sys; sys.path.insert(0, 'build'); import build; build.dependencies(False)"
+      - name: Configure and build (MinGW, Ninja)
+        run: |
+          cmake -S . -B .build/mingw -G Ninja -DLIBU_SOURCE_DIR=libu 2>&1 | tee configure.log
+          cmake --build .build/mingw -- -k 0 2>&1 | tee build.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: build-logs-windows-mingw
+          path: |
+            configure.log
+            build.log

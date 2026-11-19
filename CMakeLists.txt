@@ -345,6 +345,15 @@ klin_cache_entry(_site_init KLIN_SITE_OPTIONS STRING "${KLIN_C_OPTIONS}")
 # write only when changed, so an unchanged parent configure does not force a
 # site reconfigure
 set(_site_init_file "${CMAKE_BINARY_DIR}/site-init.cmake")
+if(EXISTS "${_site_init_file}")
+    file(READ "${_site_init_file}" _site_init_old)
+    if(NOT _site_init_old STREQUAL _site_init)
+        # also drop the configure stamp: make tools with whole-second file
+        # times (BSD make) miss a change made in the second of the last
+        # configure, and would build the old site
+        file(REMOVE "${CMAKE_BINARY_DIR}/klin_site_build-prefix/src/klin_site_build-stamp/klin_site_build-configure")
+    endif()
+endif()
 file(WRITE "${_site_init_file}.new" "${_site_init}")
 configure_file("${_site_init_file}.new" "${_site_init_file}" COPYONLY)
 

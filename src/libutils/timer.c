@@ -8,6 +8,7 @@
  */
 
 #include "klone_conf.h"
+#include <stdint.h>
 #include <time.h>
 #include <unistd.h>
 #include <signal.h>
@@ -28,7 +29,7 @@ struct talarm_s
 {
     TAILQ_ENTRY(talarm_s) np;   /* next & prev pointers         */
     timerm_t *timer;            /* timerm_t that owns the alarm */
-    time_t expire;              /* when to fire the alarm       */
+    int64_t expire;             /* when to fire the alarm (ms)  */
     talarm_cb_t cb;             /* alarm callback               */
     void *arg;                  /* cb opaque argument           */
     pid_t owner;                /* process that set the alarm   */
@@ -37,7 +38,7 @@ struct talarm_s
 struct timerm_s
 {
     talarm_list_t alist;        /* alarm list                   */
-    time_t next;                /* next timestamp               */
+    int64_t next;               /* next SIGALRM (ms), 0 if none */
     int cb_running;             /* set when timer callback is running */
 #ifdef OS_WIN
     CRITICAL_SECTION cs;
@@ -65,15 +66,35 @@ static volatile sig_atomic_t alarm_pending = 0;
 #endif
 #endif
 
-static int timerm_set_alarm(int timeout)
+/* milliseconds of a clock that does not jump with the time of day: alarms
+ * are timed in milliseconds so that one never fires early (with whole seconds
+ * an alarm set at 0.999 for one second would run on any SIGALRM after 1.000) */
+static int64_t timerm_now(void)
 {
-    time_t n = time(0) + timeout;
+#if defined(OS_WIN)
+    return (int64_t) GetTickCount64();
+#else
+#if defined(CLOCK_MONOTONIC)
+    struct timespec ts;
 
-    if(timeout && (timer->next == 0 || n < timer->next))
+    if(clock_gettime(CLOCK_MONOTONIC, &ts) == 0)
+        return (int64_t) ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+#endif
+    return (int64_t) time(0) * 1000;
+#endif
+}
+
+/* raise SIGALRM in 'ms' milliseconds unless it is already due sooner */
+static int timerm_set_alarm(int64_t ms)
+{
+    int64_t secs = (ms + 999) / 1000;     /* alarm(2) counts whole seconds */
+    int64_t n = timerm_now() + secs * 1000;
+
+    if(secs > 0 && (timer->next == 0 || n < timer->next))
     {
         timer->next = n;
 #ifdef OS_UNIX
-        alarm(timeout);
+        alarm((unsigned int) secs);
 #endif
     } 
 
@@ -83,7 +104,7 @@ static int timerm_set_alarm(int timeout)
 static int timerm_set_next(void)
 {
     talarm_t *al = NULL;
-    time_t now = time(0);
+    int64_t now = timerm_now();
 
     if((al = TAILQ_FIRST(&timer->alist)) != NULL)
         timerm_set_alarm(U_MAX(1, al->expire - now));
@@ -96,7 +117,7 @@ static void timerm_run(void)
 {
     talarm_t *al = NULL;
     pid_t pid = getpid();
-    time_t now = time(0);
+    int64_t now = timerm_now();
 
     dbg_err_if(timer == NULL);
 
@@ -236,10 +257,10 @@ static DWORD WINAPI thread_func(LPVOID param)
 {
     for(;;Sleep(250))
     {
-        if(timer->next == NULL)
+        if(timer->next == 0)
             continue;
 
-        if((timer->next - time(0)) <= 0)
+        if((timer->next - timerm_now()) <= 0)
             timerm_sigalrm(0);  /* raise the alarm */
     }
 
@@ -279,14 +300,14 @@ err:
 int timerm_reschedule(talarm_t *al, int secs, talarm_cb_t cb, void *arg)
 {
     talarm_t *item = NULL;
-    time_t now = time(0);
+    int64_t now = timerm_now();
 
     dbg_return_if (cb == NULL, ~0);
     dbg_return_if (al == NULL, ~0);
 
     al->cb = cb;
     al->arg = arg;
-    al->expire = now + secs;
+    al->expire = now + (int64_t) secs * 1000;
 
     dbg_err_if(timerm_block_alarms());
 

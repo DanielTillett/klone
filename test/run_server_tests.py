@@ -10,6 +10,7 @@ import socket
 import ssl
 import subprocess
 import tempfile
+import threading
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -316,6 +317,39 @@ def run_keep_alive_checks(args, check, plain, secure, request):
                            stdout=subprocess.PIPE, text=True).stdout.strip()
     check(worker.isdigit() and state and not state.startswith("Z"),
           f"Worker retired after an idle keep-alive connection: pid {worker} state {state!r}")
+
+    # a client waiting while every worker holds a kept-alive connection gets a
+    # new worker after about a second, not when that connection ends
+    stop, held_errors, waited = threading.Event(), [], None
+
+    def keep_using(conn):
+        try:
+            while not stop.is_set():
+                conn.send(request)
+                conn.response()
+                time.sleep(0.3)
+        except (OSError, EOFError) as e:
+            held_errors.append(e)
+
+    with Connection(plain) as held, Connection(plain) as waiting:
+        held.send(request)
+        held.response()
+        user = threading.Thread(target=keep_using, args=(held,))
+        user.start()
+        try:
+            start = time.time()
+            waiting.send(request)
+            status, headers, body = waiting.response()
+            if body == hello:
+                waited = time.time() - start
+        except (OSError, EOFError):
+            pass
+        finally:
+            stop.set()
+            user.join()
+    check(waited is not None and waited < 3,
+          f"Client not served while another kept a connection in use (waited {waited})")
+    check(not held_errors, f"Kept-alive connection dropped for a waiting client: {held_errors}")
 
     # an idle connection is closed after keep_alive_timeout (1 s)
     with Connection(plain) as conn:

@@ -325,6 +325,13 @@ static int server_backend_detach(server_t *s, backend_t *be)
     return 0;
 }
 
+/* prefork: the alarm that asks the parent for one more worker when this one
+ * has held a connection for more than a second, and whether the connection
+ * is serving a request (or waiting for the next one) */
+static talarm_t *server_watchdog_al = NULL;
+static int server_watchdog_enabled = 0;
+static volatile sig_atomic_t server_watchdog_busy = 0;   /* read by the alarm */
+
 #ifdef OS_UNIX
 static int server_chroot_to(server_t *s, const char *dir)
 {
@@ -581,23 +588,44 @@ err:
     return ~0;
 }
 
+/* clients are waiting in the accept queue: no worker is free to take them */
+static int server_clients_waiting(void)
+{
+    struct timeval tv = { 0, 0 };
+    fd_set rdfds;
+    int ld;
+
+    if(ctx->backend == NULL || (ld = ctx->backend->ld) < 0 ||
+            ld >= FD_SETSIZE)
+        return 0;
+
+    FD_ZERO(&rdfds);
+    FD_SET(ld, &rdfds);
+
+    return select(ld + 1, &rdfds, NULL, NULL, &tv) > 0;
+}
+
 static int server_cb_spawn_child(talarm_t *al, void *arg)
 {
     server_t *s = (server_t*)arg;
-
-    u_unused_args(al);
 
     dbg_err_if (s == NULL);
 
     /* must be called by a child process */
     dbg_err_if(ctx->backend == NULL || ctx->pipc == 0);
 
+    /* an idle kept-alive connection only needs a new worker if other clients
+       are waiting for one: otherwise check again in a second */
+    if(!server_watchdog_busy && !server_clients_waiting())
+        return timerm_reschedule(al, 1, server_cb_spawn_child, arg);
+
     /* ask the parent to create a new worker child process */
     dbg_err_if(server_ppc_cmd_fork_child(s, ctx->backend));
 
-    /* mark the current child process so it will die when finishes 
-       serving this page */
-    server_stop(s);
+    /* mark the current child process so it will die when it finishes
+       serving this connection; its listening socket stays open (closing it
+       may drop the kept-alive connection) */
+    s->stop = 1;
 
     return 0;
 err:
@@ -605,18 +633,14 @@ err:
 }
 #endif /* ifdef OS_UNIX */
 
-/* prefork: the alarm that asks the parent for one more worker when this one
- * has been busy serving a request for more than a second */
-static talarm_t *server_watchdog_al = NULL;
-static int server_watchdog_enabled = 0;
-
 /**
  * \brief   Tell a prefork worker whether it is serving a request
  *
  * Called with \p busy set to \c 0 while a kept-alive connection waits for its
- * next request, and to \c 1 when that request arrives, so that an idle
- * connection does not count as a slow page.  Does nothing in other server
- * models.
+ * next request, and to \c 1 when that request arrives.  Once the connection
+ * has been held for a second the worker asks the parent for one more worker
+ * and exits after the connection, if a request is slow or if other clients
+ * wait while the connection is idle.  Does nothing in other server models.
  *
  * \param s     the server object
  * \param busy  \c 1 when serving a request, \c 0 when idle
@@ -628,26 +652,35 @@ int server_watchdog(server_t *s, int busy)
     if(!server_watchdog_enabled || s == NULL)
         return 0;
 
+    server_watchdog_busy = busy;
+
 #if defined(OS_UNIX) && defined(HAVE_FORK)
     /* once fired the worker exits after this connection: don't ask again */
     if(busy && server_watchdog_al == NULL && !s->stop)
     {
-        /* FIXME lower timeout value may be needed */
         dbg_err_if(timerm_add(1, server_cb_spawn_child, (void*)s,
                     &server_watchdog_al));
-    } else if(!busy && server_watchdog_al) {
-        /* remove and free the alarm (pending or already fired) */
-        timerm_del(server_watchdog_al);
-        server_watchdog_al = NULL;
     }
-#else
-    u_unused_args(s, busy);
 #endif
 
     return 0;
 err:
     return ~0;
 }
+
+#if defined(OS_UNIX) && defined(HAVE_FORK)
+/* prefork: the connection is closed, remove and free the alarm (pending or
+ * already fired) */
+static void server_watchdog_end(void)
+{
+    if(server_watchdog_al)
+    {
+        timerm_del(server_watchdog_al);
+        server_watchdog_al = NULL;
+    }
+    server_watchdog_enabled = 0;
+}
+#endif
 
 /* serve the accepted socket 'ad', which is always consumed (closed) */
 static int server_be_serve(server_t *s, backend_t *be, int ad)
@@ -675,8 +708,7 @@ static int server_be_serve(server_t *s, backend_t *be, int ad)
         owned = 0;
         dbg_if(backend_serve(be, ad));
 
-        dbg_if(server_watchdog(s, 0));
-        server_watchdog_enabled = 0;
+        server_watchdog_end();
         break;
 #endif  /* OS_UNIX && HAVE_FORK */
 

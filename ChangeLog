@@ -1,11 +1,17 @@
 ChangeLog file of KLone - https://github.com/DanielTillett/klone
 
 KLone 4.0.0:
-	- prefork: the 1 s watchdog that asks for a new worker when a page is
-	  slow now covers only serving a request, not waiting for the next one
-	  on a kept-alive connection. It fired on every connection held for
-	  more than a second: the idle connection was dropped and the worker
-	  replaced. New server_watchdog()
+	- prefork: the 1 s watchdog that asks for a new worker no longer drops
+	  kept-alive connections or retires workers that only wait for the next
+	  request. It asks for a new worker when a request is slow, or when a
+	  connection idle for a second has other clients waiting in the accept
+	  queue (otherwise those clients waited until the connection closed).
+	  The retiring worker keeps its listening socket open. New
+	  server_watchdog()
+	- timer: alarms are timed in milliseconds on a monotonic clock. With
+	  whole seconds an alarm could fire almost at once (on any SIGALRM just
+	  after the next second started), e.g. closing a kept-alive connection
+	  idle for a few milliseconds when keep_alive_timeout is 1
 	- performance: 7-15% less CPU per small request (macOS, measured). The
 	  timer no longer blocks SIGALRM with two system calls per change (a
 	  signal that arrives while the alarm list changes is deferred); request

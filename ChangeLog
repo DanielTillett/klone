@@ -15,6 +15,43 @@ Klin 4.0.0:
 	  entries, so they survive a reconfigure. The Windows service keeps
 	  the name kloned. All of it is in cmake/klone_compat.cmake and the
 	  lines marked "before KLone was renamed Klin"
+	- timeouts no longer use signals: an alarm (timer.h) runs in ordinary
+	  code when it is due and the process waits for a descriptor
+	  (timerm_wait(), used by the io drivers while an alarm is set, and
+	  server_loop), so callbacks may log and allocate. TLS sockets are
+	  non-blocking, so a request that stops in the middle of a TLS record
+	  still times out, and the TLS handshake has a 10 s timeout (it had
+	  none). The prefork watchdog and the spare-worker idle timeout, which
+	  must interrupt any code, use the worker's own setitimer(2) SIGALRM.
+	  New: timerm_run(), timerm_armed(), timerm_wait(). Alarm callbacks of
+	  user code now run only while klin waits for I/O
+	- signals: SIGINT/SIGTERM handlers only set flags, close(2) and
+	  _exit(2) (they used to log and free the embedded files); ppc reads
+	  and writes loop over partial transfers, and a command goes out in
+	  one write(2)
+	- fixed (inherited from KLone): ppc log lines read back from the parent
+	  were cut to 7 characters; the memory klog stored nothing; a NULL
+	  dereference when only a backend has a log; the SIGKILL fallback at
+	  shutdown never ran; negative prefork/fork counts became huge; the
+	  request hook fired twice on redirects and failed pages; CGI closed
+	  its stdin pipe twice and swapped local and peer addresses; a
+	  server_list with a leading or doubled blank skipped the servers
+	  after it; a failed CGI was left a zombie; a form field leaked when
+	  it could not be added
+	- translator: page URIs and MIME types are written into the generated
+	  C as escaped string literals (a quote or backslash in a name broke
+	  the build); dead parser states removed
+	- packaging: install writes lib/cmake/Klin/KlinConfig.cmake
+	  (find_package(Klin), target Klin::klin) and lib/pkgconfig/klin.pc
+	- code: doc/CONVENTIONS (return values, error macros, ownership,
+	  process-wide state, signals); header_next_field() and
+	  header_count_field(); vhost aliases and index pages are read once;
+	  the longest functions (request serving, CGI, server setup and loop,
+	  multipart parsing) are split
+	- tests: unit tests on the real libraries (ctest -L unit, with
+	  KLIN_BUILD_TESTS=ON), the page translator in the fuzz target, CGI,
+	  uploads, TLS timeouts, SIGTERM and consumer builds of the installed
+	  package; CI runs on every push and pull request
 	- vhost: the cached dir_alias/script_alias values and temp_dir are
 	  copies owned by the vhost; timer: the clock is read with the alarms
 	  blocked, and deleting the earliest alarm sets SIGALRM sooner if the

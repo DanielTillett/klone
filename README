@@ -233,7 +233,7 @@ RENAMED FROM KLONE
 ------------------
 
 KLone was renamed Klin in 4.0.0. The old names below still work in 4.x and
-will be removed in the next major release:
+will be removed in 5.0.0 (TODO lists what goes):
 
     KLone                          Klin                 old name in 4.x
     kloned, klone (commands)       klind, klin          symlinks (Unix install)

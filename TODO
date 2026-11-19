@@ -36,9 +36,30 @@ PLANNED: FEATURES AND TESTING
   not have to be held in memory or a temporary file (important on small
   devices).
 * Code coverage reporting in CI, to show what the test suites miss.
-* Longer fuzzing campaigns, and fuzz targets for the page translator.
+* Longer fuzzing campaigns (the parsers and the page translator have a
+  fuzz target; CI runs a short smoke test).
 * Platform coverage: *BSD and native Windows builds are untested; C++ pages
   (.klx) are not supported by the CMake build.
+
+
+
+PLANNED: 5.0.0, REMOVING THE KLONE NAMES
+
+The names KLone used are accepted throughout 4.x (README, RENAMED FROM
+KLONE) and go in 5.0.0, the next major release. Announce it in the last
+4.x release notes. To remove them:
+
+* delete cmake/klone_compat.cmake and its include and three calls in
+  CMakeLists.txt (the KLONE_* settings, the forwarding headers, the
+  klone/kloned links);
+* delete the code marked "before KLone was renamed Klin": the klone_sid
+  cookie, KLONE_CIPHER_KEY, .klone pages and /index.klone, the embedded
+  /etc/kloned.conf and the klone_sess_* session file migration
+  (git grep -n "before KLone was renamed Klin" lists every place);
+* drop the RENAMED FROM KLONE section from README, keeping one line on the
+  history, and the compatibility checks in test/run_build_checks.py and
+  test/run_server_tests.py;
+* decide about the Windows service name (kloned).
 
 
 POSSIBLE EXTRAS (only if a user needs them)

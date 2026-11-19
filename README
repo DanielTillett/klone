@@ -353,8 +353,13 @@ KNOWN LIMITATIONS
 
 * Built and tested on Linux (including WSL), with Ninja and with BSD make,
   and on macOS 15 (Apple Silicon, Apple Clang, Homebrew OpenSSL 3). *BSD
-  and native Windows are untested. On macOS, LeakSanitizer is unavailable,
-  so the sanitizer build checks memory errors and undefined behavior only.
+  is untested. On macOS, LeakSanitizer is unavailable, so the sanitizer
+  build checks memory errors and undefined behavior only.
+* Native Windows is not supported: on Windows, build and run Klin in WSL.
+  LibU and Klin use POSIX interfaces (fork, poll, setenv, mkstemps,
+  fnmatch, syslog); an MSVC build stops at LibU's POSIX headers and a
+  MinGW build at missing POSIX functions (tried 20 Nov 2026). The old
+  Windows code paths (OS_WIN, the kloned service) are kept but unbuilt.
 * C++ pages (.klx) are not supported; the import stops with an error.
   LibU's SCTP support is off by default (LIBU_ENABLE_SCTP).
 * Client-side sessions still use encrypt-then-MAC around AES-CBC. Moving

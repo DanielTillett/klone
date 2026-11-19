@@ -1,9 +1,9 @@
 # Copyright (c) 2026 Daniel Tillett. Part of Klin; see the LICENSE file.
 name: Build and test
 # Linux (GCC release, sanitizers, BSD make) on every push and pull request.
-# macOS and Windows run weekly and by hand from the Actions tab: hosted macOS
-# runners are often not available for hours, and the Windows (MinGW) build
-# is a compile check, not a supported platform (README, KNOWN LIMITATIONS)
+# macOS runs weekly and by hand from the Actions tab: hosted macOS runners
+# are often not available for hours. Native Windows is not supported (README,
+# KNOWN LIMITATIONS); on Windows, Klin is built and tested in WSL
 on:
   push:
   pull_request:
@@ -104,37 +104,3 @@ jobs:
           path: |
             .build/${{ matrix.mode }}/*.log
             .build/${{ matrix.mode }}/build-info.json
-
-  # Native Windows: does the MinGW (UCRT64) build still compile and link?
-  windows-mingw:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
-    runs-on: windows-2025
-    timeout-minutes: 30
-    defaults:
-      run:
-        shell: msys2 {0}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
-        with:
-          msystem: UCRT64
-          install: >-
-            git python
-            mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-openssl
-            mingw-w64-ucrt-x86_64-zlib
-      - name: Fetch the pinned LibU
-        run: python -c "import sys; sys.path.insert(0, 'build'); import build; build.dependencies(False)"
-      - name: Configure and build (MinGW, Ninja)
-        run: |
-          cmake -S . -B .build/mingw -G Ninja -DLIBU_SOURCE_DIR=libu 2>&1 | tee configure.log
-          cmake --build .build/mingw -- -k 0 2>&1 | tee build.log
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
-        with:
-          name: build-logs-windows-mingw
-          path: |
-            configure.log
-            build.log

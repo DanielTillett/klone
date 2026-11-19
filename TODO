@@ -38,8 +38,10 @@ PLANNED: FEATURES AND TESTING
 * Code coverage reporting in CI, to show what the test suites miss.
 * Longer fuzzing campaigns (the parsers and the page translator have a
   fuzz target; CI runs a short smoke test).
-* Platform coverage: *BSD and native Windows builds are untested; C++ pages
-  (.klx) are not supported by the CMake build.
+* Platform coverage: *BSD is untested; native Windows does not build (use
+  WSL; README, KNOWN LIMITATIONS). Decide whether to port LibU and Klin to
+  Windows or remove the OS_WIN code. C++ pages (.klx) are not supported by
+  the CMake build.
 
 
 

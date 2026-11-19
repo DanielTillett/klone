@@ -139,6 +139,10 @@ def client_context(version):
 
 
 def run_build_steps(commands, env, log_path):
+    # BSD make compares whole-second file times: what is rebuilt in the
+    # second the previous build ended (the library, klind) would look no
+    # newer than it, and the old site would stay linked in
+    time.sleep(1.1)
     with log_path.open("a") as log:
         for command, cwd in commands:
             result = subprocess.run(command, cwd=cwd, env=env, stdout=log, stderr=subprocess.STDOUT)

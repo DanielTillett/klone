@@ -54,6 +54,18 @@ Klin 4.0.0:
 	  close with 1002, 1007 or 1009; a frame must be read or written within
 	  30 s. Also io_pending(), response_set_header_sent(), status codes
 	  101 and 426
+	- REST routes (doc/ROUTES): a "routes" block maps methods and patterns
+	  ({name} segments, a {name*} rest) to pages; parameters through
+	  request_get_route_param(); 405 with Allow when only other methods
+	  match; bad routes stop klind at startup. PATCH requests. Status
+	  codes 405 and 415
+	- JSON (doc/JSON, <klin/json.h>): a strict RFC 8259 reader (UTF-8
+	  checked, duplicate keys refused, nesting limited to 64) and a
+	  streaming writer that checks the structure and escapes for HTML
+	  <script> safety. request_get_json() parses a request body (415,
+	  413, 400), request_read_body() reads one raw. The fuzz target
+	  checks that what the reader accepts writes out and reads back the
+	  same
 	- timeouts no longer use signals: an alarm (timer.h) runs in ordinary
 	  code when it is due and the process waits for a descriptor
 	  (timerm_wait(), used by the io drivers while an alarm is set, and

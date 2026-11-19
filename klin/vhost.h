@@ -67,6 +67,9 @@ typedef struct vhost_s
     /* security header values sent with every response (NULL: not sent), in
        the order of http.c's http_sec_headers table */
     const char *sec_header[VHOST_SEC_HEADERS];
+
+    /* the "routes" block (route.c), or NULL */
+    u_config_t *routes;
 } vhost_t;
 
 typedef struct vhost_list_s vhost_list_t;

@@ -182,6 +182,10 @@ WebSockets: a page accepts a WebSocket with ws_accept() and exchanges
 messages with ws_wait(), ws_recv() and ws_send(); pages of other sites are
 refused by default (doc/WEBSOCKET).
 
+REST APIs: a "routes" block maps methods and path patterns such as
+/api/users/{id} to pages (doc/ROUTES), and <klin/json.h> reads request
+bodies and writes responses as JSON (doc/JSON).
+
 Encrypted pages: give the import a pattern of pages to encrypt and the key
 file, with an absolute path, for example
 -DKLIN_IMPORT_ARGS="-e;*.kl1;-k;/path/to/key". Pages are re-encrypted when

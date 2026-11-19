@@ -4,6 +4,7 @@
 import argparse
 import base64
 import hashlib
+import json
 from http.cookies import SimpleCookie
 import os
 from pathlib import Path
@@ -994,17 +995,127 @@ def run_websocket_checks(check, plain, secure):
     check(ok, "WebSocket over TLS")
 
 
+ROUTES = """routes
+    {
+        route
+        {
+            method GET
+            path /api/items/{id}
+            page /api.kl1
+        }
+        route
+        {
+            method PUT, PATCH DELETE
+            path /api/items/{id}
+            page /api.kl1
+        }
+        route
+        {
+            method POST
+            path /api/items
+            page /api.kl1
+        }
+        route
+        {
+            path /api/files/{path*}
+            page /api.kl1
+        }
+    }"""
+
+
+def run_route_checks(args, check, plain):
+    """REST routes and JSON (doc/ROUTES, doc/JSON): methods, parameters,
+    405 with Allow, JSON bodies and their errors."""
+    def call(method, path, body=None, ctype=b"application/json"):
+        extra = b""
+        if body is not None:
+            extra = b"Content-Type: " + ctype + b"\r\nContent-Length: " + \
+                str(len(body)).encode() + b"\r\n"
+        reply = exchange(plain, method + b" " + path + b" HTTP/1.1\r\nHost: localhost\r\n" +
+                         extra + b"\r\n" + (body or b""))
+        head, _, data = reply.partition(b"\r\n\r\n")
+        lines = head.decode("latin-1").split("\r\n")
+        fields = {}
+        for line in lines[1:]:
+            name, _, value = line.partition(":")
+            fields[name.strip().lower()] = value.strip()
+        try:
+            doc = json.loads(data) if data else None
+        except ValueError:
+            doc = data
+        return int(lines[0].split()[1]), fields, doc
+
+    status, fields, doc = call(b"GET", b"/api/items/42")
+    check(status == 200 and fields.get("content-type") == "application/json" and
+          doc == {"method": "GET", "id": "42"}, f"GET route: {status} {doc}")
+    status, fields, doc = call(b"HEAD", b"/api/items/42")
+    check(status == 200 and doc is None, f"HEAD on a GET route: {status}")
+    for method in [b"PUT", b"PATCH"]:
+        status, _, doc = call(method, b"/api/items/7", b'{"name": "x", "tags": [1, 2]}')
+        check(status == 200 and doc == {"method": method.decode(), "id": "7",
+                                        "body": {"name": "x", "tags": [1, 2]}},
+              f"{method!r} with a JSON body: {status} {doc}")
+    status, _, doc = call(b"DELETE", b"/api/items/7")
+    check(status == 200 and doc == {"method": "DELETE", "id": "7"}, f"DELETE: {doc}")
+    status, _, doc = call(b"POST", b"/api/items", b'{"new": true}')
+    check(status == 200 and doc == {"method": "POST", "body": {"new": True}}, f"POST: {doc}")
+
+    # the path has routes, not for this method: 405 and what it takes
+    status, fields, _ = call(b"POST", b"/api/items/42", b"{}")
+    check(status == 405 and fields.get("allow") == "GET, HEAD, PUT, DELETE, PATCH",
+          f"405: {status} {fields.get('allow')}")
+    status, fields, _ = call(b"GET", b"/api/items")
+    check(status == 405 and fields.get("allow") == "POST", f"405 on /api/items: {status}")
+
+    for path in [b"/api/items/42/more", b"/api/items/", b"/api/itemsx/1"]:
+        status, _, _ = call(b"GET", path)
+        check(status == 404, f"Unrouted {path!r}: {status}")
+
+    # parameters are URL-decoded, and written back escaped
+    status, _, doc = call(b"GET", b"/api/items/a%20b%3Cc")
+    check(doc == {"method": "GET", "id": "a b<c"}, f"Decoded parameter: {doc}")
+    reply = exchange(plain, b"GET /api/items/%3Cx%3E HTTP/1.1\r\nHost: localhost\r\n\r\n")
+    check(b'"id":"\\u003cx\\u003e"' in reply, "Route parameter not escaped in JSON output")
+    status, _, doc = call(b"GET", b"/api/files/a/b/c.txt")
+    check(doc == {"method": "GET", "path": "a/b/c.txt"}, f"Catch-all parameter: {doc}")
+    status, _, doc = call(b"GET", b"/api/files/")
+    check(doc == {"method": "GET", "path": ""}, f"Empty catch-all: {doc}")
+
+    # JSON body errors
+    for body, ctype, want in [(b"{}", b"text/plain", 415), (b'{"a":1,}', b"application/json", 400),
+                              (b'{"a":1,"a":2}', b"application/json", 400),
+                              (b"[" + b"1," * 600 + b"1]", b"application/json", 413),
+                              (b'{"x":1}', b"application/vnd.api+json; charset=utf-8", 200)]:
+        status, _, doc = call(b"PUT", b"/api/items/1", body, ctype)
+        check(status == want, f"JSON body {body[:20]!r} {ctype!r}: {status}, expected {want}")
+
+    # a request body read by the page leaves the connection usable
+    if args.prefork:
+        with Connection(plain) as conn:
+            body = b'{"k": "v"}'
+            conn.send(b"PUT /api/items/9 HTTP/1.1\r\nHost: localhost\r\nContent-Type: "
+                      b"application/json\r\nContent-Length: " + str(len(body)).encode() +
+                      b"\r\n\r\n" + body)
+            status, _, data = conn.response()
+            conn.send(b"GET /api/items/10 HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            status2, _, data2 = conn.response()
+            check(" 200 " in status and json.loads(data)["body"] == {"k": "v"} and
+                  json.loads(data2) == {"method": "GET", "id": "10"},
+                  "Keep-alive after a JSON PUT")
+
+
 def run_bad_auth_checks(check, daemon, env, temp):
-    """Unsafe or broken auth configurations stop klind at startup, instead
-    of serving the realm unprotected (the reason goes to the log)."""
+    """Unsafe or broken auth (and route) configurations stop klind at
+    startup, instead of serving the realm unprotected (the reason goes to
+    the log)."""
     port = free_port()
     hashed = auth_users(daemon.parent / "klin", temp)[0]
 
-    def starts(auth):
+    def starts(auth, block="auth"):
         config = temp / "auth-start.conf"
         config.write_text(f"server_list one\nallow_root yes\none\n{{\ntype http\n"
                           f"addr tcp4://127.0.0.1:{port}\ndir_root /www\n"
-                          f"auth\n{{\n{auth}\n}}\n}}\n")
+                          f"{block}\n{{\n{auth}\n}}\n}}\n")
         process = subprocess.Popen([str(daemon), "-F", "-d", "-f", str(config)], env=env,
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
@@ -1025,6 +1136,18 @@ def run_bad_auth_checks(check, daemon, env, temp):
             ("quote in realm", hashed + realm.replace("name R", 'name R"') % ""),
             ("missing users_file", hashed + "users_file /nonexistent/users\n" + realm % "")]:
         check(not starts(auth), f"klind started with an unsafe auth configuration ({name})")
+
+    route = "route\n{\n%s\n}\n"
+    check(starts(route % "path /a/{id}/{rest*}\npage /p.kl1\nmethod GET, post", "routes"),
+          "A valid route was refused")
+    for name, body in [("relative path", "path a/{id}\npage /p.kl1"),
+                       ("bad parameter name", "path /a/{i-d}\npage /p.kl1"),
+                       ("catch-all not last", "path /a/{rest*}/b\npage /p.kl1"),
+                       ("unbalanced brace", "path /a/{id\npage /p.kl1"),
+                       ("no page", "path /a/{id}"),
+                       ("relative page", "path /a\npage p.kl1"),
+                       ("unknown method", "path /a\npage /p.kl1\nmethod GET FETCH")]:
+        check(not starts(route % body, "routes"), f"klind started with a bad route ({name})")
 
 
 def run_server_checks(args, env, output, daemon):
@@ -1057,7 +1180,7 @@ def run_server_checks(args, env, output, daemon):
         # memlog: a log on this server only (none at the top level), kept in
         # memory, which pages read back with server_foreach_memlog_line()
         for name, port, tls, session, extra in [
-                ("plain", plain, False, "memory", auth),
+                ("plain", plain, False, "memory", auth + "\n    " + ROUTES),
                 ("client", client, False, "client", SECURITY_HEADERS),
                 ("secure", secure, True, "client", auth),
                 ("files", files, False, f"file\n        file.path {sessions}",
@@ -1223,6 +1346,7 @@ def run_server_checks(args, env, output, daemon):
                 run_conditional_checks(check, plain, files)
                 run_sse_checks(args, check, plain, secure, temp)
                 run_websocket_checks(check, plain, secure)
+                run_route_checks(args, check, plain)
                 run_keep_alive_checks(args, check, plain, secure, request)
                 check(b"200 OK" in exchange(plain, request), "Server failed after malformed requests")
             finally:

@@ -113,6 +113,11 @@ HTTP authentication (Basic and Digest) of the paths in one or more realms:
 \fBusers_file\fR; also \fBnonce_lifetime\fR and \fBbasic_over_http\fR.
 Plaintext passwords are refused. See doc/AUTH.
 .TP
+\fBroutes\fR
+REST-style routes: \fBroute\fR blocks with a \fBpath\fR pattern
+(\fI{name}\fR segments, a last \fI{name*}\fR), the \fBmethod\fRs it
+takes and the \fBpage\fR that serves it. See doc/ROUTES.
+.TP
 \fBsecurity_headers\fR
 Security headers sent with every response: \fBx_content_type_options\fR
 (default \fInosniff\fR), \fBx_frame_options\fR (default

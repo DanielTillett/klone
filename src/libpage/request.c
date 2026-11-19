@@ -8,6 +8,7 @@
  */
 
 #include "klin_conf.h"
+#include <klin/json.h>
 #include <signal.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -70,6 +71,7 @@ struct request_s
     const char *auth_user;
     void *auth_realm;
     int auth_stale;
+    vars_t *route_params;       /* {name} values of a matched route       */
 
     /* strings, last: request_create() does not zero them */
     char local_addr[256];       /* local address                            */
@@ -799,6 +801,8 @@ int request_set_method(request_t *rq, const char *method)
         rq->method = HM_PUT;
     else if(!strcasecmp(method, "delete"))
         rq->method = HM_DELETE;
+    else if(!strcasecmp(method, "patch"))
+        rq->method = HM_PATCH;
     else {
         /* put, delete, * */
         rq->method = HM_UNKNOWN;
@@ -2004,6 +2008,7 @@ const char *request_get_method_name(request_t *rq)
     case HM_POST:   return "POST";
     case HM_PUT:    return "PUT";
     case HM_DELETE: return "DELETE";
+    case HM_PATCH:  return "PATCH";
     default:        return "UNKNOWN";
     }
 }
@@ -2022,6 +2027,162 @@ const char *request_get_auth_user(request_t *rq)
     dbg_return_if (rq == NULL, NULL);
 
     return rq->auth_user;
+}
+
+/* a route (route.c) serves the request with 'page': it replaces the
+   filename and the path info (the route matched the whole path) */
+int request_set_route(request_t *rq, const char *page)
+{
+    dbg_err_if (rq == NULL || page == NULL);
+
+    dbg_err_if(request_set_filename(rq, page));
+    U_FREE(rq->path_info);
+    U_FREE(rq->resolved_path_info);
+    U_FREE(rq->resolved_filename);
+    request_set_sup_info(rq, NULL, NULL, 0);
+
+    return 0;
+err:
+    return ~0;
+}
+
+/* add a {name} value of the route (value: len bytes) */
+int request_add_route_param(request_t *rq, const char *name,
+        const char *value, size_t len)
+{
+    char *v = NULL;
+    var_t *var = NULL;
+
+    dbg_err_if (rq == NULL || name == NULL || value == NULL);
+
+    dbg_err_if((v = u_malloc(len + 1)) == NULL);
+    memcpy(v, value, len);
+    v[len] = '\0';
+    dbg_err_if(var_create(name, v, &var));
+    dbg_err_if(request_vars(rq, &rq->route_params) == NULL);
+    dbg_err_if(vars_add(rq->route_params, var));
+    U_FREE(v);
+
+    return 0;
+err:
+    U_FREE(v);
+    if(var)
+        var_free(var);
+    return ~0;
+}
+
+/**
+ * \ingroup request
+ * \brief   Get a parameter of the route that matched the request
+ *
+ * For a route "/api/users/{id}" and the path "/api/users/42",
+ * request_get_route_param(rq, "id") is "42" (see doc/ROUTES).
+ *
+ * \param rq    request object
+ * \param name  parameter name
+ *
+ * \return the (URL-decoded) value, or \c NULL
+ */
+const char *request_get_route_param(request_t *rq, const char *name)
+{
+    dbg_return_if (rq == NULL || name == NULL, NULL);
+
+    return rq->route_params ? vars_get_value(rq->route_params, name) : NULL;
+}
+
+static int request_cb_body_timeout(talarm_t *al, void *arg)
+{
+    u_unused_args(al);
+
+    warn("request body not received in time, connection closed");
+    io_close((io_t *) arg);
+
+    return 0;
+}
+
+/**
+ * \ingroup request
+ * \brief   Read the request body
+ *
+ * Read the whole body (Content-Length bytes) of a request whose body the
+ * server has not parsed, e.g. a JSON PUT, PATCH or POST, within
+ * post_timeout.
+ *
+ * \param rq    request object
+ * \param max   largest body accepted (also limited by post_maxsize)
+ * \param pbuf  the body, NUL-terminated, to free with u_free()
+ * \param plen  its length
+ *
+ * \return \c 0, ::HTTP_STATUS_REQUEST_TOO_LARGE if the body is too large,
+ *         or \c ~0 on error (read failure, timeout, body already read)
+ */
+int request_read_body(request_t *rq, size_t max, char **pbuf, size_t *plen)
+{
+    talarm_t *al = NULL;
+    char *buf = NULL;
+    size_t len;
+
+    dbg_return_if (rq == NULL || pbuf == NULL || plen == NULL, ~0);
+
+    len = rq->content_length;
+    nop_err_if(rq->io->rtot != rq->hdr_end);    /* read (in part) already */
+    if(len > max || len > rq->post_maxsize)
+        return HTTP_STATUS_REQUEST_TOO_LARGE;
+
+    dbg_err_if((buf = u_malloc(len + 1)) == NULL);
+    dbg_err_if(timerm_add(rq->post_timeout, request_cb_body_timeout, rq->io,
+                &al));
+    nop_err_if(len && io_read(rq->io, buf, len) != (ssize_t) len);
+    timerm_del(al);
+    buf[len] = '\0';
+
+    *pbuf = buf;
+    *plen = len;
+
+    return 0;
+err:
+    if(al)
+        timerm_del(al);
+    U_FREE(buf);
+    return ~0;
+}
+
+/**
+ * \ingroup request
+ * \brief   Parse a JSON request body
+ *
+ * \param rq   request object
+ * \param max  largest body accepted
+ * \param pj   the document, to free with json_free()
+ *
+ * \return \c 0, or the status to answer with: 415 if the Content-Type is
+ *         not JSON, 413 if the body is too large, 400 if it is not valid
+ *         JSON or cannot be read
+ */
+int request_get_json(request_t *rq, size_t max, json_t **pj)
+{
+    const char *ct;
+    char *body = NULL;
+    size_t len, n;
+    int rc;
+
+    dbg_return_if (rq == NULL || pj == NULL, HTTP_STATUS_BAD_REQUEST);
+
+    /* application/json, or a +json type, with optional parameters */
+    ct = request_get_field_value(rq, "Content-Type");
+    n = ct ? strcspn(ct, "; \t") : 0;
+    if(ct == NULL || !((n == 16 && !strncasecmp(ct, "application/json", 16)) ||
+                (n > 5 && !strncasecmp(ct + n - 5, "+json", 5))))
+        return HTTP_STATUS_UNSUPPORTED_MEDIA_TYPE;
+
+    if((rc = request_read_body(rq, max, &body, &len)) != 0)
+        return rc == HTTP_STATUS_REQUEST_TOO_LARGE ? rc :
+            HTTP_STATUS_BAD_REQUEST;
+
+    rc = json_parse(body, len, pj, NULL, 0) ? HTTP_STATUS_BAD_REQUEST : 0;
+    U_FREE(body);
+
+    return rc;
 }
 
 /* set by auth_check(): 'user' and 'realm' stay owned by the configuration */
@@ -2241,6 +2402,9 @@ int request_free(request_t *rq)
 
         if(rq->args)
             vars_free(rq->args);
+
+        if(rq->route_params)
+            vars_free(rq->route_params);
 
         U_FREE(rq);
     }

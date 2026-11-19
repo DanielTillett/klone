@@ -33,6 +33,7 @@
 #include <klin/hookprv.h>
 #include <klin/access.h>
 #include <klin/auth.h>
+#include <klin/route.h>
 #include <klin/vhost.h>
 #include <klin/supplier.h>
 #include "http_s.h"
@@ -66,6 +67,8 @@ struct http_status_map_s
     { HTTP_STATUS_BAD_REQUEST           , "Bad Request"             },
     { HTTP_STATUS_UNAUTHORIZED          , "Unauthorized"            },
     { HTTP_STATUS_FORBIDDEN             , "Forbidden"               },
+    { HTTP_STATUS_METHOD_NOT_ALLOWED    , "Method Not Allowed"      },
+    { HTTP_STATUS_UNSUPPORTED_MEDIA_TYPE, "Unsupported Media Type"  },
     { HTTP_STATUS_LENGTH_REQUIRED       , "Content-Length required" },
     { HTTP_STATUS_REQUEST_TOO_LARGE     , "Request data too big"    },
     { HTTP_STATUS_EXT_KEY_NEEDED        , "Key needed"              },
@@ -580,9 +583,11 @@ static int http_print_error_page(http_t *h, request_t *rq, response_t *rs,
     /* disable page caching */
     dbg_err_if(response_disable_caching(rs));
 
-    /* ask for credentials */
+    /* ask for credentials; tell which methods the path takes */
     if(http_status == HTTP_STATUS_UNAUTHORIZED)
         dbg_if(auth_challenge(h, rq, rs));
+    if(http_status == HTTP_STATUS_METHOD_NOT_ALLOWED)
+        dbg_if(route_allow(h, rq, rs));
 
     /* looking for user provided error page */
     dbg_err_if(u_snprintf(buf, BUFSZ, "error.%d", http_status));
@@ -821,7 +826,7 @@ static int http_serve_page(http_t *h, request_t *rq, response_t *rs,
 {
     const char *cstr;
     supplier_t *sup;
-    int rc;
+    int rc, routed = 0;
 
     *served = 0;
 
@@ -837,9 +842,16 @@ static int http_serve_page(http_t *h, request_t *rq, response_t *rs,
     /* add default header fields */
     dbg_err_if(http_add_default_header(h, rq, rs));
 
-    /* pages in an authentication realm need a user with one of its roles */
+    /* pages in an authentication realm need a user with one of its roles
+       (realms match the path the client asked for, before routing) */
     if((rc = auth_check(h, rq)) != 0)
         return rc;
+
+    /* a REST route gives the page that serves this path and method */
+    if((rc = route_dispatch(h, rq, &routed)) != 0)
+        return rc;
+    if(routed)
+        dbg_err_if(http_resolv_request(h, rq));
 
     /* set default successfull status code */
     dbg_err_if(response_set_status(rs, HTTP_STATUS_OK));
@@ -1109,6 +1121,9 @@ static int http_add_vhost(http_t *http, const char *host, u_config_t *c)
 
     /* security headers */
     dbg_err_if(http_load_sec_headers(http, vhost));
+
+    /* REST routes (a bad one stops the server) */
+    dbg_err_if(route_load(vhost));
 
     dbg_err_if(vhost_list_add(http->vhosts, vhost));
 

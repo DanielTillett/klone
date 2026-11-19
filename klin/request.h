@@ -61,6 +61,13 @@ const char *request_get_auth_user(request_t *rq);
 void request_set_auth(request_t *rq, const char *user, void *realm, int stale);
 void *request_get_auth_realm(request_t *rq);
 int request_get_auth_stale(request_t *rq);
+int request_set_route(request_t *rq, const char *page);
+int request_add_route_param(request_t *rq, const char *name,
+        const char *value, size_t len);
+const char *request_get_route_param(request_t *rq, const char *name);
+int request_read_body(request_t *rq, size_t max, char **pbuf, size_t *plen);
+struct json_s;
+int request_get_json(request_t *rq, size_t max, struct json_s **pj);
 ssize_t request_get_content_length(request_t *rq);
 time_t request_get_if_modified_since(request_t *rq);
 int request_is_encoding_accepted(request_t *rq, const char *encoding);

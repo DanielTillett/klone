@@ -22,7 +22,7 @@ def main():
     # Compile the relevant complete translation units with fuzzer coverage.
     # Remaining collaborators come from the corresponding full build archives.
     sources = ["src/libpage/header.c", "src/libpage/field.c", "src/libutils/utils.c",
-               "src/libtrans/parser.c", "src/libtrans/trans_c.c"]
+               "src/libtrans/parser.c", "src/libtrans/trans_c.c", "src/libutils/json.c"]
     source = Path(next(line.split("=", 1)[1]
                        for line in (tree / "CMakeCache.txt").read_text().splitlines()
                        if line.startswith("Klin_SOURCE_DIR:")))
@@ -42,7 +42,11 @@ def main():
              b"%", b"%4", b"%GG", b"&amp;", b"X: a\r\n folded\r\n\r\n",
              # page translator input
              b"<p><%= x %></p>", b"<% int i; %>\r\n<%! #include <x.h> %>",
-             b"<%@ include \"a\" %>", b"<%", b"%><%%", b"<%?bad %>"]
+             b"<%@ include \"a\" %>", b"<%", b"%><%%", b"<%?bad %>",
+             # JSON
+             b'{"a": [1, -2.5e3, "x\\u00e9\\ud83d\\ude00", true, null], "b": {}}',
+             b'[[[[[]]]]]', b'"\\u0000<>&"', b'123456789012345678901234',
+             b'{"a\\u0000b": 1, "a": 2}']
     for i, seed in enumerate(seeds):
         (corpus / f"seed-{i}").write_bytes(seed)
     with (output / "fuzz.log").open("w") as log:

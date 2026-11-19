@@ -1,0 +1,45 @@
+<%!
+    #include <klin/json.h>
+%><%
+    /* the page of the test routes: answers what it was called with, as
+       JSON, including a JSON request body parsed and written back */
+    const char *p;
+    json_writer_t *w = NULL;
+    json_t *body = NULL;
+    int rc = 0, m = request_get_method(request);
+
+    if(m == HM_POST || m == HM_PUT || m == HM_PATCH)
+        rc = request_get_json(request, 1000, &body);
+
+    response_set_content_type(response, "application/json");
+    if(rc)
+        response_set_status(response, rc);
+
+    json_writer_create(out, &w);
+    json_begin_object(w);
+    json_key(w, "method");
+    json_str(w, request_get_method_name(request));
+    if((p = request_get_route_param(request, "id")) != NULL)
+    {
+        json_key(w, "id");
+        json_str(w, p);
+    }
+    if((p = request_get_route_param(request, "path")) != NULL)
+    {
+        json_key(w, "path");
+        json_str(w, p);
+    }
+    if(rc)
+    {
+        json_key(w, "error");
+        json_int(w, rc);
+    }
+    if(body)
+    {
+        json_key(w, "body");
+        json_value(w, body);
+    }
+    json_end_object(w);
+    json_writer_free(w);
+    json_free(body);
+%>

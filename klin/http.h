@@ -47,6 +47,8 @@ enum {
     HTTP_STATUS_FORBIDDEN                 = 403,
     /**< access to resource forbidden */
     HTTP_STATUS_NOT_FOUND                 = 404,
+    /**< the method is not allowed for the resource (see Allow) */
+    HTTP_STATUS_METHOD_NOT_ALLOWED        = 405,
     /**< request timeout */
     HTTP_STATUS_REQUEST_TIMEOUT           = 408,
     /**< nothing found at matching request URI */
@@ -54,6 +56,8 @@ enum {
     /**< missing Content-Length header field */
     HTTP_STATUS_REQUEST_TOO_LARGE         = 413,
     /**< request body too large */
+    HTTP_STATUS_UNSUPPORTED_MEDIA_TYPE    = 415,
+    /**< the request body is of a type the resource does not take */
     HTTP_STATUS_RANGE_NOT_SATISFIABLE     = 416,
     /**< no part of the requested range is in the resource */
     HTTP_STATUS_UPGRADE_REQUIRED          = 426,
@@ -79,7 +83,8 @@ enum http_method_e
     HM_HEAD,      /**< ~HM_GET with headers only */
     HM_POST,      /**< create new object subordinate to specified object */
     HM_PUT,       /**< data in body is to be stored under URL */
-    HM_DELETE     /**< deletion request at given URL */
+    HM_DELETE,    /**< deletion request at given URL */
+    HM_PATCH      /**< partial update of the resource at the URL */
 };
 
 struct http_s;

@@ -24,6 +24,7 @@
 #include <klin/io.h>
 #include <klin/timer.h>
 #include <klin/translat.h>
+#include <klin/json.h>
 #ifdef SSL_OPENSSL
 #include <klin/auth.h>
 #endif
@@ -372,6 +373,229 @@ static void test_auth(void)
 }
 #endif
 
+/* parse 'text': 0 if valid (then *pj is set), ~0 if refused */
+static int parse(const char *text, json_t **pj)
+{
+    char err[128];
+
+    return json_parse(text, strlen(text), pj, err, sizeof err);
+}
+
+static int refused(const char *text)
+{
+    json_t *j = NULL;
+    int rc = parse(text, &j);
+
+    json_free(j);
+    return rc != 0;
+}
+
+static void test_json_parse(void)
+{
+    static const char doc[] = " {\"name\": \"Klin\", \"n\": -12, \"pi\": 3.25e0,"
+        " \"big\": 123456789012345678901, \"ok\": true, \"no\": false,"
+        " \"none\": null, \"list\": [1, [2, {}], \"x\"],"
+        " \"esc\": \"a\\\"b\\\\c\\/d\\n\\u00e9\\u2603\\ud83d\\ude00\" } ";
+    json_t *j = NULL, *list;
+    char err[128];
+    int64_t v;
+
+    CHECK(parse(doc, &j) == 0);
+    CHECK(json_type(j) == JSON_OBJECT && json_count(j) == 9);
+    CHECK(!strcmp(json_string(json_get(j, "name")), "Klin"));
+    CHECK(json_int64(json_get(j, "n"), &v) == 0 && v == -12);
+    CHECK(json_number(json_get(j, "pi")) == 3.25);
+    CHECK(json_int64(json_get(j, "pi"), &v) != 0);      /* not an integer */
+    CHECK(json_int64(json_get(j, "big"), &v) != 0);     /* out of range */
+    CHECK(json_number(json_get(j, "big")) > 1e20);
+    CHECK(json_bool(json_get(j, "ok")) && !json_bool(json_get(j, "no")));
+    CHECK(json_type(json_get(j, "none")) == JSON_NULL &&
+            json_get(j, "none") != NULL && json_get(j, "missing") == NULL);
+    list = json_get(j, "list");
+    CHECK(json_count(list) == 3 && json_count(json_at(list, 1)) == 2);
+    CHECK(json_type(json_at(json_at(list, 1), 1)) == JSON_OBJECT);
+    CHECK(json_at(list, 3) == NULL && json_string(json_at(list, 0)) == NULL);
+    CHECK(!strcmp(json_string(json_get(j, "esc")),
+                "a\"b\\c/d\n\xc3\xa9\xe2\x98\x83\xf0\x9f\x98\x80"));
+    CHECK(!strcmp(json_key_at(j, 0), "name"));
+    /* lookups through missing values are safe */
+    CHECK(json_string(json_get(json_get(j, "nope"), "deeper")) == NULL);
+    json_free(j);
+
+    CHECK(parse("\"a\\u0000b\"", &j) == 0 && json_string_len(j) == 3);
+    json_free(j);
+    CHECK(parse("0", &j) == 0 && json_int64(j, &v) == 0 && v == 0);
+    json_free(j);
+    CHECK(parse("-9223372036854775808", &j) == 0 && json_int64(j, &v) == 0 &&
+            v == INT64_MIN);
+    json_free(j);
+
+    /* refused */
+    CHECK(refused(""));
+    CHECK(refused("   "));
+    CHECK(refused("[1,]"));
+    CHECK(refused("{\"a\":1,}"));
+    CHECK(refused("[1 2]"));
+    CHECK(refused("{'a':1}"));
+    CHECK(refused("{a:1}"));
+    CHECK(refused("[1] // comment"));
+    CHECK(refused("[1] x"));
+    CHECK(refused("01"));
+    CHECK(refused("1."));
+    CHECK(refused(".5"));
+    CHECK(refused("+1"));
+    CHECK(refused("1e"));
+    CHECK(refused("NaN"));
+    CHECK(refused("Infinity"));
+    CHECK(refused("1e999"));
+    CHECK(refused("tru"));
+    CHECK(refused("nul"));
+    CHECK(refused("\"tab\there\""));         /* raw control character */
+    CHECK(refused("\"\\x41\""));
+    CHECK(refused("\"\\u12\""));
+    CHECK(refused("\"\\ud83d\""));          /* lone high surrogate */
+    CHECK(refused("\"\\ude00\""));          /* lone low surrogate */
+    CHECK(refused("\"\\ud83d\\u0041\""));
+    CHECK(refused("\"\xc3\x28\""));         /* invalid UTF-8 */
+    CHECK(refused("\"\xc0\xaf\""));         /* overlong */
+    CHECK(refused("\"\xed\xa0\x80\""));     /* encoded surrogate */
+    CHECK(refused("\"open"));
+    CHECK(refused("{\"a\":1,\"a\":2}"));    /* duplicate key */
+    CHECK(json_parse("[1]", 2, &j, err, sizeof err) != 0);  /* cut short */
+
+    /* depth: JSON_MAX_DEPTH levels are fine, one more is not */
+    {
+        char deep[2 * JSON_MAX_DEPTH + 3];
+        int i;
+
+        for(i = 0; i < JSON_MAX_DEPTH; ++i)
+        {
+            deep[i] = '[';
+            deep[JSON_MAX_DEPTH + i] = ']';
+        }
+        deep[2 * JSON_MAX_DEPTH] = '\0';
+        CHECK(parse(deep, &j) == 0);
+        json_free(j);
+        memmove(deep + 1, deep, 2 * JSON_MAX_DEPTH + 1);
+        deep[0] = '[';
+        strcat(deep, "]");
+        CHECK(refused(deep));
+    }
+
+    /* the error says what and where */
+    CHECK(json_parse("[1,]", 4, &j, err, sizeof err) != 0 &&
+            strstr(err, "offset 3") != NULL);
+}
+
+/* run 'fn' with a writer on a memory buffer: what it wrote, and whether
+   the writer called it a complete document */
+static char json_out[4096];
+
+static int written(int (*fn)(json_writer_t *))
+{
+    json_writer_t *w = NULL;
+    io_t *io = NULL;
+    int rc;
+
+    memset(json_out, 0, sizeof json_out);
+    if(io_mem_create(json_out, sizeof json_out - 1, 0, &io) ||
+            json_writer_create(io, &w))
+        return -1;
+    (void) fn(w);
+    rc = json_writer_free(w);
+    io_flush(io);
+    io_free(io);
+    return rc;
+}
+
+static int write_doc(json_writer_t *w)
+{
+    json_begin_object(w);
+    json_key(w, "id");      json_int(w, -42);
+    json_key(w, "name");    json_str(w, "<script>\"x\"&\\\n\xe2\x80\xa8");
+    json_key(w, "bad");     json_strn(w, "a\xff" "b", 3);
+    json_key(w, "list");    json_begin_array(w);
+    json_double(w, 0.5);    json_boolean(w, 1);   json_null(w);
+    json_begin_object(w);   json_end_object(w);
+    json_end_array(w);
+    json_key(w, "ctl");     json_str(w, "\x01");
+    return json_end_object(w);
+}
+
+static int write_no_key(json_writer_t *w)
+{
+    json_begin_object(w);
+    json_int(w, 1);         /* a value without a key */
+    return json_end_object(w);
+}
+
+static int write_two(json_writer_t *w)
+{
+    json_int(w, 1);
+    return json_int(w, 2);  /* a second top-level value */
+}
+
+static int write_open(json_writer_t *w)
+{
+    return json_begin_array(w);     /* never closed */
+}
+
+static int write_mismatch(json_writer_t *w)
+{
+    json_begin_array(w);
+    return json_end_object(w);
+}
+
+static int write_nan(json_writer_t *w)
+{
+    return json_double(w, 0.0 / 0.0);
+}
+
+static int write_roundtrip(json_writer_t *w)
+{
+    json_t *j = NULL;
+    int rc;
+
+    if(parse("{\"a\":[1,2.5,\"s\\u00e9\",{\"b\":null}],\"c\":true}", &j))
+        return ~0;
+    rc = json_value(w, j);
+    json_free(j);
+    return rc;
+}
+
+static int write_nul_key(json_writer_t *w)
+{
+    json_t *j = NULL;
+    int rc;
+
+    /* keys that differ after a NUL stay apart */
+    if(parse("{\"a\\u0000b\":1,\"a\":2}", &j))
+        return ~0;
+    rc = json_value(w, j);
+    json_free(j);
+    return rc;
+}
+
+static void test_json_write(void)
+{
+    CHECK(written(write_doc) == 0);
+    CHECK(!strcmp(json_out, "{\"id\":-42,"
+                "\"name\":\"\\u003cscript\\u003e\\\"x\\\"\\u0026\\\\\\n\\u2028\","
+                "\"bad\":\"a\\ufffdb\","
+                "\"list\":[0.5,true,null,{}],"
+                "\"ctl\":\"\\u0001\"}"));
+    CHECK(written(write_no_key) != 0);
+    CHECK(written(write_two) != 0);
+    CHECK(written(write_open) != 0);
+    CHECK(written(write_mismatch) != 0);
+    CHECK(written(write_nan) != 0);
+    CHECK(written(write_roundtrip) == 0);
+    CHECK(!strcmp(json_out,
+                "{\"a\":[1,2.5,\"s\xc3\xa9\",{\"b\":null}],\"c\":true}"));
+    CHECK(written(write_nul_key) == 0);
+    CHECK(!strcmp(json_out, "{\"a\\u0000b\":1,\"a\":2}"));
+}
+
 int main(void)
 {
     test_header_fields();
@@ -379,6 +603,8 @@ int main(void)
     test_field_reuse();
     test_timer();
     test_translate();
+    test_json_parse();
+    test_json_write();
 #ifdef SSL_OPENSSL
     test_auth();
 #endif

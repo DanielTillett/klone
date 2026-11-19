@@ -199,7 +199,8 @@ klin_library(codec ${_codec})
 
 klin_library(emb ${_src}/libemb/emb.c)
 
-set(_http broker.c cgi.c http.c sup_emb.c access.c auth.c vhost.c dypage.c)
+set(_http broker.c cgi.c http.c sup_emb.c access.c auth.c route.c vhost.c
+    dypage.c)
 if(ENABLE_SUP_FS)
     list(APPEND _http sup_fs.c)
 endif()
@@ -240,7 +241,7 @@ list(TRANSFORM _trans PREPEND ${_src}/libtrans/)
 klin_library(trans ${_trans})
 
 set(_utils utils.c md5.c mime_map.c timer.c date.c version.c path.c pwd.c
-    authhash.c)
+    authhash.c json.c)
 list(TRANSFORM _utils PREPEND ${_src}/libutils/)
 klin_library(utils ${_utils})
 

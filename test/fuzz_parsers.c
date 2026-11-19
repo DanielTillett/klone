@@ -16,6 +16,7 @@
 #include <klin/header.h>
 #include <klin/translat.h>
 #include <klin/utils.h>
+#include <klin/json.h>
 
 int facility = LOG_LOCAL0;
 
@@ -44,6 +45,55 @@ static void fuzz_translate(char *input, size_t size)
         io_free(out);
 }
 
+/* write a parsed document to 'buf' (its length, 0 if the writer failed) */
+static size_t fuzz_json_write(const json_t *j, char *buf, size_t size)
+{
+    json_writer_t *w = NULL;
+    io_t *io = NULL;
+    size_t n = 0;
+
+    memset(buf, 0, size);
+    if (io_mem_create(buf, size - 1, 0, &io) == 0 &&
+            json_writer_create(io, &w) == 0 && json_value(w, j) == 0 &&
+            json_writer_free(w) == 0)
+    {
+        w = NULL;
+        io_flush(io);
+        n = strlen(buf);
+    }
+    if (w)
+        json_writer_free(w);
+    if (io)
+        io_free(io);
+    return n;
+}
+
+/* the JSON reader on any input; a document it accepts must write out and
+   read back to the same text (parse, write, parse, write is stable) */
+static void fuzz_json(const char *input, size_t size)
+{
+    json_t *a = NULL, *b = NULL;
+    size_t cap = 8 * size + 64, n1, n2;
+    char *first, *second;
+
+    if (json_parse(input, size, &a, NULL, 0))
+        return;
+    first = malloc(cap);
+    second = malloc(cap);
+    if (!first || !second)
+        abort();
+    n1 = fuzz_json_write(a, first, cap);
+    if (n1 == 0 || json_parse(first, n1, &b, NULL, 0))
+        abort();    /* the writer's output must be valid JSON */
+    n2 = fuzz_json_write(b, second, cap);
+    if (n1 != n2 || memcmp(first, second, n1))
+        abort();
+    json_free(a);
+    json_free(b);
+    free(first);
+    free(second);
+}
+
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
     io_t *io = NULL;
@@ -68,6 +118,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     (void)u_htmlncpy_s(output, 6 * size + 1, input, size, HTMLCPY_DECODE);
     (void)u_sqlncpy_s(output, 6 * size + 1, input, size, SQLCPY_ENCODE);
     fuzz_translate(input, size);
+    fuzz_json(input, size);
     free(output);
     free(input);
     return 0;

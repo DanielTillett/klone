@@ -12,8 +12,8 @@
 #include <unistd.h>
 #include <u/libu.h>
 #include <klin/io.h>
-#include <klin/io.h>
 #include <klin/ioprv.h>
+#include <klin/timer.h>
 
 struct io_fd_s
 {
@@ -40,6 +40,11 @@ static ssize_t io_fd_read(io_fd_t *ifd, char *buf, size_t size)
     dbg_return_if (buf == NULL, ~0);
     
 again:
+    /* while an alarm is set (a timeout), wait for data with the alarms
+       running: one may close the descriptor */
+    if(timerm_armed())
+        nop_err_if(timerm_wait(&ifd->fd, TIMERM_WAIT_READ));
+
     if(!ifd->issock)
         c = read(ifd->fd, buf, size);
     else
@@ -63,6 +68,9 @@ static ssize_t io_fd_write(io_fd_t *ifd, const char *buf, size_t size)
     dbg_return_if (buf == NULL, ~0);
  
 again:
+    if(timerm_armed())
+        nop_err_if(timerm_wait(&ifd->fd, TIMERM_WAIT_WRITE));
+
     if(!ifd->issock)
         c = write(ifd->fd, buf, size);
     else

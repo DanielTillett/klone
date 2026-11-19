@@ -7,17 +7,26 @@
  * in the LICENSE file which you have received as part of this distribution.
  */
 
+/* Alarms without signals: an alarm runs when the process waits for a
+ * descriptor in timerm_wait() (the io drivers call it while an alarm is set)
+ * and is due, so callbacks run in ordinary code and may do anything. They
+ * used to run in a SIGALRM handler, which limited them to async-signal-safe
+ * work. The prefork watchdog, which must interrupt any code, has its own
+ * signal in server.c. */
+
 #include "klin_conf.h"
 #include <stdint.h>
 #include <time.h>
+#include <errno.h>
 #include <unistd.h>
-#include <signal.h>
 #include <klin/timer.h>
 #include <klin/utils.h>
 #include <u/libu.h>
 
 #ifdef OS_WIN
 #include <windows.h>
+#else
+#include <poll.h>
 #endif
 
 /* pthread_atfork() is in libc here, no thread library is needed */
@@ -28,8 +37,6 @@
 
 TAILQ_HEAD(talarm_list_s, talarm_s);
 typedef struct talarm_list_s talarm_list_t;
-
-typedef void (*timerm_cb_t)(int);
 
 struct talarm_s
 {
@@ -43,34 +50,11 @@ struct talarm_s
 
 struct timerm_s
 {
-    talarm_list_t alist;        /* alarm list                   */
-    int64_t next;               /* next SIGALRM (ms), 0 if none */
-    int cb_running;             /* set when timer callback is running */
-#ifdef OS_WIN
-    CRITICAL_SECTION cs;
-    HANDLE hthread;             /* thread handle                */
-    DWORD tid;                  /* thread id                    */
-#endif
+    talarm_list_t alist;        /* alarm list, earliest first   */
 };
 
 /* this must be a singleton */
 static timerm_t *timer = NULL;
-
-#ifdef OS_UNIX
-/* The alarm list is guarded by a flag instead of blocking SIGALRM, which
- * costs two system calls each time: a SIGALRM that arrives while the list
- * is being changed is only recorded, and handled when the change is done. */
-static volatile sig_atomic_t alarms_locked = 0;
-static volatile sig_atomic_t alarm_pending = 0;
-
-/* keep the compiler from moving list changes across the flag updates (the
- * handler runs on the same thread, so no CPU fence is needed) */
-#if defined(__GNUC__) || defined(__clang__)
-#define TIMERM_BARRIER() __asm__ __volatile__("" ::: "memory")
-#else
-#define TIMERM_BARRIER()
-#endif
-#endif
 
 #ifdef TIMERM_PID_CACHE
 static pid_t timerm_pid = 0;    /* 0 until known, and again in a child */
@@ -105,9 +89,7 @@ static pid_t timerm_getpid(void)
 #endif
 }
 
-/* milliseconds of a clock that does not jump with the time of day: alarms
- * are timed in milliseconds so that one never fires early (with whole seconds
- * an alarm set at 0.999 for one second would run on any SIGALRM after 1.000) */
+/* milliseconds of a clock that does not jump with the time of day */
 static int64_t timerm_now(void)
 {
 #if defined(OS_WIN)
@@ -123,189 +105,143 @@ static int64_t timerm_now(void)
 #endif
 }
 
-/* raise SIGALRM in 'ms' milliseconds (from 'now') unless it is already due
- * sooner */
-static int timerm_set_alarm(int64_t now, int64_t ms)
+/* the first time a (forked) process looks at the alarm list: drop the
+ * alarms inherited from the parent (the user may still hold pointers to
+ * them, so they are not freed) */
+static void timerm_adopt(void)
 {
-    int64_t secs = (ms + 999) / 1000;     /* alarm(2) counts whole seconds */
-    int64_t n = now + secs * 1000;
-
-    if(secs > 0 && (timer->next == 0 || n < timer->next))
-    {
-        timer->next = n;
-#ifdef OS_UNIX
-        alarm((unsigned int) secs);
-#endif
-    } 
-
-    return 0;
-}
-
-static int timerm_set_next(int64_t now)
-{
-    talarm_t *al = NULL;
-
-    if((al = TAILQ_FIRST(&timer->alist)) != NULL)
-        timerm_set_alarm(now, U_MAX(1, al->expire - now));
-
-    return 0;
-}
-
-/* run the expired alarms */
-static void timerm_run(void)
-{
-    talarm_t *al = NULL;
+    static pid_t list_pid = 0;
     pid_t pid = timerm_getpid();
-    int64_t now = timerm_now();
+    talarm_t *al, *next;
 
-    dbg_err_if(timer == NULL);
+    if(timer == NULL || list_pid == pid)
+        return;
+    list_pid = pid;
 
-    timer->next = 0;
-
-    for(;;)
+    for(al = TAILQ_FIRST(&timer->alist); al != NULL; al = next)
     {
-        /* get the topmost item and remove it from the list */
-        al = TAILQ_FIRST(&timer->alist);
-        nop_err_if(al == NULL);
-
+        next = TAILQ_NEXT(al, np);
         if(al->owner != pid)
-        {
-            /* this alert has been inherited from the parent, we cannot
-             * timerm_del() it because the user may have a reference to it
-             * somewhere so we just remove it from the list of timers */
             TAILQ_REMOVE(&timer->alist, al, np);
-            continue;
-        }
+    }
+}
+
+/**
+ * \brief   Run the alarms that are due
+ *
+ * Each callback runs once, after its alarm is taken off the list; it may
+ * set alarms (timerm_reschedule() of its own included) and delete others.
+ *
+ * \return  milliseconds until the next alarm, or \c -1 if none is set
+ */
+int timerm_run(void)
+{
+    talarm_t *al;
+    int64_t now;
+
+    timerm_adopt();
+
+    if(timer == NULL)
+        return -1;
+
+    for(now = timerm_now();; now = timerm_now())
+    {
+        if((al = TAILQ_FIRST(&timer->alist)) == NULL)
+            return -1;
 
         if(al->expire > now)
-            break;
-        
+            return (int) U_MIN(al->expire - now, INT32_MAX);
+
         TAILQ_REMOVE(&timer->alist, al, np);
-
-        /* use to serialize callbacks nd avoid handler recursive */
-        timer->cb_running = 1;
-
-        /* call the callback function */
-        al->cb(al, al->arg);
-
-        timer->cb_running = 0;
+        (void) al->cb(al, al->arg);
     }
-
-    /* prepare for the next alarm */
-    if(TAILQ_FIRST(&timer->alist))
-        timerm_set_next(timerm_now());
-
-err:
-    return;
 }
 
-static void timerm_sigalrm(int sigalrm)
+/**
+ * \brief   Tell whether an alarm is set in this process
+ *
+ * Cheap (no system call): the io drivers call it before each read and
+ * write, and wait with timerm_wait() only when it is true.
+ */
+int timerm_armed(void)
 {
-    u_unused_args(sigalrm);
-
-#ifdef OS_UNIX
-    if(alarms_locked)
-    {
-        /* the list is being changed: run the alarms when that is done */
-        alarm_pending = 1;
-        return;
-    }
-    alarms_locked = 1;
-#endif
-
-    timerm_run();
-
-#ifdef OS_UNIX
-    alarms_locked = 0;
-#endif
-}
-
-static int timerm_block_alarms(void)
-{
-#ifdef OS_UNIX
-    if(timer == NULL || timer->cb_running)
+    if(timer == NULL || TAILQ_EMPTY(&timer->alist))
         return 0;
-    alarms_locked = 1;
-    TIMERM_BARRIER();
-#endif
 
-#ifdef OS_WIN
-    EnterCriticalSection(&timer->cs);
-#endif
+    timerm_adopt();     /* the alarms may be the parent's */
 
-    return 0;
+    return !TAILQ_EMPTY(&timer->alist);
 }
 
-static int timerm_unblock_alarms(void)
+/**
+ * \brief   Wait for a descriptor, running the alarms that come due
+ *
+ * Wait until \p *pfd is ready for \p events (::TIMERM_WAIT_READ and/or
+ * ::TIMERM_WAIT_WRITE), running each alarm as it comes due. An alarm
+ * callback may close the descriptor (an io_close() sets \p *pfd to \c -1):
+ * the wait then fails.
+ *
+ * \param pfd     the descriptor, re-read after each alarm
+ * \param events  what to wait for
+ *
+ * \return \c 0 when the descriptor is ready, non-zero if it was closed or
+ *         on error
+ */
+int timerm_wait(int *pfd, int events)
 {
-#ifdef OS_UNIX
-    if(timer == NULL)
-    {
-        alarms_locked = 0;  /* e.g. on a timerm_add() error */
-        return 0;
-    }
+    int ms, rc;
 
-    if(timer->cb_running)
-        return 0;   /* the alarms run with the list locked */
+    dbg_return_if (pfd == NULL, ~0);
 
     for(;;)
     {
-        TIMERM_BARRIER();
-        if(!alarm_pending)
+        ms = timerm_run();
+
+        nop_err_if(*pfd < 0);   /* closed by an alarm */
+
+#ifdef OS_WIN
         {
-            alarms_locked = 0;
+            fd_set rd, wr;
+            struct timeval tv, *ptv = NULL;
 
-            /* a SIGALRM may have been deferred just before the unlock */
-            if(!alarm_pending)
-                break;
-            alarms_locked = 1;
+            FD_ZERO(&rd); FD_ZERO(&wr);
+            if(events & TIMERM_WAIT_READ)
+                FD_SET((SOCKET) *pfd, &rd);
+            if(events & TIMERM_WAIT_WRITE)
+                FD_SET((SOCKET) *pfd, &wr);
+            if(ms >= 0)
+            {
+                tv.tv_sec = ms / 1000;
+                tv.tv_usec = (ms % 1000) * 1000;
+                ptv = &tv;
+            }
+            rc = select(0, &rd, &wr, NULL, ptv);
+            if(rc == SOCKET_ERROR)
+                return 0;   /* not a socket: files are always ready */
         }
+#else
+        {
+            struct pollfd p;
 
-        /* handle the deferred SIGALRM, still locked against a new one */
-        alarm_pending = 0;
-        timerm_run();
-    }
+            p.fd = *pfd;
+            p.events = ((events & TIMERM_WAIT_READ) ? POLLIN : 0) |
+                ((events & TIMERM_WAIT_WRITE) ? POLLOUT : 0);
+            p.revents = 0;
+
+            rc = poll(&p, 1, ms);
+            if(rc < 0 && errno == EINTR)
+                continue;
+            dbg_err_sif(rc < 0);
+        }
 #endif
-
-#ifdef OS_WIN
-    LeaveCriticalSection(&timer->cs);
-#endif
-
-    return 0;
-}
-
-static int timerm_free(timerm_t *t)
-{
-    talarm_t *a = NULL;
-
-    dbg_return_if (t == NULL, ~0);
-    
-    if(t)
-    {
-        while((a = TAILQ_FIRST(&t->alist)) != NULL)
-            dbg_if(timerm_del(a));
-
-        U_FREE(t);
+        /* ready, or an error the read or write will report */
+        if(rc > 0)
+            return 0;
     }
 
-    return 0;
+err:
+    return ~0;
 }
-
-#ifdef OS_WIN
-static DWORD WINAPI thread_func(LPVOID param)
-{
-    for(;;Sleep(250))
-    {
-        if(timer->next == 0)
-            continue;
-
-        if((timer->next - timerm_now()) <= 0)
-            timerm_sigalrm(0);  /* raise the alarm */
-    }
-
-    return 0;
-}
-#endif
 
 static int timerm_create(timerm_t **pt)
 {
@@ -318,110 +254,56 @@ static int timerm_create(timerm_t **pt)
 
     TAILQ_INIT(&t->alist);
 
-#ifdef OS_WIN
-    InitializeCriticalSection(&t->cs);
-
-    dbg_err_if((t->hthread = CreateThread(NULL, 0, thread_func, NULL, 0, 
-        &t->tid)) == NULL); 
-#endif
-
     *pt = t;
 
     return 0;
 err:
-    if(t)
-        timerm_free(t);
     return ~0;
 }
 
-/* the first time a (forked) process changes the alarm list: drop the alarms
- * inherited from the parent, and forget its SIGALRM, which fork() does not
- * inherit (the alarm of the child would otherwise wait behind them, unset) */
-static void timerm_adopt(void)
-{
-    static pid_t list_pid = 0;
-    pid_t pid = timerm_getpid();
-    talarm_t *al, *next;
-
-    if(list_pid == pid)
-        return;
-    list_pid = pid;
-
-    for(al = TAILQ_FIRST(&timer->alist); al != NULL; al = next)
-    {
-        next = TAILQ_NEXT(al, np);
-        if(al->owner != pid)
-            TAILQ_REMOVE(&timer->alist, al, np);
-    }
-
-    timer->next = 0;
-}
-
-/* use this function if you need to re-set the alarm in the signal
- * handler (don't timerm_del() on the alarm) */
+/* (re)insert 'al', which is off the list, to fire in 'secs' seconds */
 int timerm_reschedule(talarm_t *al, int secs, talarm_cb_t cb, void *arg)
 {
     talarm_t *item = NULL;
-    int64_t now;
 
     dbg_return_if (cb == NULL, ~0);
     dbg_return_if (al == NULL, ~0);
+    dbg_return_if (timer == NULL, ~0);
 
-    dbg_err_if(timerm_block_alarms());
-
-    /* read the clock with the alarms blocked: a SIGALRM handled before
-       (its callbacks may take a while) would make an earlier reading old */
-    now = timerm_now();
+    timerm_adopt();
 
     al->cb = cb;
     al->arg = arg;
-    al->expire = now + (int64_t) secs * 1000;
-
-    timerm_adopt();
+    al->expire = timerm_now() + (int64_t) secs * 1000;
+    al->owner = timerm_getpid();
 
     /* insert al ordered by the expire field (smaller first) */
     TAILQ_FOREACH(item, &timer->alist, np)
         if(al->expire < item->expire)
-            break; 
-    
+            break;
+
     if(item)
         TAILQ_INSERT_BEFORE(item, al, np);
     else
         TAILQ_INSERT_TAIL(&timer->alist, al, np);
 
-    /* set the timer if this is the earliest alarm (a later one is set by
-       timerm_run() when the earlier ones are done) */
-    if(TAILQ_FIRST(&timer->alist) == al)
-        timerm_set_next(now);
-                                                              
-    dbg_err_if(timerm_unblock_alarms());                      
-                                                              
-    return 0;                                                 
-err:                                                          
-    return ~0;                                                
-}      
+    return 0;
+}
 
 int timerm_add(int secs, talarm_cb_t cb, void *arg, talarm_t **pa)
 {
     talarm_t *al = NULL;
-    pid_t pid = timerm_getpid();
 
     dbg_return_if (cb == NULL, ~0);
     dbg_return_if (pa == NULL, ~0);
 
     if(timer == NULL)
-    {
         dbg_err_if(timerm_create(&timer));
-        #ifdef OS_UNIX
-        dbg_err_if(u_signal(SIGALRM, timerm_sigalrm));
-        #endif
-    }
 
     al = (talarm_t*)u_zalloc(sizeof(talarm_t));
     dbg_err_if(al == NULL);
 
     al->timer = timer;
-    al->owner = pid;
 
     dbg_err_if(timerm_reschedule(al, secs, cb, arg));
 
@@ -429,16 +311,7 @@ int timerm_add(int secs, talarm_cb_t cb, void *arg, talarm_t **pa)
 
     return 0;
 err:
-    u_dbg("[%lu] timerm_add error", (unsigned long) getpid());
-    if(timer)
-    {
-        (void) timerm_free(timer);
-        timer = NULL;
-    }
     U_FREE(al);
-
-    dbg_err_if(timerm_unblock_alarms());
-
     return ~0;
 }
 
@@ -454,31 +327,17 @@ static int timerm_alarm_pending(talarm_t *a)
     return 0;
 }
 
+/* remove the alarm if it has not fired, and free it */
 int timerm_del(talarm_t *a)
 {
     dbg_return_if(a == NULL, ~0);
 
-    dbg_err_if(timerm_block_alarms());
+    timerm_adopt();
 
-    /* if not expired remove it from the list; the SIGALRM already set
-       stays, as it can only come early for the alarms left (timerm_run()
-       then sets it again). When the earliest alarm goes, set it sooner if
-       the next one is due before it (whole-second rounding) */
-    if(timerm_alarm_pending(a))
-    {
-        int head = (TAILQ_FIRST(&timer->alist) == a);
-
+    if(timer && timerm_alarm_pending(a))
         TAILQ_REMOVE(&timer->alist, a, np);
-        if(head && TAILQ_FIRST(&timer->alist))
-            timerm_set_next(timerm_now());
-    }
-
-    dbg_err_if(timerm_unblock_alarms());
 
     U_FREE(a);
 
     return 0;
-err:
-    dbg_err_if(timerm_unblock_alarms());
-    return ~0;
 }

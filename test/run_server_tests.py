@@ -376,6 +376,23 @@ def run_keep_alive_checks(args, check, plain, secure, request):
         conn.response()
         check(conn.closed(), "TLS connection not closed")
 
+    # TLS: a request that stops halfway is closed after idle_timeout (2 s),
+    # although OpenSSL waits for the rest of it (the socket is non-blocking)
+    with Connection(secure, client_context(ssl.TLSVersion.TLSv1_3)) as conn:
+        conn.send(b"GET /static/hello.txt HTTP/1.1\r\nHost: loc")
+        time.sleep(3)
+        check(conn.closed(), "Stalled TLS request not closed")
+
+    # TLS: a client that never starts the handshake is dropped after 10 s
+    with socket.create_connection(("127.0.0.1", secure), timeout=15) as raw:
+        start = time.time()
+        try:
+            dropped = raw.recv(1) == b""
+        except (ConnectionResetError, socket.timeout):
+            dropped = False
+        check(dropped and 8 < time.time() - start < 14,
+              f"Stalled TLS handshake not dropped in time ({time.time() - start:.1f} s)")
+
 
 def run_server_checks(args, env, output, daemon):
     checks = 0

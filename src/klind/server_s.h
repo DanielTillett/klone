@@ -41,7 +41,7 @@ struct server_s
     size_t max_child;       /* max # of children                            */
     volatile sig_atomic_t stop; /* >0 will stop the loop (set by signals)   */
     int model;              /* server model                                 */
-    volatile sig_atomic_t klog_flush; /* >0 will flush the klog (SIGALRM)    */
+    int klog_flush;         /* >0 if this process flushes the klog          */
     int allow_root;         /* >0 allow root as the owner of klind process */
     int blind_chroot;       /* if blind chroot mode is enabled or disabled  */
 };

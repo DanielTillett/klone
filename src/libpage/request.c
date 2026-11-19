@@ -1642,26 +1642,15 @@ err:
     return ~0;
 }
 
-/* set by request_cb_close_socket: the timeout is logged by the code that
-   set the alarm, not in the SIGALRM handler (logging is not signal-safe) */
-static volatile sig_atomic_t request_timed_out = 0;
-
-static void request_log_timeout(io_t *io)
-{
-    if(request_timed_out)
-        warn("[%p] connection timed out, closed", (void *) io);
-    request_timed_out = 0;
-}
-
-/* SIGALRM callback: async-signal-safe (a flag and close(2)); a read or
- * write blocked on the connection then fails */
+/* alarm callback (it runs in ordinary code, see timer.h): a read or write
+ * waiting on the connection then fails */
 static int request_cb_close_socket(talarm_t *al, void *arg)
 {
     io_t *io = (io_t*)arg;
 
     u_unused_args(al);
 
-    request_timed_out = 1;
+    warn("[%p] connection timed out, closed", (void *) io);
 
     /* close the stream (but not free it) */
     io_close(io);
@@ -1732,7 +1721,6 @@ int request_parse_data(request_t *rq)
 err:
     if(al)
         dbg_if(timerm_del(al));
-    request_log_timeout(io);
     return rc;
 }
 
@@ -1860,8 +1848,6 @@ int request_parse_header(request_t *rq,
 err:
     if(al)
         timerm_del(al);
-    if(rq)
-        request_log_timeout(rq->io);
     return ~0;
 }
 

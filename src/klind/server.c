@@ -21,6 +21,9 @@
 #include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
+#ifdef OS_UNIX
+#include <sys/time.h>
+#endif
 #include <klin/server.h>
 #include <klin/backend.h>
 #include <klin/os.h>
@@ -318,12 +321,12 @@ static int server_backend_detach(server_t *s, backend_t *be)
     return 0;
 }
 
-/* prefork: the alarm that asks the parent for one more worker when this one
- * has held a connection for more than a second, and whether the connection
- * is serving a request (or waiting for the next one) */
-static talarm_t *server_watchdog_al = NULL;
+/* prefork: whether the watchdog runs (it asks the parent for one more
+ * worker when this one has held a connection for more than a second), and
+ * whether the connection is serving a request (or waiting for the next one) */
 static int server_watchdog_enabled = 0;
-static volatile sig_atomic_t server_watchdog_busy = 0;   /* read by the alarm */
+static int server_watchdog_on = 0;
+static volatile sig_atomic_t server_watchdog_busy = 0;   /* read by the tick */
 
 /* prefork: this worker was started beyond start_child (a spare) */
 static int server_spare = 0;
@@ -601,16 +604,19 @@ static int server_clients_waiting(void)
     return select(ld + 1, &rdfds, NULL, NULL, &tv) > 0;
 }
 
-/* SIGALRM callback: async-signal-safe, so errors are not logged (nop_err)
- * and the request to the parent is one write(2) (ppc_write) */
-static int server_cb_spawn_child(talarm_t *al, void *arg)
+/* The prefork worker's own SIGALRM (setitimer(2)): unlike the alarms of
+ * timer.h, which run while klin waits for a descriptor, these must interrupt
+ * whatever the worker is doing (a slow page, accept(2)). So the handler does
+ * only async-signal-safe work: flags, close(2) and one write(2). */
+enum { TICK_OFF, TICK_WATCHDOG, TICK_SPARE_IDLE };
+static volatile sig_atomic_t server_tick_mode = TICK_OFF;
+
+/* the watchdog, every second while a connection lasts */
+static void server_tick_watchdog(server_t *s)
 {
-    server_t *s = (server_t*)arg;
-
-    nop_err_if (s == NULL);
-
     /* must be called by a child process */
-    nop_err_if(ctx->backend == NULL || ctx->pipc == 0);
+    if(ctx->backend == NULL || ctx->pipc == 0)
+        return;
 
     /* ask the parent for a new worker once for a slow request, and every
        second while other clients wait for a worker: each new worker that
@@ -618,17 +624,69 @@ static int server_cb_spawn_child(talarm_t *al, void *arg)
        second (up to max_child) instead of growing by a few workers */
     if(server_clients_waiting() || (server_watchdog_busy && !s->stop))
     {
-        nop_err_if(server_ppc_cmd_fork_child(s, ctx->backend));
+        if(server_ppc_cmd_fork_child(s, ctx->backend))
+            return;
 
         /* mark the current child process so it will die when it finishes
            serving this connection; its listening socket stays open
            (closing it may drop the kept-alive connection) */
         s->stop = 1;
     }
+}
 
-    /* check again in a second, for as long as the connection lasts */
-    return timerm_reschedule(al, 1, server_cb_spawn_child, arg);
+static void server_sigalrm(int sig)
+{
+    u_unused_args(sig);
+
+    if(ctx == NULL || ctx->server == NULL)
+        return;
+
+    switch(server_tick_mode)
+    {
+    case TICK_WATCHDOG:
+        server_tick_watchdog(ctx->server);
+        break;
+    case TICK_SPARE_IDLE:
+        /* a spare worker waited idle_timeout seconds for a client: exit,
+           so that the pool shrinks back after a burst (closing the
+           listening socket ends the accept(2)) */
+        (void) server_stop(ctx->server);
+        break;
+    default:
+        break;
+    }
+}
+
+/* run 'mode' in 'secs' seconds, then every 'every' seconds (0: once); a
+ * TICK_OFF stops it */
+static int server_tick(int mode, int secs, int every)
+{
+    struct itimerval it;
+    static int installed = 0;
+
+    if(!installed)
+    {
+        dbg_err_if(u_signal(SIGALRM, server_sigalrm));
+        installed = 1;
+    }
+
+    /* stop first: a tick of the old mode pending now is delivered when
+       setitimer() returns, while the mode is still off */
+    server_tick_mode = TICK_OFF;
+    memset(&it, 0, sizeof it);
+    dbg_err_sif(setitimer(ITIMER_REAL, &it, NULL));
+
+    if(mode == TICK_OFF)
+        return 0;
+
+    server_tick_mode = mode;
+    it.it_value.tv_sec = secs;
+    it.it_interval.tv_sec = every;
+    dbg_err_sif(setitimer(ITIMER_REAL, &it, NULL));
+
+    return 0;
 err:
+    server_tick_mode = TICK_OFF;
     return ~0;
 }
 #endif /* ifdef OS_UNIX */
@@ -656,11 +714,11 @@ int server_watchdog(server_t *s, int busy)
     server_watchdog_busy = busy;
 
 #if defined(OS_UNIX) && defined(HAVE_FORK)
-    /* the alarm runs every second until the connection is closed */
-    if(busy && server_watchdog_al == NULL)
+    /* the watchdog runs every second until the connection is closed */
+    if(busy && !server_watchdog_on)
     {
-        dbg_err_if(timerm_add(1, server_cb_spawn_child, (void*)s,
-                    &server_watchdog_al));
+        dbg_err_if(server_tick(TICK_WATCHDOG, 1, 1));
+        server_watchdog_on = 1;
     }
 #endif
 
@@ -670,14 +728,13 @@ err:
 }
 
 #if defined(OS_UNIX) && defined(HAVE_FORK)
-/* prefork: the connection is closed, remove and free the alarm (pending or
- * already fired) */
+/* prefork: the connection is closed, stop the watchdog */
 static void server_watchdog_end(void)
 {
-    if(server_watchdog_al)
+    if(server_watchdog_on)
     {
-        timerm_del(server_watchdog_al);
-        server_watchdog_al = NULL;
+        dbg_if(server_tick(TICK_OFF, 0, 0));
+        server_watchdog_on = 0;
     }
     server_watchdog_enabled = 0;
 }
@@ -730,8 +787,8 @@ err:
     return ~0;
 }
 
-/* async-signal-safe (signal handlers and SIGALRM callbacks call it): only a
- * flag and close(2), no logging */
+/* async-signal-safe (signal handlers call it): only a flag and close(2), no
+ * logging */
 int server_stop(server_t *s)
 {
     if(s == NULL)
@@ -830,23 +887,10 @@ err:
     return ~0;
 }
 
-#if defined(OS_UNIX) && defined(HAVE_FORK)
-/* a spare prefork worker waited idle_timeout seconds for a client: exit, so
- * that the pool shrinks back after a burst (closing the listening socket
- * ends the accept(2), which SIGALRM does not interrupt) */
-static int server_cb_spare_idle(talarm_t *al, void *arg)
-{
-    u_unused_args(al);
-
-    return server_stop((server_t*)arg);
-}
-#endif
-
 static int server_dispatch(server_t *s, int fd)
 {
     backend_t *be;
-    talarm_t *al = NULL;
-    int ad = -1, rc;
+    int ad = -1, rc, idle = 0;
 
     dbg_err_if (s == NULL);
 
@@ -861,14 +905,18 @@ static int server_dispatch(server_t *s, int fd)
 #if defined(OS_UNIX) && defined(HAVE_FORK)
     /* a spare worker exits if no client comes for a while */
     if(server_spare && be->idle_timeout > 0)
-        dbg_err_if(timerm_add(be->idle_timeout, server_cb_spare_idle, 
-                    (void*)s, &al));
+    {
+        dbg_err_if(server_tick(TICK_SPARE_IDLE, be->idle_timeout, 0));
+        idle = 1;
+    }
 #endif
 
     /* accept the pending connection */
     rc = server_be_accept(s, be, &ad);
-    if(al)
-        timerm_del(al);
+#if defined(OS_UNIX) && defined(HAVE_FORK)
+    if(idle)
+        dbg_if(server_tick(TICK_OFF, 0, 0));
+#endif
     dbg_err_if(rc);
 
     /* Disable Nagle on the socket. Note that this may fail if the socket is 
@@ -886,19 +934,20 @@ err:
     return ~0;
 }
 
+/* the log flush alarm (it runs from timerm_run() in server_loop): flush
+ * and set it again */
 int server_cb_klog_flush(talarm_t *a, void *arg)
 {
     server_t *s = (server_t*)arg;
 
-    u_unused_args(a);
+    dbg_err_if(s == NULL);
 
-    /* SIGALRM callback: only a flag, the flush is done by server_loop */
-    if(s == NULL)
-        return ~0;
+    klog_flush(s->klog);
 
-    s->klog_flush = 1;
-
-    return 0;
+    return timerm_reschedule(a, SERVER_LOG_FLUSH_TIMEOUT, server_cb_klog_flush,
+            s);
+err:
+    return ~0;
 }
 
 #ifdef OS_UNIX
@@ -910,7 +959,7 @@ int server_spawn_child(server_t *s, backend_t *be)
     dbg_err_if (s == NULL);
     dbg_err_if (be == NULL);
 
-    /* a worker beyond start_child is a spare (see server_cb_spare_idle) */
+    /* a worker beyond start_child is a spare (see TICK_SPARE_IDLE) */
     spare = (be->nchild >= be->start_child);
 
     dbg_err_if((rc = server_fork_child(s, be)) < 0);
@@ -1018,23 +1067,6 @@ err:
     return ~0;
 }
 
-/* flush the log (the flush alarm fired) and set the alarm again */
-static int server_flush_log(server_t *s)
-{
-    klog_flush(s->klog);
-    s->klog_flush = 0;
-
-    /* the alarm has fired: it is off the list, free it (see timer.h) */
-    U_FREE(s->al_klog_flush);
-
-    dbg_err_if(timerm_add(SERVER_LOG_FLUSH_TIMEOUT, server_cb_klog_flush, s,
-                &s->al_klog_flush));
-
-    return 0;
-err:
-    return ~0;
-}
-
 /* on shutdown: SIGTERM the children, give them a second, then kill the
  * ones still running */
 static void server_stop_children(server_t *s)
@@ -1053,7 +1085,7 @@ static void server_stop_children(server_t *s)
 int server_loop(server_t *s)
 {
     struct timeval tv;
-    int rc, fd;
+    int rc, fd, ms;
     fd_set rdfds, wrfds, exfds;
 
     dbg_err_if (s == NULL);
@@ -1061,6 +1093,11 @@ int server_loop(server_t *s)
 
     dbg_err_if(server_listen(s));
     dbg_err_if(server_harden(s));
+
+    /* flush the log every SERVER_LOG_FLUSH_TIMEOUT seconds */
+    if(s->klog_flush)
+        dbg_err_if(timerm_add(SERVER_LOG_FLUSH_TIMEOUT, server_cb_klog_flush,
+                    s, &s->al_klog_flush));
 
     /* server startup hook */
     hook_call(server_init);
@@ -1082,8 +1119,11 @@ int server_loop(server_t *s)
         memcpy(&wrfds, &s->wrfds, sizeof(fd_set));
         memcpy(&exfds, &s->exfds, sizeof(fd_set));
 
-        /* wake up every second */
-        tv.tv_sec = 1; tv.tv_usec = 0;
+        /* wake up every second, or for the next alarm */
+        ms = timerm_run();
+        if(ms < 0 || ms > 1000)
+            ms = 1000;
+        tv.tv_sec = ms / 1000; tv.tv_usec = (ms % 1000) * 1000;
 
         rc = select(1 + s->hfd, &rdfds, &wrfds, &exfds, &tv);
         if(rc == -1 && errno == EINTR)
@@ -1098,9 +1138,8 @@ int server_loop(server_t *s)
         /* parent only */
         if(ctx->pipc == 0)
         {
-            /* the log flush alarm has fired */
-            if(s->klog_flush)
-                dbg_err_if(server_flush_log(s));
+            /* the alarms that are due (the log flush) */
+            (void) timerm_run();
 
             /* server loop hook - trigger only upon timeout and not upon client request */
             if(rc == 0)

@@ -8,9 +8,13 @@
  */
 
 #include "klin_conf.h"
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
 #include <unistd.h>
 #include <klin/io.h>
 #include <klin/ioprv.h>
+#include <klin/timer.h>
 #include <u/libu.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
@@ -27,6 +31,7 @@ typedef struct io_ssl_s io_ssl_t;
 
 static ssize_t io_ssl_read(io_ssl_t *io, char *buf, size_t size);
 static ssize_t io_ssl_write(io_ssl_t *io, const char *buf, size_t size);
+static int io_ssl_close(io_ssl_t *io_ssl);
 
 int io_ssl_get_SSL(io_t *io, SSL **pssl)
 {
@@ -45,42 +50,71 @@ err:
     return ~0;
 }
 
+/* the socket is non-blocking: wait as OpenSSL asks after a call that
+ * returned 'rc' (the alarms run meanwhile, and one may close the socket);
+ * return 0 to call again, ~0 on a real error, 1 on a clean EOF */
+static int io_ssl_retry(io_ssl_t *io_ssl, int rc)
+{
+    switch(SSL_get_error(io_ssl->ssl, rc))
+    {
+    case SSL_ERROR_WANT_READ:
+        return timerm_wait(&io_ssl->fd, TIMERM_WAIT_READ) ? ~0 : 0;
+    case SSL_ERROR_WANT_WRITE:
+        return timerm_wait(&io_ssl->fd, TIMERM_WAIT_WRITE) ? ~0 : 0;
+    case SSL_ERROR_ZERO_RETURN:
+        return 1;
+    case SSL_ERROR_SYSCALL:
+        if(rc < 0 && errno == EINTR)
+            return 0;
+        return ~0;
+    default:
+        return ~0;
+    }
+}
+
 static ssize_t io_ssl_read(io_ssl_t *io_ssl, char *buf, size_t size)
 {
-    ssize_t c;
+    int c, rc;
 
     dbg_err_if (io_ssl == NULL);
     dbg_err_if (buf == NULL);
 
-again:
-    c = SSL_read(io_ssl->ssl, buf, size);
-    /* if(c < 0 && (errno == EINTR || errno == EAGAIN)) */
-    if(c < 0 && errno == EINTR)
-        goto again; 
+    for(;;)
+    {
+        nop_err_if(io_ssl->fd < 0);     /* closed by an alarm */
 
-    dbg_err_if(c < 0); 
+        if((c = SSL_read(io_ssl->ssl, buf, (int) U_MIN(size, INT_MAX))) > 0)
+            return c;
 
-    return c;
+        /* 0 is an EOF, with or without the peer's close_notify */
+        if((rc = io_ssl_retry(io_ssl, c)) != 0)
+        {
+            nop_err_if(c < 0 && rc != 1);
+            return 0;
+        }
+    }
+
 err:
     return -1;
 }
 
 static ssize_t io_ssl_write(io_ssl_t *io_ssl, const char *buf, size_t size)
 {
-    ssize_t c;
+    int c;
 
     dbg_err_if (io_ssl == NULL);
     dbg_err_if (buf == NULL);
 
-again:
-    c = SSL_write(io_ssl->ssl, buf, size);
-    /* if(c < 0 && (errno == EINTR || errno == EAGAIN)) */
-    if(c < 0 && errno == EINTR)
-        goto again; 
+    for(;;)
+    {
+        nop_err_if(io_ssl->fd < 0);     /* closed by an alarm */
 
-    dbg_err_if(c < 0); 
+        if((c = SSL_write(io_ssl->ssl, buf, (int) U_MIN(size, INT_MAX))) > 0)
+            return c;
 
-    return c;
+        nop_err_if(io_ssl_retry(io_ssl, c));
+    }
+
 err:
     return -1;
 }
@@ -107,7 +141,7 @@ static int io_ssl_free(io_ssl_t *io_ssl)
     dbg_err_if(io_ssl == NULL);
 
     /* tell the peer the data is complete (close_notify); not done in
-       io_ssl_close(), which also runs on timeouts from signal context */
+       io_ssl_close(), which also ends timed out connections */
     if(io_ssl->ssl && io_ssl->fd != -1)
         (void) SSL_shutdown(io_ssl->ssl);
 
@@ -128,47 +162,48 @@ static int io_ssl_connect(io_ssl_t *io_ssl)
 {
     int rc;
 
-    /* accept a SSL connection */
+    /* the TLS handshake */
     while((rc = SSL_connect(io_ssl->ssl)) <= 0)
-    {
-        #ifdef SSL_OPENSSL
-        /* will return 1 if accept has been blocked by a signal or async IO */
-        if(BIO_sock_should_retry(rc))
-            continue;
-        #endif
-
-        if(SSL_get_error(io_ssl->ssl, rc) == SSL_ERROR_WANT_READ)
-            break; 
-
-        warn_err("SSL accept error: %d", SSL_get_error(io_ssl->ssl, rc));
-    }
+        warn_err_ifm(io_ssl_retry(io_ssl, rc), "TLS handshake error: %d",
+            SSL_get_error(io_ssl->ssl, rc));
 
     return 0;
 err:
     return ~0;
 }
 
+/* a client that does not finish the handshake in time is dropped */
+enum { IO_SSL_HANDSHAKE_TIMEOUT = 10 };
+
+static int io_ssl_cb_handshake_timeout(talarm_t *al, void *arg)
+{
+    u_unused_args(al);
+
+    warn("TLS handshake timed out");
+    dbg_if(io_ssl_close((io_ssl_t*) arg));
+
+    return 0;
+}
+
 static int io_ssl_accept(io_ssl_t *io_ssl)
 {
+    talarm_t *al = NULL;
     int rc;
 
-    /* accept a SSL connection */
+    dbg_err_if(timerm_add(IO_SSL_HANDSHAKE_TIMEOUT,
+                io_ssl_cb_handshake_timeout, io_ssl, &al));
+
+    /* the TLS handshake */
     while((rc = SSL_accept(io_ssl->ssl)) <= 0)
-    {
-        #ifdef SSL_OPENSSL
-        /* will return 1 if accept has been blocked by a signal or async IO */
-        if(BIO_sock_should_retry(rc))
-            continue;
-        #endif
+        warn_err_ifm(io_ssl_retry(io_ssl, rc), "TLS handshake error: %d",
+            SSL_get_error(io_ssl->ssl, rc));
 
-        if(SSL_get_error(io_ssl->ssl, rc) == SSL_ERROR_WANT_READ)
-            break; 
-
-        warn_err("SSL accept error: %d", SSL_get_error(io_ssl->ssl, rc));
-    }
+    timerm_del(al);
 
     return 0;
 err:
+    if(al)
+        timerm_del(al);
     return ~0;
 }
 
@@ -194,6 +229,17 @@ int io_ssl_create(int fd, int flags, int client_mode,
     /* assign a working descriptor to the SSL stream */
     dbg_err_if(SSL_set_fd(io_ssl->ssl, fd) == 0);
 
+    /* non-blocking, so that a read never waits in OpenSSL for the rest of a
+       record (a timeout could not end it): io_ssl_retry() waits instead */
+#ifdef OS_WIN
+    {
+        u_long on = 1;
+        dbg_err_if(ioctlsocket(fd, FIONBIO, &on) != 0);
+    }
+#else
+    dbg_err_sif(fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK) == -1);
+#endif
+
     io_ssl->io.read = (io_read_op) io_ssl_read;
     io_ssl->io.write = (io_write_op) io_ssl_write;
     io_ssl->io.close = (io_close_op) io_ssl_close; 
@@ -203,7 +249,7 @@ int io_ssl_create(int fd, int flags, int client_mode,
     /* set the secure flag (encrypted connection) */
     io_ssl->io.is_secure = 1;
     
-    /* wait for the peer to start the TLS handshake */
+    /* the TLS handshake (bounded by the caller's alarm, if any) */
     if(client_mode)
         dbg_err_if(io_ssl_connect(io_ssl));
     else

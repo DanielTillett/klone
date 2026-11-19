@@ -22,9 +22,19 @@ typedef struct talarm_s talarm_t;
 
 typedef int (*talarm_cb_t)(talarm_t *, void *arg);
 
+/* what timerm_wait() waits for */
+enum { TIMERM_WAIT_READ = 1, TIMERM_WAIT_WRITE = 2 };
+
+/* An alarm runs when it is due and the process waits in timerm_wait() (the
+ * io drivers do, for reads and writes) or calls timerm_run(); never from a
+ * signal handler. A fired alarm is off the list but still allocated:
+ * timerm_del() it, or timerm_reschedule() it */
 int timerm_add(int secs, talarm_cb_t cb, void *arg, talarm_t **pa);
 int timerm_del(talarm_t *a);
 int timerm_reschedule(talarm_t *a, int secs, talarm_cb_t cb, void *arg);
+int timerm_run(void);
+int timerm_armed(void);
+int timerm_wait(int *pfd, int events);
 
 #ifdef __cplusplus
 }

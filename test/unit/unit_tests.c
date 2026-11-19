@@ -9,7 +9,7 @@
 
 /* Unit tests linked against the real Klin libraries (CTest: "unit"). Unlike
  * test/regressions.c, nothing is stubbed: header parsing runs on the real
- * buffered io, the translator on real parser input, the timer on SIGALRM. */
+ * buffered io, the translator on real parser input, the timer. */
 
 #include "klin_conf.h"
 #include <signal.h>
@@ -180,7 +180,7 @@ static void test_field_reuse(void)
     field_free(g);
 }
 
-static volatile sig_atomic_t fired;
+static int fired;
 
 static int on_alarm(talarm_t *al, void *arg)
 {
@@ -189,33 +189,55 @@ static int on_alarm(talarm_t *al, void *arg)
     return 0;
 }
 
-/* wait up to 'secs' seconds for an alarm (SIGALRM interrupts the sleep) */
-static void wait_alarm(int secs)
+/* an alarm that closes the descriptor being waited for (as a timeout does) */
+static int on_close(talarm_t *al, void *arg)
 {
-    time_t end = time(NULL) + secs;
+    int *pfd = arg;
 
-    while(!fired && time(NULL) <= end)
-        sleep(1);
+    (void) al;
+    close(*pfd);
+    *pfd = -1;
+    return 0;
 }
 
 static void test_timer(void)
 {
-    talarm_t *a = NULL, *b = NULL;
-    int one = 1, two = 2;
+    talarm_t *a = NULL, *b = NULL, *c = NULL;
+    int one = 1, two = 2, p[2];
+    time_t t0, dt;
 
-    /* a deleted alarm never fires; the one left does, in time */
+    /* alarms run while waiting: a deleted one never, the others in order,
+       the last closing the descriptor, which ends the wait */
     fired = 0;
     CHECK(timerm_add(1, on_alarm, &one, &a) == 0);
     CHECK(timerm_add(2, on_alarm, &two, &b) == 0);
+    CHECK(timerm_armed());
     CHECK(timerm_del(a) == 0);      /* the earliest one */
-    wait_alarm(4);
-    CHECK(fired == 2);
+    CHECK(pipe(p) == 0);
+    CHECK(timerm_add(3, on_close, &p[0], &c) == 0);
+    t0 = time(NULL);
+    CHECK(timerm_wait(&p[0], TIMERM_WAIT_READ) != 0);
+    dt = time(NULL) - t0;
+    CHECK(p[0] == -1 && fired == 2);
+    CHECK(dt >= 2 && dt <= 5);
+    CHECK(!timerm_armed());
     CHECK(timerm_del(b) == 0);      /* fired: off the list, still freed here */
+    CHECK(timerm_del(c) == 0);
+    close(p[1]);
 
-    /* nothing left: no stray callback */
+    /* a ready descriptor does not wait for the alarm, which stays set */
     fired = 0;
-    sleep(1);
-    CHECK(fired == 0);
+    CHECK(pipe(p) == 0);
+    CHECK(write(p[1], "x", 1) == 1);
+    CHECK(timerm_add(5, on_alarm, &one, &a) == 0);
+    t0 = time(NULL);
+    CHECK(timerm_wait(&p[0], TIMERM_WAIT_READ) == 0);
+    CHECK(time(NULL) - t0 <= 1 && fired == 0);
+    CHECK(timerm_armed());
+    CHECK(timerm_del(a) == 0);
+    CHECK(!timerm_armed() && timerm_run() == -1);
+    close(p[0]);
+    close(p[1]);
 }
 
 /* translate 'page' as 'uri'; return the generated C (to free) or NULL */

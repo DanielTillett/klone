@@ -61,7 +61,7 @@ ownership", or "the caller keeps it, and it must outlive x").
                             rq_temp_dir) are copies it frees
     talarm_t                timerm_add() returns it; timerm_del() frees it.
                             A fired alarm is off the list but still
-                            allocated: timerm_del() it (or U_FREE it)
+                            allocated: timerm_del() it (or reschedule it)
 
 Configuration (u_config_t) is read when the server starts and is not
 changed afterwards: caches such as vhost_t's may keep values read from it.
@@ -74,8 +74,9 @@ Process-wide state, and what happens to it in a forked child:
 
     ctx (context.h)           shared; the child sets ctx->pipc
     timer list (timer.c)      a child drops the parent's alarms the first
-                              time it sets one (timerm_adopt); the cached
-                              pid is reset by pthread_atfork (glibc/macOS)
+                              time it looks at the list (timerm_adopt); the
+                              cached pid is reset by pthread_atfork
+                              (glibc/macOS)
     field and response-filter caches (field.c, rsfilter.c)
                               per process, inherited as they are (they only
                               hold free memory)
@@ -83,19 +84,22 @@ Process-wide state, and what happens to it in a forked child:
                               set in the child by server_spawn_child
 
 Signal handlers do only async-signal-safe work: set flags (volatile
-sig_atomic_t), close(2) a descriptor, _exit(2). The main loop acts on the
-flags, and logs. SIGINT/SIGTERM set server->stop (closing a child's
-listening socket, so a blocked accept fails); SIGCHLD sets a flag.
+sig_atomic_t), close(2) a descriptor, write(2), _exit(2). The main loop
+acts on the flags, and logs. SIGINT/SIGTERM set server->stop (closing a
+child's listening socket, so a blocked accept fails); SIGCHLD sets a flag.
 
-The timer's SIGALRM handler runs the alarm callbacks: it has to, since
-closing the connection is what ends a read blocked past its timeout. So
-alarm callbacks follow the same rule: no malloc/free, no logging, no stdio,
-no OpenSSL. What they may do: set a flag (request_cb_close_socket,
-server_cb_klog_flush), close(2) (io_close of an fd or TLS io only closes
-the descriptor), server_stop(), timerm_reschedule(), and send a ppc
-message (ppc_write writes it in one write(2)). Report errors from them with
-nop_err_if, never dbg_/warn_.
+Timeouts do not use signals. An alarm (timer.h) runs in ordinary code,
+when it is due and the process waits for a descriptor in timerm_wait():
+the io drivers wait there while an alarm is set, and server_loop runs the
+alarms between selects. So a callback may log, allocate and close the
+connection (io_close() makes the waiting read or write fail). TLS sockets
+are non-blocking, so that OpenSSL never waits inside a read where no alarm
+can end it.
 
+The one exception is the prefork worker's own SIGALRM (setitimer, in
+server.c), which must interrupt any code, a slow page or accept(2): the
+watchdog (it asks the parent for one more worker with a single ppc
+write(2)) and the idle timeout of a spare worker (server_stop()).
 
 NAMES AND TEXT
 

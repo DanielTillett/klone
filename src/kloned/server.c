@@ -614,20 +614,22 @@ static int server_cb_spawn_child(talarm_t *al, void *arg)
     /* must be called by a child process */
     dbg_err_if(ctx->backend == NULL || ctx->pipc == 0);
 
-    /* an idle kept-alive connection only needs a new worker if other clients
-       are waiting for one: otherwise check again in a second */
-    if(!server_watchdog_busy && !server_clients_waiting())
-        return timerm_reschedule(al, 1, server_cb_spawn_child, arg);
+    /* ask the parent for a new worker once for a slow request, and every
+       second while other clients wait for a worker: each new worker that
+       gets a kept-alive connection does the same, so the pool doubles every
+       second (up to max_child) instead of growing by a few workers */
+    if(server_clients_waiting() || (server_watchdog_busy && !s->stop))
+    {
+        dbg_err_if(server_ppc_cmd_fork_child(s, ctx->backend));
 
-    /* ask the parent to create a new worker child process */
-    dbg_err_if(server_ppc_cmd_fork_child(s, ctx->backend));
+        /* mark the current child process so it will die when it finishes
+           serving this connection; its listening socket stays open
+           (closing it may drop the kept-alive connection) */
+        s->stop = 1;
+    }
 
-    /* mark the current child process so it will die when it finishes
-       serving this connection; its listening socket stays open (closing it
-       may drop the kept-alive connection) */
-    s->stop = 1;
-
-    return 0;
+    /* check again in a second, for as long as the connection lasts */
+    return timerm_reschedule(al, 1, server_cb_spawn_child, arg);
 err:
     return ~0;
 }
@@ -638,9 +640,10 @@ err:
  *
  * Called with \p busy set to \c 0 while a kept-alive connection waits for its
  * next request, and to \c 1 when that request arrives.  Once the connection
- * has been held for a second the worker asks the parent for one more worker
- * and exits after the connection, if a request is slow or if other clients
- * wait while the connection is idle.  Does nothing in other server models.
+ * has been held for a second the worker asks the parent for one more worker,
+ * and exits after the connection, if a request is slow (once) or while other
+ * clients wait for a worker (every second).  Does nothing in other server
+ * models.
  *
  * \param s     the server object
  * \param busy  \c 1 when serving a request, \c 0 when idle
@@ -655,8 +658,8 @@ int server_watchdog(server_t *s, int busy)
     server_watchdog_busy = busy;
 
 #if defined(OS_UNIX) && defined(HAVE_FORK)
-    /* once fired the worker exits after this connection: don't ask again */
-    if(busy && server_watchdog_al == NULL && !s->stop)
+    /* the alarm runs every second until the connection is closed */
+    if(busy && server_watchdog_al == NULL)
     {
         dbg_err_if(timerm_add(1, server_cb_spawn_child, (void*)s,
                     &server_watchdog_al));

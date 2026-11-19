@@ -264,7 +264,6 @@ static int cgi_makeenv(request_t *rq, response_t *rs, cgi_env_t *env)
     header_t *h;
     field_t *field;
     char *p, buf[1024];
-    unsigned int i;
 
     u_unused_args(rs);
 
@@ -329,10 +328,8 @@ static int cgi_makeenv(request_t *rq, response_t *rs, cgi_env_t *env)
     dbg_err_if((h = request_get_header(rq)) == NULL);
 
     /* export all client request headers prefixing them with HTTP_ */
-    for(i = 0; i < header_field_count(h); ++i)
+    for(field = NULL; (field = header_next_field(h, NULL, field)) != NULL; )
     {
-        field = header_get_fieldn(h, i);
-        dbg_err_if(field == NULL);
 
         dbg_err_if(u_snprintf(buf, sizeof(buf), "HTTP_%s", 
                     field_get_name(field)));

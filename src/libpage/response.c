@@ -256,19 +256,16 @@ void response_set_cgi(response_t *rs, int cgi)
 size_t response_get_max_header_size(response_t *rs)
 {
     field_t *field;
-    int i, n;
     size_t sz = 0;
 
     /* calc status line length */
     sz += 16; /* http/x.y nnn[n] \r\n */
     sz += strlen(http_get_status_desc(rs->status));
 
-    n = header_field_count(rs->header);
-    for(i = 0; i < n; ++i)
+    for(field = NULL; (field = header_next_field(rs->header, NULL, field)); )
     {
         const char *p;
 
-        field =  header_get_fieldn(rs->header, i);
         sz += ((p = field_get_name(field)) != NULL) ? strlen(p) : 0;
         sz += ((p = field_get_value(field)) != NULL) ? strlen(p) : 0;
         sz += 4; /* blanks and new lines */
@@ -386,7 +383,6 @@ int response_format_header_reuse(response_t *rs, size_t extra, char **pbuf,
     const char *desc;
     size_t sz, slen = 0, nlen, vlen, dlen;
     field_t *f;
-    int i, n;
 
     dbg_err_if(rs == NULL);
     dbg_err_if(pbuf == NULL);
@@ -418,12 +414,9 @@ int response_format_header_reuse(response_t *rs, size_t extra, char **pbuf,
     }
 
     /* "name: value\r\n" per field and the final "\r\n" */
-    n = header_field_count(rs->header);
-    for(i = 0, sz = slen + 2; i < n; ++i)
-    {
-        f = header_get_fieldn(rs->header, i);
+    sz = slen + 2;
+    for(f = NULL; (f = header_next_field(rs->header, NULL, f)) != NULL; )
         sz += strlen(f->name) + strlen(f->value) + 4;
-    }
 
     if(*pbuf && *pcap >= sz + extra)
         buf = *pbuf;
@@ -431,9 +424,9 @@ int response_format_header_reuse(response_t *rs, size_t extra, char **pbuf,
         dbg_err_if((buf = u_malloc(sz + extra)) == NULL);
 
     memcpy(buf, status, slen);
-    for(i = 0, p = buf + slen; i < n; ++i)
+    p = buf + slen;
+    for(f = NULL; (f = header_next_field(rs->header, NULL, f)) != NULL; )
     {
-        f = header_get_fieldn(rs->header, i);
         nlen = strlen(f->name);
         vlen = strlen(f->value);
         memcpy(p, f->name, nlen);
@@ -924,18 +917,6 @@ int response_has_body(response_t *rs)
             rs->status == HTTP_STATUS_NOT_MODIFIED);
 }
 
-/* number of fields called 'name' in the header of rs */
-static size_t response_count_fields(response_t *rs, const char *name)
-{
-    size_t i, n, count = 0;
-
-    n = header_field_count(rs->header);
-    for(i = 0; i < n; ++i)
-        if(!strcasecmp(field_get_name(header_get_fieldn(rs->header, i)), name))
-            ++count;
-
-    return count;
-}
 
 /**
  * \ingroup response
@@ -987,7 +968,7 @@ int response_set_body_framing(response_t *rs, ssize_t len, int can_chunk)
         /* the whole body is known: its measured length wins (it is usually
          * what the page set already, e.g. for a static file) */
         (void) response_ultoa(clen, (unsigned long) len);
-        if(response_count_fields(rs, "Content-Length") != 1 ||
+        if(header_count_field(rs->header, "Content-Length") != 1 ||
                 strcmp(response_get_field_value(rs, "Content-Length"), clen))
         {
             while(response_get_field(rs, "Content-Length"))

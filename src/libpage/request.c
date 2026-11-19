@@ -860,18 +860,11 @@ err:
 static int request_parse_cookies(request_t *rq)
 {
     field_t *f;
-    size_t i, count;
 
     dbg_err_if (rq == NULL);
-    
-    count = header_field_count(rq->header);
-    for(i = 0; i < count; ++i)
-    {
-        f = header_get_fieldn(rq->header, i);
-        dbg_err_if(f == NULL); /* shouldn't happen */
-        if(strcasecmp(field_get_name(f), "cookie") == 0)
-            dbg_err_if(request_parse_cookie(rq, f));
-    }
+
+    for(f = NULL; (f = header_next_field(rq->header, "cookie", f)) != NULL; )
+        dbg_err_if(request_parse_cookie(rq, f));
 
     return 0;
 err:
@@ -1739,7 +1732,7 @@ int request_parse_header(request_t *rq,
     const char WP[] = " \t\r\n";
     char ln[BUFSZ], *pp, *method, *uri, *proto;
     talarm_t *al = NULL;
-    size_t i, lengths = 0, start;
+    size_t lengths = 0, start;
     field_t *field;
 
     dbg_err_if (rq == NULL);
@@ -1786,9 +1779,8 @@ int request_parse_header(request_t *rq,
 
     /* Chunked transfer coding is not implemented. Reject it explicitly, and
      * reject every duplicate Content-Length, even equal values. */
-    for (i = 0; i < header_field_count(rq->header); ++i)
+    for (field = NULL; (field = header_next_field(rq->header, NULL, field)); )
     {
-        field = header_get_fieldn(rq->header, i);
         if (!strcasecmp(field_get_name(field), "Content-Length"))
             ++lengths;
         else

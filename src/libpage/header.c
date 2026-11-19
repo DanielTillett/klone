@@ -161,7 +161,66 @@ notfound:
     return NULL;
 }
 
-/** 
+/**
+ * \ingroup header
+ * \brief   Iterate over the fields of a header (all, or those with a name)
+ *
+ * Return the first field after \p prev (from the start if \p prev is
+ * \c NULL) whose name is \p name (case-insensitive), or any field if \p name
+ * is \c NULL:
+ *
+ * \code
+ *  for(f = NULL; (f = header_next_field(h, "Cookie", f)) != NULL; )
+ *      ...
+ * \endcode
+ *
+ * The header must not change during the loop.
+ *
+ * \param h     header object
+ * \param name  name of the fields to return, or \c NULL for all
+ * \param prev  the field returned by the previous call, or \c NULL
+ *
+ * \return the next matching field, or \c NULL when there are no more
+ */
+field_t *header_next_field(header_t *h, const char *name, field_t *prev)
+{
+    field_t *f;
+
+    dbg_return_if (h == NULL, NULL);
+
+    for(f = prev ? TAILQ_NEXT(prev, np) : TAILQ_FIRST(&h->fields); f;
+            f = TAILQ_NEXT(f, np))
+    {
+        if(name == NULL || (f->name && !strcasecmp(f->name, name)))
+            return f;
+    }
+
+    return NULL;
+}
+
+/**
+ * \ingroup header
+ * \brief   Count the fields with a given name
+ *
+ * \param h     header object
+ * \param name  name of the fields (case-insensitive)
+ *
+ * \return the number of fields called \p name in \p h
+ */
+size_t header_count_field(header_t *h, const char *name)
+{
+    field_t *f;
+    size_t n = 0;
+
+    dbg_return_if (name == NULL, 0);
+
+    for(f = NULL; (f = header_next_field(h, name, f)) != NULL; )
+        ++n;
+
+    return n;
+}
+
+/**
  * \ingroup header
  * \brief   Get field value
  *  
@@ -204,7 +263,7 @@ int header_has_token(header_t *h, const char *name, const char *token)
 {
     const char *v;
     field_t *f;
-    size_t i, len;
+    size_t len;
 
     dbg_return_if (h == NULL, 0);
     dbg_return_if (name == NULL, 0);
@@ -213,12 +272,8 @@ int header_has_token(header_t *h, const char *name, const char *token)
     len = strlen(token);
 
     /* the field may be repeated: look in every instance */
-    for(i = 0; i < header_field_count(h); ++i)
+    for(f = NULL; (f = header_next_field(h, name, f)) != NULL; )
     {
-        f = header_get_fieldn(h, i);
-        if(field_get_name(f) == NULL || strcasecmp(field_get_name(f), name))
-            continue;
-
         for(v = field_get_value(f); v && *v; ++v)
         {
             while(*v == ' ' || *v == '\t' || *v == ',')

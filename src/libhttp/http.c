@@ -136,37 +136,25 @@ err:
     return ~0;
 }
 
-static int http_try_resolv(const char *alias, char *dst, const char *uri,
-        size_t sz)
+/* if 'uri' starts with the alias' source prefix, write the resolved path to
+   'dst' and return 0; ~0 if the alias does not apply */
+static int http_try_resolv(const vhost_alias_t *alias, char *dst,
+        const char *uri, size_t sz)
 {
-    static const char *WP = " \t";
-    char *src, *res, *pp = NULL;
-    char v[1024];
-
+    dbg_err_if(alias == NULL);
     dbg_err_if(dst == NULL);
     dbg_err_if(uri == NULL);
-    dbg_err_if(alias == NULL);
 
-    /* copy the alias in a buffer, strtok_r modifies it */
-    dbg_err_if(u_strlcpy(v, alias, sizeof(v)));
-
-    /* src is the source directory */
-    src = strtok_r(v, WP, &pp); 
-    dbg_err_if(src == NULL);
-
-    /* exit if the URI doesn't match this alias */
-    nop_err_if(strncmp(src, uri, strlen(src)));
+    /* malformed (see http_alias_add), or the URI doesn't match */
+    nop_err_if(alias->src == NULL);
+    nop_err_if(strncmp(alias->src, uri, alias->srclen));
 
     /* if src doesn't end with a slash check that the next char in uri is a / */
-    if(src[strlen(src)-1] != '/')
-        nop_err_if(uri[strlen(src)] != '/');
-
-    /* alias found, get the resolved prefix */
-    res = strtok_r(NULL, WP, &pp);
-    dbg_err_if(res == NULL);
+    if(alias->src[alias->srclen - 1] != '/')
+        nop_err_if(uri[alias->srclen] != '/');
 
     /* copy-out the resolved uri to dst */
-    dbg_err_if(http_path_join(dst, sz, res, uri + strlen(src)));
+    dbg_err_if(http_path_join(dst, sz, alias->dst, uri + alias->srclen));
 
     return 0;
 err:
@@ -217,16 +205,38 @@ err:
     return NULL;
 }
 
-/* append a copy of alias value 'v' (may be NULL: http_try_resolv skips it) */
+/* append alias value 'v' ("src dst"), split once here instead of for every
+   request; a malformed one (no value, or no dst) is kept but never matches */
 static int http_alias_add(vhost_t *vhost, const char *v)
 {
-    char *copy = NULL;
+    static const char WP[] = " \t";
+    vhost_alias_t *a = &vhost->alias[vhost->nalias];
+    char *copy = NULL, *src, *dst, *pp = NULL;
 
-    dbg_err_if(v && (copy = u_strdup(v)) == NULL);
-    vhost->alias[vhost->nalias++] = copy;
+    memset(a, 0, sizeof *a);
+    vhost->nalias++;    /* vhost_free frees what is set below */
+
+    if(v == NULL)
+        return 0;
+    dbg_err_if((copy = u_strdup(v)) == NULL);
+
+    if((src = strtok_r(copy, WP, &pp)) == NULL ||
+            (dst = strtok_r(NULL, WP, &pp)) == NULL)
+    {
+        warn("alias \"%s\" ignored: \"source target\" expected", v);
+        U_FREE(copy);
+        return 0;
+    }
+
+    dbg_err_if((a->src = u_strdup(src)) == NULL);
+    dbg_err_if((a->dst = u_strdup(dst)) == NULL);
+    a->srclen = strlen(src);
+
+    U_FREE(copy);
 
     return 0;
 err:
+    U_FREE(copy);
     return ~0;
 }
 
@@ -251,7 +261,8 @@ static int http_load_aliases(vhost_t *vhost)
 
     if(n)
     {
-        dbg_err_if((vhost->alias = u_zalloc(n * sizeof(char*))) == NULL);
+        dbg_err_if((vhost->alias = u_zalloc(n * sizeof(vhost_alias_t)))
+                == NULL);
 
         /* copies: the vhost owns them (vhost_free) */
         for(i = 0; !u_config_get_subkey_nth(vhost->config,"dir_alias", i,
@@ -268,7 +279,11 @@ static int http_load_aliases(vhost_t *vhost)
 err:
     /* drop what was copied: the next request tries again */
     while(vhost->alias && vhost->nalias)
-        u_free(vhost->alias[--vhost->nalias]);
+    {
+        --vhost->nalias;
+        U_FREE(vhost->alias[vhost->nalias].src);
+        U_FREE(vhost->alias[vhost->nalias].dst);
+    }
     U_FREE(vhost->alias);
     return ~0;
 }
@@ -291,7 +306,7 @@ int http_alias_resolv(http_t *h, request_t *rq, char *dst, const char *uri,
     /* try each dir_alias, then each script_alias */
     for(i = 0; i < vhost->nalias; ++i)
     {
-        if(!http_try_resolv(vhost->alias[i], dst, uri, sz))
+        if(!http_try_resolv(&vhost->alias[i], dst, uri, sz))
             return 0;   /* alias found, uri resolved */
     }
 
@@ -384,10 +399,11 @@ static int http_get_config_index(http_t *h, request_t *rq, char *idx, size_t sz)
 
     dbg_err_if((vhost = http_get_vhost(h, rq)) == NULL);
 
-    if((cindex = u_config_get_subkey_value(vhost->config, "index")) == NULL)
+    /* the "index" value, read when the vhost was set up */
+    if((cindex = vhost->index) == NULL)
         return ~0; /* index config key missing */
 
-    /* copy the string (u_tokenize will modify it) */
+    /* copy the string (strtok_r modifies it) */
     dbg_err_if(u_strlcpy(buf, cindex, sizeof(buf)));
 
     for(src = buf; (tok = strtok_r(src, " \t", &pp)) != NULL; src = NULL)

@@ -22,6 +22,14 @@ LIST_HEAD(vhost_list_s, vhost_s);
 struct http_s;
 struct klog_s;
 
+/* a dir_alias or cgi.script_alias "src dst" value, split once */
+typedef struct vhost_alias_s
+{
+    char *src;              /* URI prefix (NULL: malformed, never matches)   */
+    size_t srclen;
+    char *dst;              /* what the prefix is replaced with              */
+} vhost_alias_t;
+
 typedef struct vhost_s
 {
     LIST_ENTRY(vhost_s) np; /* next & prev pointers                          */
@@ -41,7 +49,7 @@ typedef struct vhost_s
     /* filled on first use (see http_alias_resolv, request_load_config);
        like the fields above, read once: later changes to the configuration
        are not seen. The strings are copies owned by the vhost */
-    char **alias;           /* dir_alias then cgi.script_alias values        */
+    vhost_alias_t *alias;   /* dir_alias then cgi.script_alias values        */
     size_t nalias;
     int alias_loaded;
     int rq_config_loaded;   /* the request limits below are set              */

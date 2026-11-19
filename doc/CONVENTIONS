@@ -1,0 +1,95 @@
+KLIN CODING CONVENTIONS
+-----------------------
+
+How errors are returned, who frees what, and which state is global. New
+code follows these; old code that does not is a bug to fix when touched.
+
+
+RETURN VALUES
+
+    int status functions      0 on success, ~0 on error
+    ssize_t / size functions  the count, or -1 on error
+    predicates (is_*, has_*)  1 or 0; they cannot fail (a bad argument is
+                              "no"). Never return 0 for both "no" and
+                              "error": write a status function instead
+    pointer getters           NULL when absent; say in the comment whether
+                              NULL can also mean an error
+
+A function that can fail returns a status; results go out through
+pointer arguments, written only on success.
+
+
+ERROR MACROS (LibU, toolbox/carpal.h)
+
+    dbg_err_if(e)    an error that should not happen: log (debug builds)
+                     and goto err
+    warn_err_if(e)   an error worth a warning in production (bad
+    warn_err_ifm()   configuration, a client error we report)
+    crit_err_if(e)   the process cannot go on usefully
+    nop_err_if(e)    an expected outcome that uses the error path (e.g.
+                     "no match"): no log
+    dbg_if(e)        log and carry on. Only where ignoring the failure is
+                     intended; say why in a comment
+
+Inside an err: block, use dbg_if(), never dbg_err_if(): the latter jumps
+back to err.
+
+
+OWNERSHIP
+
+The creator of an object frees it with the matching *_free(). A function
+that keeps a pointer it was given says so in its comment ("takes
+ownership", or "the caller keeps it, and it must outlive x").
+
+    request_t, response_t   one per request, created and freed by
+                            http_serve_request(); free the request first
+                            (its io flush uses the response)
+    header_t                owned by its request or response
+    field_t                 owned by the header it was added to;
+                            header_del_field() hands it back to the caller,
+                            who frees it with field_free()
+    session_t               created per request by session_create(), freed
+                            with session_free()
+    vars_t / var_t          a request's args list owns its vars; args_get
+                            and args_post hold the same var_t pointers
+                            without owning them (see request_vars())
+    io_t                    io_free() frees the codecs attached to it and
+                            closes the descriptor only if created with
+                            IO_FD_CLOSE
+    codec_t                 owned by the io_t it was added to
+    vhost_t                 owned by the http_t; its cached strings (alias,
+                            rq_temp_dir) are copies it frees
+    talarm_t                timerm_add() returns it; timerm_del() frees it.
+                            A fired alarm is off the list but still
+                            allocated: timerm_del() it (or U_FREE it)
+
+Configuration (u_config_t) is read when the server starts and is not
+changed afterwards: caches such as vhost_t's may keep values read from it.
+
+
+GLOBAL STATE
+
+klind is single-threaded; a worker serves one connection at a time.
+Process-wide state, and what happens to it in a forked child:
+
+    ctx (context.h)           shared; the child sets ctx->pipc
+    timer list (timer.c)      a child drops the parent's alarms the first
+                              time it sets one (timerm_adopt); the cached
+                              pid is reset by pthread_atfork (glibc/macOS)
+    field and response-filter caches (field.c, rsfilter.c)
+                              per process, inherited as they are (they only
+                              hold free memory)
+    server watchdog and spare flags (server.c)
+                              set in the child by server_spawn_child
+
+Signal handlers only set flags (volatile sig_atomic_t) and return; the
+main loop acts on them. The timer's SIGALRM handler is the exception for
+now: it runs the alarm callbacks, which must therefore not allocate or log.
+
+
+NAMES AND TEXT
+
+Public functions are prefixed with their module (request_, response_,
+header_, field_, http_, server_ ...). C99, 4-space indents, lines up to 80
+columns. Comments say why, not what. Messages and comments that mention
+the KLone name are history, and keep it.

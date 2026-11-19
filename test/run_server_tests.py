@@ -406,7 +406,8 @@ def run_server_checks(args, env, output, daemon):
                 ("plain", plain, False, "memory", ""),
                 ("client", client, False, "client", ""),
                 ("secure", secure, True, "client", ""),
-                ("files", files, False, f"file\n        file.path {sessions}", ""),
+                ("files", files, False, f"file\n        file.path {sessions}",
+                 "index missing.kl1 pid.kl1"),
                 ("memlog", memlog, False, "memory", "log\n    {\n        type memory\n    }")]:
             blocks.append(f"""{name}
 {{
@@ -535,6 +536,10 @@ def run_server_checks(args, env, output, daemon):
                                          cookie_header + b"\r\n\r\n", context)
                         check(b"persisted" not in reply.partition(b"\r\n\r\n")[2],
                               "Accepted a forged client-session MAC")
+                # a configured index list: the first page that exists is served
+                reply = exchange(files, b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                body = reply.partition(b"\r\n\r\n")[2].strip()
+                check(b"200 OK" in reply and body.isdigit(), f"index pid.kl1 not served: {reply[:400]!r}")
                 if args.prefork:
                     # a worker logs to the server's own memory log (there is
                     # no top-level log) and reads it back through the parent:

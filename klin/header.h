@@ -51,6 +51,10 @@ int header_set_field(header_t *h, const char *name, const char *value);
 field_t* header_get_fieldn(header_t *h, size_t idx);
 size_t header_field_count(header_t *h);
 
+/* for(f = NULL; (f = header_next_field(h, name or NULL, f)); ) ... */
+field_t* header_next_field(header_t *h, const char *name, field_t *prev);
+size_t header_count_field(header_t *h, const char *name);
+
 #ifdef __cplusplus
 }
 #endif 

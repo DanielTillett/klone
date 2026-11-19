@@ -40,72 +40,10 @@ enum { HEXCPY_VERBATIM, HEXCPY_ENCODE, HEXCPY_DECODE };
 enum { HTMLCPY_VERBATIM, HTMLCPY_ENCODE, HTMLCPY_DECODE };
 enum { SQLCPY_VERBATIM, SQLCPY_ENCODE, SQLCPY_DECODE };
 
-static int u_strlcpy(char *d, const char *s, size_t size)
-{
-    size_t n = strlen(s);
-    if (!size) return -1;
-    if (n >= size) n = size - 1;
-    memmove(d, s, n);
-    d[n] = '\0';
-    return 0;
-}
-
-typedef struct { char data[2048]; size_t len; } u_string_t;
-static int fail_copy, fail_clear, fail_process, processed, live_strings;
-static int u_string_create(const char *s, size_t n, u_string_t **out)
-{
-    (void)s; (void)n;
-    *out = calloc(1, sizeof(**out));
-    if (!*out) return -1;
-    ++live_strings;
-    return 0;
-}
-static void u_string_free(u_string_t *s) { if (s) { --live_strings; free(s); } }
-static size_t u_string_len(u_string_t *s) { return s->len; }
-static const char *u_string_c(u_string_t *s) { return s->data; }
-static int u_string_reserve(u_string_t *s, size_t n)
-{ (void)s; return n >= sizeof(s->data) ? -1 : 0; }
-static int u_string_set_length(u_string_t *s, size_t n)
-{
-    if (n >= sizeof(s->data)) return -1;
-    s->len = n; s->data[n] = '\0'; return 0;
-}
-static int u_string_append(u_string_t *s, const char *data, size_t n)
-{
-    if (n >= sizeof(s->data) - s->len) return -1;
-    memcpy(s->data + s->len, data, n);
-    return u_string_set_length(s, s->len + n);
-}
-static int u_string_clear(u_string_t *s)
-{ return fail_clear ? -1 : u_string_set_length(s, 0); }
-static int u_string_copy(u_string_t *d, u_string_t *s)
-{
-    if (fail_copy) return -1;
-    *d = *s; return 0;
-}
-static int u_string_aprintf(u_string_t *s, const char *fmt, int slash, ...)
-{
-    int rc;
-    va_list args;
-    va_start(args, slash);
-    if (strcmp(fmt, "%c%s") == 0)
-        rc = snprintf(s->data + s->len, sizeof(s->data) - s->len,
-                      fmt, slash, va_arg(args, const char *));
-    else
-        rc = snprintf(s->data + s->len, sizeof(s->data) - s->len, fmt, slash);
-    va_end(args);
-    if (rc < 0 || (size_t)rc >= sizeof(s->data) - s->len) return -1;
-    s->len += (size_t)rc; return 0;
-}
-static int u_snprintf(char *out, size_t size, const char *fmt, int value)
-{
-    int n = snprintf(out, size, fmt, value);
-    return n < 0 || (size_t)n >= size ? -1 : 0;
-}
+static int fail_read, fail_process, processed;
 #ifdef _WIN32
 #define strtok_r strtok_s
 #endif
-static int u_isnl(char c) { return c == '\r' || c == '\n'; }
 static int u_isblank(char c) { return c == ' ' || c == '\t'; }
 
 typedef struct { const char *length; } header_t;
@@ -132,7 +70,7 @@ static ssize_t io_get_until(io_t *io, char stop_at, char *buf, size_t size)
     const char *line = io->lines[io->offset];
     size_t n;
     (void)stop_at;
-    if (fail_clear) return -1;
+    if (fail_read) return -1;
     if (!line) { buf[0] = 0; return 0; }
     n = U_MIN(strlen(line), size - 1);
     memcpy(buf, line, n); buf[n] = 0;
@@ -281,7 +219,6 @@ static void test_paths(void)
         strcpy(buffer, input[i]);
         CHECK(u_uri_normalize(buffer) == 0);
         CHECK(strcmp(buffer, expected[i]) == 0);
-        CHECK(live_strings == 0);
     }
     buffer[0] = '\0'; CHECK(u_uri_normalize(buffer) != 0);
     strcpy(buffer, "relative"); CHECK(u_uri_normalize(buffer) != 0);
@@ -318,25 +255,24 @@ static void test_headers_and_seek(void)
     header_t h = {NULL};
     io_mem_t mem = {0, 3};
     CHECK(header_load_ex(&h, &io, 0) == 0 && processed == 2);
-    CHECK(live_strings == 0);
     io.offset = 0; fail_process = 1;
-    CHECK(header_load_ex(&h, &io, 0) != 0 && live_strings == 0);
-    fail_process = 0; fail_clear = 1; io.offset = 0;
-    CHECK(header_load_ex(&h, &io, 0) != 0 && live_strings == 0);
-    fail_process = 0; fail_clear = 0;
+    CHECK(header_load_ex(&h, &io, 0) != 0);
+    fail_process = 0; fail_read = 1; io.offset = 0;
+    CHECK(header_load_ex(&h, &io, 0) != 0);
+    fail_process = 0; fail_read = 0;
     {
         const char *incomplete[] = {"X: one\r\n", NULL};
         const char *folded[] = {"X: one\r\n", " two\r\n", "\r\n", NULL};
         const char *many[260];
         size_t i;
         io.offset = 0; io.lines = incomplete;
-        CHECK(header_load_ex(&h, &io, 0) != 0 && live_strings == 0);
+        CHECK(header_load_ex(&h, &io, 0) != 0);
         io.offset = 0; io.lines = folded;
-        CHECK(header_load_ex(&h, &io, 0) != 0 && live_strings == 0);
+        CHECK(header_load_ex(&h, &io, 0) != 0);
         for (i = 0; i < 258; ++i) many[i] = "X: one\r\n";
         many[258] = "\r\n"; many[259] = NULL;
         io.offset = 0; io.lines = many;
-        CHECK(header_load_ex(&h, &io, 0) != 0 && live_strings == 0);
+        CHECK(header_load_ex(&h, &io, 0) != 0);
     }
     {
         /* 8192 bytes with the '\n' is the longest line accepted */
@@ -350,8 +286,8 @@ static void test_headers_and_seek(void)
         CHECK(header_load_ex(&h, &io, 0) != 0);
     }
     io.lines = lines;
-    fail_clear = 0; io.offset = 1; fail_process = 1;
-    CHECK(header_load_ex(&h, &io, 0) != 0 && live_strings == 0);
+    fail_read = 0; io.offset = 1; fail_process = 1;
+    CHECK(header_load_ex(&h, &io, 0) != 0);
     CHECK(io_mem_seek(&mem, 3) == 3 && mem.off == 3);
     CHECK(io_mem_seek(&mem, 4) == -1 && mem.off == 3);
     mem.size = 0; mem.off = 0;

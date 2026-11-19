@@ -60,7 +60,7 @@ def main():
         (temp / "regression_functions.inc").write_text("\n\n".join(bodies), encoding="utf-8")
         executable = temp / ("regressions.exe" if os.name == "nt" else "regressions")
         command = shlex.split(args.cc, posix=os.name != "nt") + [
-            "-std=c99", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function",
+            "-std=c99", "-Wall", "-Wextra", "-Werror",
             "-I", str(ROOT), "-I", str(temp),
             str(ROOT / "test/regressions.c"), str(ROOT / "src/libutils/md5.c"),
             "-o", str(executable),

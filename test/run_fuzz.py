@@ -21,7 +21,8 @@ def main():
     executable = output / "fuzz-parsers"
     # Compile the relevant complete translation units with fuzzer coverage.
     # Remaining collaborators come from the corresponding full build archives.
-    sources = ["src/libpage/header.c", "src/libpage/field.c", "src/libutils/utils.c"]
+    sources = ["src/libpage/header.c", "src/libpage/field.c", "src/libutils/utils.c",
+               "src/libtrans/parser.c", "src/libtrans/trans_c.c"]
     source = Path(next(line.split("=", 1)[1]
                        for line in (tree / "CMakeCache.txt").read_text().splitlines()
                        if line.startswith("Klin_SOURCE_DIR:")))
@@ -38,7 +39,10 @@ def main():
     corpus = output / "fuzz-corpus"
     corpus.mkdir(exist_ok=True)
     seeds = [b"Host: localhost\r\n\r\n", b"Content-Length: -1\r\n\r\n",
-             b"%", b"%4", b"%GG", b"&amp;", b"X: a\r\n folded\r\n\r\n"]
+             b"%", b"%4", b"%GG", b"&amp;", b"X: a\r\n folded\r\n\r\n",
+             # page translator input
+             b"<p><%= x %></p>", b"<% int i; %>\r\n<%! #include <x.h> %>",
+             b"<%@ include \"a\" %>", b"<%", b"%><%%", b"<%?bad %>"]
     for i, seed in enumerate(seeds):
         (corpus / f"seed-{i}").write_bytes(seed)
     with (output / "fuzz.log").open("w") as log:

@@ -90,7 +90,8 @@ def cmake_build(args, source, output, env, flags):
     configure = ["cmake", "-S", str(source), "-B", str(build), "-G", args.generator,
                  "-DCMAKE_BUILD_TYPE=Debug" if args.sanitize else "-DCMAKE_BUILD_TYPE=Release",
                  f"-DCMAKE_C_FLAGS={flags}",
-                 "-DKLIN_DEBUG=ON", "-DKLIN_ENABLE_SUP_FS=ON", "-DKLIN_SITE_DIR="]
+                 "-DKLIN_DEBUG=ON", "-DKLIN_ENABLE_SUP_FS=ON", "-DKLIN_SITE_DIR=",
+                 "-DKLIN_BUILD_TESTS=ON"]
     if args.sanitize:
         configure.append("-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined")
     if args.make_program:
@@ -159,6 +160,10 @@ def main():
     (output / "build-info.json").write_text(json.dumps(metadata, indent=2))
     print(f"Server: {daemon}\nBuild log: {output / 'build.log'}")
     if args.test:
+        # unit tests against the real libraries (CTest), then the extracted-
+        # function regressions and the full-server tests
+        subprocess.run(["ctest", "--test-dir", str(build), "-L", "unit", "--output-on-failure"],
+                       check=True, env=env)
         subprocess.run([sys.executable, str(ROOT / "test/run_regressions.py"), "--sanitize"], check=True, env=env)
         subprocess.run([sys.executable, str(ROOT / "test/run_server_tests.py"), "--build", str(build)],
                        check=True, env=env)

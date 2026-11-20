@@ -937,6 +937,7 @@ void tls_keyproxy_stop(void)
 
 #include <u/libu.h>
 #include <klin/keyproxy.h>
+#include <klin/tlsprv.h>
 
 int tls_keyproxy_use_key(SSL_CTX *c, EVP_PKEY *key, int sandbox)
 {

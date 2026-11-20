@@ -1407,6 +1407,62 @@ def run_keymgr_checks(check, root_pid, key, sanitized):
           f"processes {sorted(procs)}")
 
 
+def klind_processes(root_pid):
+    """klind and the processes it started (and theirs)."""
+    procs = {root_pid}
+    for _ in range(3):
+        for entry in Path("/proc").iterdir():
+            if entry.name.isdigit():
+                try:
+                    ppid = int((entry / "stat").read_text().rsplit(")", 1)[1].split()[1])
+                except (OSError, ValueError, IndexError):
+                    continue
+                if ppid in procs:
+                    procs.add(int(entry.name))
+    return procs
+
+
+def seccomp_mode(pid):
+    for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+        if line.startswith("Seccomp:"):
+            return int(line.split()[1])
+    return -1
+
+
+def run_sandbox_checks(args, check, root_pid, plain, unsandboxed):
+    """Sandboxes (doc/SANDBOX, Linux seccomp): workers and the key manager
+    are filtered, a call outside the list fails with EPERM, one the
+    sandbox kills for ends the worker; 'sandbox no' turns it off."""
+    if not Path("/proc/self/status").exists():
+        return
+    procs = klind_processes(root_pid)
+    check(seccomp_mode(root_pid) == 0, "klind itself (not a worker) is sandboxed")
+    managers = {pid for pid in procs if pid != root_pid and
+                len(list(Path(f"/proc/{pid}/fd").iterdir())) <= 4}
+    check(managers and all(seccomp_mode(pid) == 2 for pid in managers),
+          f"Key manager not sandboxed: {[(p, seccomp_mode(p)) for p in managers]}")
+    if not args.prefork:
+        return  # the single-process server has no workers
+
+    def get(port, query):
+        reply = exchange(port, b"GET /sandbox.kl1?" + query + b" HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        return reply.partition(b"\r\n\r\n")[2].strip()
+
+    check(get(plain, b"try=link") == b"EPERM", "A call outside the list did not fail with EPERM")
+    check(get(unsandboxed, b"try=link") == b"ENOENT", "sandbox no did not turn the sandbox off")
+    workers = {pid for pid in klind_processes(root_pid) if pid != root_pid and pid not in managers}
+    modes = {seccomp_mode(pid) for pid in workers}
+    check(modes == {0, 2}, f"Workers' seccomp modes {modes}: expected filtered and unfiltered")
+    try:
+        killed = get(plain, b"try=unshare") == b""
+    except (ConnectionResetError, OSError):
+        killed = True
+    check(killed, "unshare(2) did not kill the sandboxed worker")
+    check(get(unsandboxed, b"try=unshare") == b"survived", "unshare killed an unsandboxed worker")
+    reply = exchange(plain, b"GET /static/hello.txt HTTP/1.1\r\nHost: localhost\r\n\r\n")
+    check(reply.endswith(b"klin integration test\n"), "Server not serving after a worker was killed")
+
+
 def run_bad_auth_checks(check, daemon, env, temp):
     """Unsafe or broken auth (and route) configurations stop klind at
     startup, instead of serving the realm unprotected (the reason goes to
@@ -1517,7 +1573,8 @@ def run_server_checks(args, env, output, daemon):
                 ("secure", secure, True, "client", auth),
                 ("files", files, False, f"file\n        file.path {sessions}",
                  "index missing.kl1 pid.kl1\n    send_enc_deflate yes"),
-                ("memlog", memlog, False, "memory", "log\n    {\n        type memory\n    }"),
+                ("memlog", memlog, False, "memory",
+                 "log\n    {\n        type memory\n    }\n    sandbox no"),
                 ("blocked", blocked, False, "memory", BLOCKED)]:
             blocks.append(f"""{name}
 {{
@@ -1682,6 +1739,7 @@ def run_server_checks(args, env, output, daemon):
                 run_route_checks(args, check, plain)
                 run_access_checks(check, client, blocked, temp)
                 run_validation_checks(check, plain)
+                run_sandbox_checks(args, check, process.pid, plain, memlog)
                 run_keymgr_checks(check, process.pid, key,
                                   "-fsanitize" in cmake_cache_value(daemon.parent.parent,
                                                                     "CMAKE_C_FLAGS"))

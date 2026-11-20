@@ -47,6 +47,7 @@
 #include <u/libu.h>
 #include <klin/context.h>
 #include <klin/keyproxy.h>
+#include <klin/sandbox.h>
 
 #define KP_PROVIDER     "klin-keyproxy"
 #define KP_PROPQ        "provider=klin-keyproxy"
@@ -224,8 +225,23 @@ static void kp_manager_loop(EVP_PKEY *key, int chan, pid_t parent)
     }
 }
 
+/* sign once before the sandbox closes in: OpenSSL fetches and sets up
+   what signing needs on first use */
+static void kp_warm_up(EVP_PKEY *key)
+{
+    kp_request_t rq;
+    kp_reply_t rp;
+
+    memset(&rq, 0, sizeof rq);
+    rq.magic = KP_MAGIC;
+    rq.tbslen = 32;
+    strcpy(rq.md, "SHA256");
+    kp_sign(key, &rq, &rp);
+    OPENSSL_cleanse(&rp, sizeof rp);
+}
+
 /* start a key manager holding 'key'; *pchan: the control socket */
-static int kp_manager_start(EVP_PKEY *key, int *pchan)
+static int kp_manager_start(EVP_PKEY *key, int sandbox, int *pchan)
 {
     int sv[2] = { -1, -1 };
     pid_t pid, parent = getpid();
@@ -237,6 +253,9 @@ static int kp_manager_start(EVP_PKEY *key, int *pchan)
     if(pid == 0)
     {   /* the key manager: never returns */
         kp_manager_setup(sv[1]);
+        kp_warm_up(key);
+        if(sandbox && sandbox_keymgr())
+            _exit(1);
         kp_manager_loop(key, sv[1], parent);
         _exit(0);
     }
@@ -843,7 +862,7 @@ err:
  * \return \c 0 if successful, \c ~0 on error (e.g. a key that is neither
  *         RSA nor EC)
  */
-int tls_keyproxy_use_key(SSL_CTX *c, EVP_PKEY *key)
+int tls_keyproxy_use_key(SSL_CTX *c, EVP_PKEY *key, int sandbox)
 {
     unsigned char *der = NULL;
     EVP_PKEY_CTX *pc = NULL;
@@ -864,7 +883,7 @@ int tls_keyproxy_use_key(SSL_CTX *c, EVP_PKEY *key)
 
     dbg_err_if(kp_provider_load());
     dbg_err_if((len = i2d_PUBKEY(key, &der)) <= 0);
-    dbg_err_if(kp_manager_start(key, &chan));
+    dbg_err_if(kp_manager_start(key, sandbox, &chan));
 
     params[0] = OSSL_PARAM_construct_octet_string(KP_PARAM_PUBKEY, der,
             (size_t) len);
@@ -918,9 +937,9 @@ void tls_keyproxy_stop(void)
 #include <u/libu.h>
 #include <klin/keyproxy.h>
 
-int tls_keyproxy_use_key(SSL_CTX *c, EVP_PKEY *key)
+int tls_keyproxy_use_key(SSL_CTX *c, EVP_PKEY *key, int sandbox)
 {
-    u_unused_args(c, key);
+    u_unused_args(c, key, sandbox);
     warn("key_manager is not supported on this platform");
     return ~0;
 }

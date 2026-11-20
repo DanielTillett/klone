@@ -159,6 +159,11 @@ requests iteratively in a single process. -f overrides values in the
 embedded configuration. See klind(8) and klind.conf(5) in doc/man for all
 options.
 
+Sandbox: workers and the TLS key manager run under a seccomp filter on
+Linux (pledge on OpenBSD) that kills them for calls only an attacker needs
+and refuses the ones they have no use for (doc/SANDBOX). On by default;
+sandbox no turns it off.
+
 TLS key manager: the private key of an HTTPS server is held by a separate
 process; workers sign handshakes through it and never hold the key
 (doc/KEYMGR). On by default; key_manager no turns it off.

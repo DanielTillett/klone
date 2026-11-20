@@ -1,0 +1,21 @@
+<%!
+    #include <errno.h>
+    #include <string.h>
+    #include <unistd.h>
+    #include <sys/syscall.h>
+%><%
+    /* ?try=link: a call outside the sandbox's list (EPERM in a sandbox,
+       ENOENT without); ?try=unshare: one the sandbox kills the worker for */
+    const char *t = request_get_arg(request, "try");
+    int r;
+
+    if(t && !strcmp(t, "link"))
+    {
+        r = link("/nonexistent-klin-sandbox", "/tmp/klin-sandbox-link");
+        io_printf(out, "%s\n", r == 0 ? "OK" : errno == EPERM ? "EPERM" :
+                errno == ENOENT ? "ENOENT" : "OTHER");
+    } else if(t && !strcmp(t, "unshare")) {
+        (void) syscall(SYS_unshare, 0x10000000 /* CLONE_NEWUSER */);
+        io_printf(out, "survived\n");
+    }
+%>

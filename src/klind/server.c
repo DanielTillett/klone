@@ -38,6 +38,7 @@
 #include <klin/server_ppc_cmd.h>
 #include <klin/emb.h>
 #include <klin/keyproxy.h>
+#include <klin/sandbox.h>
 #include "server_s.h"
 #include "child.h"
 
@@ -56,6 +57,7 @@ enum watch_fd_e
 static void server_watch_fd(server_t *s, int fd, unsigned int mode);
 static void server_clear_fd(server_t *s, int fd, unsigned int mode);
 static void server_close_fd(server_t *s, int fd);
+static void server_sandbox(backend_t *be);
 
 static int server_be_listen(backend_t *be)
 {
@@ -582,6 +584,7 @@ static int server_child_serve(server_t *s, backend_t *be, int ad)
         U_CLOSE(be->ld);
 
         hook_call(child_init);
+        server_sandbox(be);
 
         /* serve the page (the backend closes the client socket) and die */
         dbg_if(backend_serve(be, ad));
@@ -751,6 +754,37 @@ static void server_watchdog_end(void)
     server_watchdog_enabled = 0;
 }
 #endif
+
+/* does a configuration tree run CGI scripts (a script_alias anywhere)? */
+static int server_config_has(u_config_t *c, const char *key)
+{
+    u_config_t *child;
+    int i;
+
+    for(i = 0; (child = u_config_get_child_n(c, NULL, i)) != NULL; ++i)
+        if(!strcmp(u_config_get_key(child), key) ||
+                server_config_has(child, key))
+            return 1;
+    return 0;
+}
+
+/* sandbox a worker of 'be' after its init hook (doc/SANDBOX); on by
+ * default, "sandbox no" turns it off. A worker that cannot be sandboxed
+ * does not serve */
+static void server_sandbox(backend_t *be)
+{
+    int on = 1;
+
+    (void) u_config_get_subkey_value_b(be->config, "sandbox", 1, &on);
+    if(!on)
+        return;
+    if(sandbox_worker(server_config_has(be->config, "script_alias"),
+                u_config_get_subkey_value(be->config, "sandbox_allow")))
+    {
+        u_crit("cannot sandbox the worker (set sandbox no to run without)");
+        _exit(EXIT_FAILURE);
+    }
+}
 
 /* serve the accepted socket 'ad', which is always consumed (closed) */
 static int server_be_serve(server_t *s, backend_t *be, int ad)
@@ -982,6 +1016,9 @@ int server_spawn_child(server_t *s, backend_t *be)
 
     /* call the hook that runs the on-child user code */
     hook_call(child_init);
+
+    /* then nothing an attacker needs is left to it (doc/SANDBOX) */
+    server_sandbox(be);
 
     /* child main loop: 
        close on s->stop or if max # of request limit has reached (the 
@@ -1437,6 +1474,10 @@ static int server_add_backend(server_t *s, const char *name, int id,
     be->server = s;
     be->config = bekey;
     be->id = id;
+
+    /* a sandbox_allow naming a call that cannot be allowed stops klind */
+    dbg_err_if(sandbox_check_allow(u_config_get_subkey_value(bekey,
+                    "sandbox_allow")));
     if(be->model == SERVER_MODEL_UNSET)
         be->model = s->model; /* inherit server model */
 

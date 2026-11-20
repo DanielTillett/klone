@@ -306,7 +306,7 @@ err:
 /* wrapper for SSL_CTX_use_PrivateKey(); with 'keymgr' the key goes to a
    key manager process and the context gets a proxy (doc/KEYMGR) */
 int tls_use_PrivateKey_file (SSL_CTX *ctx, const char *res_name, int type,
-        int keymgr)
+        int keymgr, int sandbox)
 {
     int ret = 0;
     BIO *b = NULL;
@@ -326,7 +326,7 @@ int tls_use_PrivateKey_file (SSL_CTX *ctx, const char *res_name, int type,
             warn("key_manager: %s is embedded in klind, so every process "
                     "holds it; use a key file to keep it out of the "
                     "workers", res_name);
-        ret = (tls_keyproxy_use_key(ctx, pkey) == 0);
+        ret = (tls_keyproxy_use_key(ctx, pkey, sandbox) == 0);
     }
     else
         ret = SSL_CTX_use_PrivateKey(ctx, pkey);

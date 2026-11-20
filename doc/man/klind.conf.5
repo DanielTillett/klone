@@ -105,6 +105,12 @@ Set the maximum number of bytes the server is willing to accept for a given HTTP
 \fBpost_maxsize\fR
 the connection is immediately terminated. The default value is 5 MB.
 .TP
+\fBsandbox\fR, \fBsandbox_allow\fR
+\fIyes\fR (default) runs the workers and the TLS key manager in a
+seccomp sandbox (Linux) or under pledge (OpenBSD); \fIno\fR turns it off.
+\fBsandbox_allow\fR names further system calls the workers may make. See
+doc/SANDBOX.
+.TP
 \fBkey_manager\fR
 HTTPS only: \fIyes\fR (default) keeps the private key in a separate
 key manager process that signs the TLS handshakes, out of the worker

@@ -242,7 +242,7 @@ list(TRANSFORM _trans PREPEND ${_src}/libtrans/)
 klin_library(trans ${_trans})
 
 set(_utils utils.c md5.c mime_map.c timer.c date.c version.c path.c pwd.c
-    authhash.c json.c)
+    authhash.c json.c sandbox.c)
 list(TRANSFORM _utils PREPEND ${_src}/libutils/)
 klin_library(utils ${_utils})
 

@@ -15,6 +15,15 @@ Klin 4.0.0:
 	  entries, so they survive a reconfigure. The Windows service keeps
 	  the name kloned. All of it is in cmake/klone_compat.cmake and the
 	  lines marked "before KLone was renamed Klin"
+	- sandbox (doc/SANDBOX), on by default (sandbox no turns it off):
+	  workers, after the child_init hook, and the TLS key manager run
+	  under a seccomp-bpf filter with no_new_privs on Linux (x86-64,
+	  aarch64): the calls serving needs pass, ptrace, mount, setuid,
+	  module loading, bpf, namespaces and the like kill the process, any
+	  other call fails with EPERM. CGI servers also allow fork/exec;
+	  sandbox_allow adds calls from a known list. OpenBSD: pledge
+	  (untested). A page that made unusual system calls may need
+	  sandbox_allow or sandbox no
 	- TLS key manager (doc/KEYMGR), on by default (key_manager no turns it
 	  off): the private key goes to a separate process before any worker
 	  is forked and klind wipes its copy; workers hold a proxy key (an

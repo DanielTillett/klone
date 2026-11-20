@@ -22,7 +22,7 @@ extern "C" {
 
 /* the TLS key manager (doc/KEYMGR): the private key lives in a separate
  * process, workers sign through it */
-int tls_keyproxy_use_key(SSL_CTX *c, EVP_PKEY *key);
+int tls_keyproxy_use_key(SSL_CTX *c, EVP_PKEY *key, int sandbox);
 int tls_keyproxy_is_manager(pid_t pid);
 void tls_keyproxy_stop(void);
 

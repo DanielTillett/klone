@@ -89,6 +89,8 @@ static int tls_load_ctx_args (u_config_t *cfg, tls_ctx_args_t **pcargs)
     /* the private key in a separate process (doc/KEYMGR), by default */
     dbg_err_if (u_config_get_subkey_value_b(cfg, "key_manager", 1,
                 &cargs->keymgr));
+    dbg_err_if (u_config_get_subkey_value_b(cfg, "sandbox", 1,
+                &cargs->sandbox));
     dbg_err_if (tls_set_ctx_crlopts(cfg, cargs));
     dbg_err_if (tls_set_ctx_vdepth(cfg, cargs));
     dbg_err_if (tls_set_ctx_vmode(cfg, cargs));
@@ -223,7 +225,7 @@ static int tls_load_x509_creds (SSL_CTX *c, tls_ctx_args_t *cargs)
 
     /* load private key (perhaps from the cert file) */
     crit_err_ifm (tls_use_PrivateKey_file(c, cargs->key, SSL_FILETYPE_PEM,
-                cargs->keymgr) <= 0,
+                cargs->keymgr, cargs->sandbox) <= 0,
             "error loading the private key from %s", cargs->key);
 
     /* RSA key exchange (TLS 1.2) decrypts with the private key, which the

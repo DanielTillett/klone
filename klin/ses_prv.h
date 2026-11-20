@@ -61,7 +61,9 @@ typedef struct session_opt_s
 {
     /* common session options */
     int type;       /* type of sessions (file, memory, client-side)  */
-    int max_age;    /* max allowed age of sessions                   */
+    int max_age;    /* idle timeout: seconds since the last save     */
+    int max_life;   /* absolute timeout: seconds since creation (0:
+                       none)                                         */
     int encrypt;    /* >0 when client-side session encryption is on  */
     int compress;   /* >0 when client-side session compression is on */
     char name[128]; /* cookie name                                   */
@@ -85,6 +87,7 @@ typedef struct session_opt_s
     kc_hmac_t *hmac;        /* keyed HMAC (owned)                    */
     int hash;               /* client-side session HMAC hash (KC_*)  */
     char hmac_key[HMAC_KEY_LEN]; /* session HMAC secret key         */
+    unsigned char aead_key[KC_AEAD_KEY]; /* client-side AES-256-GCM key */
     #endif
 } session_opt_t;
 
@@ -102,6 +105,8 @@ struct session_s
     session_remove_t remove;    /* ptr to the driver remove function          */
     session_term_t term;        /* ptr to the driver term function            */
     session_opt_t *so;          /* runtime option                             */
+    int raw;                    /* >0: saved and loaded without the cipher
+                                   codec (the driver encrypts: client-side) */
 };
 
 /* main c'tor */

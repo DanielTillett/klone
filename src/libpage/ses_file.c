@@ -55,8 +55,8 @@ static int session_file_load(session_t *ss)
     dbg_err_if (ss == NULL);
     dbg_err_if (ss->filename == NULL || ss->filename[0] == '\0');
 
-    /* FIXME may be busy, must retry */
-    dbg_err_if(u_file_open(ss->filename, O_RDONLY | O_CREAT, &io));
+    /* no file, no session: an id a client made up must not create one */
+    nop_err_if(u_file_open(ss->filename, O_RDONLY, &io));
 
     dbg_err_if(session_prv_load_from_io(ss, io));
 

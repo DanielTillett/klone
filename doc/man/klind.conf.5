@@ -280,8 +280,18 @@ for the host file system,
 for storing data on the client. The default value is
 \fIfile\fR.
 .TP
-\fBmax_age\fR
-Set the inactivity threshold timeout for the session. The default value is 60*20 seconds (20 minutes).
+\fBidle_timeout\fR (or \fBmax_age\fR)
+The session ends when it has not been used for this long: minutes, or seconds with an
+\fIs\fR
+suffix (e.g.
+\fI90s\fR). The default is 20 minutes.
+.TP
+\fBabsolute_timeout\fR
+The session ends this long after it was created (or given a new id at login), however much it is used: minutes, or seconds with an
+\fIs\fR
+suffix;
+\fI0\fR
+for no limit. The default is 480 minutes (8 hours). See doc/SESSIONS.
 .TP
 \fBsid_name\fR
 Set a custom cookie name. Session cookies are always sent with the
@@ -293,12 +303,13 @@ attributes, plus
 \fISecure\fR
 when the connection to
 \fBklind\fR
-uses TLS. Session identifiers contain 128 bits from a cryptographic random source.
+uses TLS. Session identifiers contain 128 bits from a cryptographic random source; an identifier a client sends that names no stored session is not taken on (a new one is drawn), and pages give a session a new one at login with
+\fBsession_regenerate_id\fR().
 .TP
 \fBencrypt\fR
 A boolean specifying whether the session data should be encrypted before being sent to the client. Encryption is always enabled for
 \fIclient\fR
-sessions, whatever this directive says.
+sessions, whatever this directive says: AES\-256\-GCM, which also authenticates the data, the session id and its time.
 .TP
 \fBcompress\fR
 A boolean specifying whether the session data should be compressed before being pushed to the client. The default is
@@ -325,7 +336,7 @@ Windows(TM)
 the system temporary path.
 .TP
 \fBclient.hash_function\fR
-The hash function that should be used in the HMAC calculation over the cookies. The available values are:
+The hash function of the HMAC over the cookies of client sessions saved before 4.0 (AES\-256\-CBC), which are still read in 4.x; new ones are sealed with AES\-256\-GCM. The available values are:
 \fIsha256\fR,
 \fIsha1\fR,
 \fImd5\fR

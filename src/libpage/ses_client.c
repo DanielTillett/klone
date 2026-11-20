@@ -67,72 +67,9 @@ err:
     return -1;
 }
 
-static int session_client_save(session_t *ss)
-{
-    /* BUF_SIZE: cookie size + MAC size + gzip header + encryption padding  */
-    enum { 
-        MTIME_SIZE = 32, 
-        BUF_SIZE = 2 * COOKIE_MAX_SIZE + 1
-    };
-    session_opt_t *so = ss->so;
-    char hmac[HMAC_HEX_SIZE], ebuf[BUF_SIZE], mtime[MTIME_SIZE];
-    char *buf = NULL, cipher_iv_hex[CIPHER_IV_LEN * 2 + 1];
-    size_t sz;
-    time_t now;
-
-    dbg_err_if (ss == NULL);
-
-    #ifdef SSL_ON
-    if(ss->so->encrypt)
-    {
-        /* generate a new IV for each session */
-        dbg_err_if(kc_random(ss->so->cipher_iv, CIPHER_IV_LEN));
-
-
-        /* hex encode the IV and save it in a cookie */
-        dbg_err_if(u_hexncpy_s(cipher_iv_hex, sizeof(cipher_iv_hex), (const char *)ss->so->cipher_iv, CIPHER_IV_LEN,
-            HEXCPY_ENCODE) <= 0);
-        dbg_err_if(session_set_cookie(ss, KL1_CLISES_IV, cipher_iv_hex,
-            0, NULL, NULL, 0));
-    }
-    #endif
-
-    /* save the session data to freshly alloc'd buf of size sz */
-    dbg_err_if(session_prv_save_to_buf(ss, &buf, &sz));
-
-    warn_err_ifm(sz > COOKIE_MAX_SIZE, 
-                "session data too big for client-side sessions");
-
-    /* hex-encode the buffer */
-    dbg_err_if(u_hexncpy_s(ebuf, sizeof(ebuf), buf, sz, HEXCPY_ENCODE) <= 0);
-
-    dbg_err_if(session_set_cookie(ss, KL1_CLISES_DATA, ebuf, 0, NULL,
-        NULL, 0));
-
-    /* set mtime cookie */
-    dbg_err_sif ((now = time(NULL)) == (time_t) -1);
-    dbg_err_if (u_snprintf(mtime, sizeof mtime, "%d", (ss->mtime = (int) now)));
-    dbg_err_if (session_set_cookie(ss, KL1_CLISES_MTIME, mtime, 0, NULL,
-                NULL, 0));
-
-    /* calc the HMAC */
-    dbg_err_if(session_client_hmac(so, hmac, HMAC_HEX_SIZE,
-        ebuf, ss->id, mtime, ss->so->encrypt ? cipher_iv_hex : NULL));
-
-    /* store the hash in a cookie */
-    dbg_err_if(session_set_cookie(ss, KL1_CLISES_HMAC, hmac, 0, NULL,
-        NULL, 0));
-
-    u_free(buf);
-
-    return 0;
-err:
-    if(buf)
-        u_free(buf);
-    return ~0;
-}
-
-static int session_client_load(session_t *ss)
+/* the format before 4.0: AES-256-CBC (the cipher codec), then an HMAC of
+   the hex data, session id, mtime and IV, concatenated */
+static int session_client_load_hmac(session_t *ss)
 {
     session_opt_t *so = ss->so;
     char hmac[HMAC_HEX_SIZE], buf[COOKIE_MAX_SIZE];
@@ -158,10 +95,7 @@ static int session_client_load(session_t *ss)
     /* compare HMACs */
     if(strlen(hmac) != strlen(cli_hmac) ||
         !kc_memeq(hmac, cli_hmac, strlen(hmac)))
-    {
-        session_remove(ss); /* remove all bad stale data */
         warn_err("HMAC don't match, rejecting session data");
-    }
 
     /* hash ckeched. decode/uncompress/decrypt session data */
 
@@ -182,10 +116,127 @@ static int session_client_load(session_t *ss)
     dbg_err_if((c = u_hexncpy_s(buf, sizeof(buf), cli_ebuf, strlen(cli_ebuf),
         HEXCPY_DECODE)) <= 0);
 
-    /* load session data from the buffer */
+    /* load session data from the buffer (the cipher codec decrypts) */
+    ss->raw = 0;
     dbg_err_if(session_prv_load_from_buf(ss, buf, c));
 
     return 0;
+err:
+    return ~0;
+}
+
+/* Client-side sessions are kept in cookies (doc/SESSIONS). The current
+ * format is AES-256-GCM: KL1_CLISES_DATA is the hex of nonce, ciphertext
+ * and tag, with the session id and KL1_CLISES_MTIME authenticated with it.
+ * The format before 4.0 (AES-256-CBC, then an HMAC in KL1_CLISES_HMAC, the
+ * IV in KL1_CLISES_IV) is still read, for this release only; saving always
+ * writes the current one. */
+
+enum { AEAD_EXTRA = KC_AEAD_NONCE + KC_AEAD_TAG, MTIME_SIZE = 32 };
+
+/* what the tag covers besides the data */
+static int session_client_aad(session_t *ss, const char *mtime, char *aad,
+        size_t size)
+{
+    return u_snprintf(aad, size, "klin-session-2|%s|%s", ss->id, mtime);
+}
+
+static int session_client_save(session_t *ss)
+{
+    session_opt_t *so = ss->so;
+    unsigned char sealed[COOKIE_MAX_SIZE + AEAD_EXTRA];
+    char hex[2 * sizeof sealed + 1], mtime[MTIME_SIZE], aad[128];
+    char *buf = NULL;
+    size_t sz;
+    time_t now;
+
+    dbg_err_if (ss == NULL);
+
+    /* the session data, compressed if asked: this driver encrypts it */
+    ss->raw = 1;
+    dbg_err_if(session_prv_save_to_buf(ss, &buf, &sz));
+    warn_err_ifm(sz > COOKIE_MAX_SIZE,
+                "session data too big for client-side sessions");
+
+    dbg_err_sif ((now = time(NULL)) == (time_t) -1);
+    dbg_err_if (u_snprintf(mtime, sizeof mtime, "%d", (ss->mtime = (int) now)));
+    dbg_err_if (session_client_aad(ss, mtime, aad, sizeof aad));
+
+    /* a fresh nonce for every save */
+    dbg_err_if(kc_random(sealed, KC_AEAD_NONCE));
+    dbg_err_if(kc_aead_seal(so->aead_key, sealed, aad, strlen(aad), buf, sz,
+                sealed + KC_AEAD_NONCE, sealed + KC_AEAD_NONCE + sz));
+    dbg_err_if(u_hexncpy_s(hex, sizeof hex, (const char *) sealed,
+                sz + AEAD_EXTRA, HEXCPY_ENCODE) <= 0);
+
+    dbg_err_if(session_set_cookie(ss, KL1_CLISES_DATA, hex, 0, NULL, NULL, 0));
+    dbg_err_if(session_set_cookie(ss, KL1_CLISES_MTIME, mtime, 0, NULL,
+                NULL, 0));
+
+    /* the old format's cookies go */
+    if(request_get_cookie(ss->rq, KL1_CLISES_HMAC))
+        dbg_err_if(session_set_cookie(ss, KL1_CLISES_HMAC, NULL, 0, NULL,
+                    NULL, 0));
+    if(request_get_cookie(ss->rq, KL1_CLISES_IV))
+        dbg_err_if(session_set_cookie(ss, KL1_CLISES_IV, NULL, 0, NULL,
+                    NULL, 0));
+
+    kc_cleanse(buf, sz);
+    u_free(buf);
+
+    return 0;
+err:
+    if(buf)
+        u_free(buf);
+    return ~0;
+}
+
+/* the current format: nothing is read unless the tag matches */
+static int session_client_load_aead(session_t *ss, const char *data,
+        const char *mtime)
+{
+    unsigned char sealed[COOKIE_MAX_SIZE + AEAD_EXTRA + 1];
+    char plain[COOKIE_MAX_SIZE + 1], aad[128];
+    ssize_t c;
+    size_t n;
+    int rc;
+
+    nop_err_if(strlen(data) > 2 * (COOKIE_MAX_SIZE + AEAD_EXTRA));
+    nop_err_if((c = u_hexncpy_s((char *) sealed, sizeof sealed, data,
+                    strlen(data), HEXCPY_DECODE)) <= AEAD_EXTRA);
+    n = (size_t) c - AEAD_EXTRA;
+    nop_err_if(n > COOKIE_MAX_SIZE);
+
+    dbg_err_if(session_client_aad(ss, mtime, aad, sizeof aad));
+    nop_err_if(kc_aead_open(ss->so->aead_key, sealed, aad, strlen(aad),
+                sealed + KC_AEAD_NONCE, n, sealed + KC_AEAD_NONCE + n,
+                (unsigned char *) plain));
+
+    ss->mtime = strtoul(mtime, NULL, 0);
+    ss->raw = 1;
+    rc = session_prv_load_from_buf(ss, plain, n);
+    kc_cleanse(plain, n);
+
+    return rc;
+err:
+    return ~0;
+}
+
+static int session_client_load(session_t *ss)
+{
+    const char *data, *mtime;
+
+    dbg_err_if (ss == NULL);
+
+    data = request_get_cookie(ss->rq, KL1_CLISES_DATA);
+    mtime = request_get_cookie(ss->rq, KL1_CLISES_MTIME);
+    nop_err_if(data == NULL || mtime == NULL);
+
+    /* a session saved before 4.0 (remove in 5.0) */
+    if(request_get_cookie(ss->rq, KL1_CLISES_HMAC))
+        return session_client_load_hmac(ss);
+
+    return session_client_load_aead(ss, data, mtime);
 err:
     return ~0;
 }
@@ -274,8 +325,12 @@ int session_client_module_init(u_config_t *config, session_opt_t *so)
     /* gen HMAC key */
     dbg_err_if(kc_random(so->hmac_key, HMAC_KEY_LEN));
 
-    /* HMAC with our key and the chosen hash algorithm */
+    /* HMAC with our key and the chosen hash algorithm (the format before
+       4.0, read only) */
     dbg_err_if(kc_hmac_new(so->hash, so->hmac_key, HMAC_KEY_LEN, &so->hmac));
+
+    /* the AES-256-GCM key of the current format */
+    dbg_err_if(kc_random(so->aead_key, KC_AEAD_KEY));
 
 
     return 0;

@@ -30,7 +30,15 @@
 #include <klin/ses_prv.h>
 #include <klin/codecs.h>
 
-enum { DEFAULT_SESSION_EXPIRATION = 60*20 }; /* 20 minutes */
+enum {
+    DEFAULT_SESSION_EXPIRATION = 60*20,     /* idle: 20 minutes          */
+    DEFAULT_SESSION_LIFETIME = 60*60*8,     /* absolute: 8 hours         */
+    CSRF_TOKEN_BYTES = 32
+};
+
+/* variables the session keeps for itself (doc/SESSIONS) */
+static const char CREATED_VAR[] = "KLIN_SESSION_CREATED";
+static const char CSRF_VAR[] = "KLIN_CSRF_TOKEN";
 static const char SID_NAME[] = "klin_sid";
 /* the cookie's name before KLone was renamed Klin: still read for one
    release, so an upgrade does not log every user out */
@@ -84,6 +92,27 @@ int session_module_term(session_opt_t *so)
     return 0;
 }
 
+/* a session time setting: minutes ("20"), or seconds ("90s"); 0 is
+   allowed (no limit, where that means anything) */
+static int session_conf_time(const char *v, int *psecs)
+{
+    char *end;
+    long n;
+
+    dbg_return_if (v == NULL || psecs == NULL, ~0);
+
+    n = strtol(v, &end, 10);
+    nop_return_if (end == v || n < 0 || n > 60L*24*366, ~0);
+    if(*end == 's' || *end == 'S')
+        ++end;
+    else
+        n *= 60;
+    nop_return_if (*end != '\0', ~0);
+    *psecs = (int) n;
+
+    return 0;
+}
+
 int session_module_init(u_config_t *config, session_opt_t **pso)
 {
     int iv;
@@ -99,6 +128,7 @@ int session_module_init(u_config_t *config, session_opt_t **pso)
     /* defaults values */
     so->type = SESSION_TYPE_FILE;
     so->max_age = DEFAULT_SESSION_EXPIRATION;
+    so->max_life = DEFAULT_SESSION_LIFETIME;
     so->compress = 0;
     so->encrypt = 0;
     (void) u_strlcpy(so->name, SID_NAME, sizeof so->name);
@@ -122,12 +152,18 @@ int session_module_init(u_config_t *config, session_opt_t **pso)
                warn_err("config error: bad session type \'%s\'", v);
         }
 
-        /* set max_age */
-        if((v = u_config_get_subkey_value(c, "max_age")) != NULL)
+        /* idle timeout (max_age is its older name) and absolute timeout:
+           minutes, or seconds with an 's' */
+        if((v = u_config_get_subkey_value(c, "idle_timeout")) != NULL ||
+                (v = u_config_get_subkey_value(c, "max_age")) != NULL)
         {
-            dbg_err_ifm (u_atoi(v, &iv), "config error: bad max_age \'%s\'", v);
-            so->max_age = U_MAX(iv * 60, 60); /* silently uplift to 1 min */
+            warn_err_ifm (session_conf_time(v, &iv) || iv == 0,
+                    "config error: bad session idle_timeout \'%s\'", v);
+            so->max_age = iv;
         }
+        if((v = u_config_get_subkey_value(c, "absolute_timeout")) != NULL)
+            warn_err_ifm (session_conf_time(v, &so->max_life),
+                    "config error: bad session absolute_timeout \'%s\'", v);
 
         /* set compression flag */
         dbg_err_if(u_config_get_subkey_value_b(c, "compress", 0,
@@ -383,6 +419,68 @@ int session_load(session_t *ss)
     return ss->load(ss);
 }
 
+/* does the session hold anything but the variables it keeps for itself? */
+static int session_has_user_vars(session_t *ss)
+{
+    var_t *v;
+    size_t i;
+
+    for (i = 0; (v = vars_getn(ss->vars, i)) != NULL; ++i)
+        if (strcmp(var_get_name(v), CREATED_VAR) &&
+                strcmp(var_get_name(v), CSRF_VAR))
+            return 1;
+
+    return 0;
+}
+
+static int session_set_created(session_t *ss)
+{
+    char now[32];
+
+    dbg_err_if (u_snprintf(now, sizeof now, "%lld", (long long) time(NULL)));
+    dbg_err_if (session_set(ss, CREATED_VAR, now));
+
+    return 0;
+err:
+    return ~0;
+}
+
+/* past the absolute timeout? (a session saved before there was one starts
+   counting now) */
+static int session_too_old(session_t *ss)
+{
+    const char *v = session_get(ss, CREATED_VAR);
+
+    if (ss->so->max_life == 0)
+        return 0;
+    if (v == NULL)
+    {
+        dbg_if (session_set_created(ss));
+        return 0;
+    }
+
+    return (long long) time(NULL) - atoll(v) > ss->so->max_life;
+}
+
+/* drop the session id: the next save draws a new one */
+static void session_forget(session_t *ss)
+{
+    (void) session_clean(ss);
+    ss->id[0] = '\0';
+    ss->filename[0] = '\0';
+}
+
+/* an expired session: its stored copy and cookie go, and the request may
+   start a new one */
+static void session_expire(session_t *ss)
+{
+    u_dbg("session %s expired", ss->id);
+    (void) session_clean(ss);
+    (void) ss->remove(ss);
+    (void) session_set_cookie(ss, ss->so->name, NULL, 0, NULL, NULL, 0);
+    session_forget(ss);
+}
+
 int session_save(session_t *ss)
 {
     dbg_return_if (ss == NULL, ~0);
@@ -390,8 +488,12 @@ int session_save(session_t *ss)
 
     /* No vars set: if cookie empty it's a no-op, otherwise remove stored
      * cookies. */
-    if (vars_count(ss->vars) == 0)
+    if (!session_has_user_vars(ss))
         return (ss->id[0] == '\0') ? 0 : session_remove(ss);
+
+    /* the start of the absolute timeout */
+    if (session_get(ss, CREATED_VAR) == NULL)
+        dbg_err_if (session_set_created(ss));
 
     /* new user, need to save some vars */
     if (ss->id[0] == '\0')
@@ -455,7 +557,7 @@ int session_prv_load_from_io(session_t *ss, io_t *io)
     dbg_return_if (io == NULL, ~0);
 
 #ifdef SSL_ON
-    if(ss->so->encrypt)
+    if(ss->so->encrypt && !ss->raw)
     {
         dbg_err_if(codec_cipher_create(CIPHER_DECRYPT, ss->so->cipher, 
             ss->so->cipher_key, ss->so->cipher_iv, &decrypt)); 
@@ -843,7 +945,7 @@ int session_prv_save_to_io(session_t *ss, io_t *out)
 #endif
 
 #ifdef SSL_ON
-    if(ss->so->encrypt)
+    if(ss->so->encrypt && !ss->raw)
     {
         dbg_err_if(codec_cipher_create(CIPHER_ENCRYPT, ss->so->cipher, 
             ss->so->cipher_key, ss->so->cipher_iv, &cencrypt));
@@ -966,7 +1068,106 @@ err:
     return rc;
 }
 
-int session_create(session_opt_t *so, request_t *rq, response_t *rs, 
+/**
+ * \ingroup session
+ * \brief   Give the session a new id
+ *
+ * The data is kept, the copy stored under the old id is removed, and the
+ * absolute timeout starts again. Call it when a user logs in and at any
+ * change of privilege, so that an id seen or set before (session
+ * fixation) is worth nothing after; and before the page prints anything,
+ * as the new id goes out in a cookie.
+ *
+ * \param ss  session object
+ *
+ * \return \c 0 if successful, non-zero on error
+ */
+int session_regenerate_id(session_t *ss)
+{
+    dbg_return_if (ss == NULL, ~0);
+
+    if (ss->id[0] != '\0')
+        (void) ss->remove(ss);
+    ss->removed = 0;
+
+    dbg_err_if (session_gen_id(ss));
+    dbg_err_if (session_set_filename(ss));
+    dbg_err_if (session_set_created(ss));
+
+    return 0;
+err:
+    return ~0;
+}
+
+/**
+ * \ingroup session
+ * \brief   The session's CSRF token
+ *
+ * A random token kept in the session (made on first use): put it in each
+ * form (a hidden "csrf_token" field) or send it as an X-CSRF-Token header,
+ * and check requests with session_csrf_check().
+ *
+ * \param ss  session object
+ *
+ * \return the token (64 hex digits), or \c NULL on error
+ */
+const char *session_csrf_token(session_t *ss)
+{
+    unsigned char raw[CSRF_TOKEN_BYTES];
+    char hex[2 * CSRF_TOKEN_BYTES + 1];
+    const char *t;
+
+    dbg_return_if (ss == NULL, NULL);
+
+    if ((t = session_get(ss, CSRF_VAR)) != NULL)
+        return t;
+
+    dbg_err_if (u_random_bytes(raw, sizeof raw));
+    dbg_err_if (u_hexncpy_s(hex, sizeof hex, (const char *) raw, sizeof raw,
+                HEXCPY_ENCODE) <= 0);
+    dbg_err_if (session_set(ss, CSRF_VAR, hex));
+
+    return session_get(ss, CSRF_VAR);
+err:
+    return NULL;
+}
+
+/**
+ * \ingroup session
+ * \brief   Check a request's CSRF token
+ *
+ * GET and HEAD requests (which must change nothing) pass. Any other must
+ * carry the session's token (session_csrf_token()) in an X-CSRF-Token
+ * header field or a csrf_token argument.
+ *
+ * \param ss  session object
+ * \param rq  the request
+ *
+ * \return \c 0 if the request may go ahead, non-zero otherwise (answer
+ *         403)
+ */
+int session_csrf_check(session_t *ss, request_t *rq)
+{
+    const char *want, *got;
+    size_t n;
+
+    dbg_return_if (ss == NULL || rq == NULL, ~0);
+
+    if (request_get_method(rq) == HM_GET || request_get_method(rq) == HM_HEAD)
+        return 0;
+
+    nop_return_if ((want = session_get(ss, CSRF_VAR)) == NULL, ~0);
+    if ((got = request_get_field_value(rq, "X-CSRF-Token")) == NULL)
+        got = request_get_arg(rq, "csrf_token");
+    nop_return_if (got == NULL, ~0);
+
+    n = strlen(want);
+    nop_return_if (strlen(got) != n || !kc_memeq(want, got, n), ~0);
+
+    return 0;
+}
+
+int session_create(session_opt_t *so, request_t *rq, response_t *rs,
     session_t **pss)
 {
     session_t *ss = NULL;
@@ -993,17 +1194,15 @@ int session_create(session_opt_t *so, request_t *rq, response_t *rs,
         warn_err("bad session type");
     }
 
-    /* may fail if the session does not exist */
     if(ss->id[0] != '\0')
     {
-        (void) session_load(ss);
-
-        if (session_age(ss) > so->max_age)
-        {
-            u_dbg("session %s expired", ss->id);
-            (void) session_clean(ss);  /* remove all session variables */
-            (void) session_remove(ss); /* remove the session itself    */
-        }
+        /* an id that names no stored session (one a client chose, say) is
+           not taken on, against session fixation: a new one is drawn when
+           there is something to save */
+        if (session_load(ss) || !session_has_user_vars(ss))
+            session_forget(ss);
+        else if (session_age(ss) > so->max_age || session_too_old(ss))
+            session_expire(ss);
     } 
 
     *pss = ss;

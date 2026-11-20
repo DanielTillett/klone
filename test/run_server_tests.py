@@ -1615,6 +1615,100 @@ def run_limit_checks(args, check, plain, limits, temp):
             stream.close()
 
 
+def run_session_checks(check, plain, client, files, limits, sessions):
+    """Session hardening (doc/SESSIONS), on memory (plain), file (files)
+    and client-side (client) sessions: an unknown id is not taken on
+    (session fixation), session_regenerate_id() at login, CSRF tokens,
+    client sessions sealed with AES-256-GCM; then the idle and absolute
+    timeouts (limits: 2 s and 4 s)."""
+
+    def call(port, query, cookies, method=b"GET", body=b"", extra=b""):
+        head = (method + b" /sessec.kl1?" + query + b" HTTP/1.1\r\nHost: localhost\r\n" + extra +
+                b"Cookie: " + "; ".join(f"{k}={v}" for k, v in cookies.items()).encode() + b"\r\n")
+        if method == b"POST":
+            head += (b"Content-Type: application/x-www-form-urlencoded\r\nContent-Length: " +
+                     str(len(body)).encode() + b"\r\n")
+        reply = exchange(port, head + b"\r\n" + body)
+        header, _, text = reply.partition(b"\r\n\r\n")
+        status = int(header.split(b" ", 2)[1]) if header.startswith(b"HTTP/") else 0
+        new = dict(cookies)
+        for line in header.decode("latin-1").split("\r\n"):
+            if line.lower().startswith("set-cookie:"):
+                for k, v in SimpleCookie(line.split(":", 1)[1].strip()).items():
+                    if v.value:
+                        new[k] = v.value
+                    else:
+                        new.pop(k, None)
+        return status, new, text.decode("latin-1").strip()
+
+    planted = "0123456789abcdef0123456789abcdef"
+    for port, kind in [(plain, "memory"), (files, "file"), (client, "client")]:
+        # an id the client chose is not taken on: a new one is drawn
+        status, cookies, text = call(port, b"op=set&v=a", {"klin_sid": planted})
+        check(status == 200 and cookies.get("klin_sid") not in (None, planted),
+              f"{kind}: a planted session id was kept: {cookies}")
+        check(call(port, b"", {"klin_sid": planted})[2] == "v=- user=-",
+              f"{kind}: the planted id holds the session")
+        if kind == "file":
+            check(not list(sessions.glob(f"*{planted}*")),
+                  f"file: an unknown id created a session file: {list(sessions.iterdir())}")
+        check(call(port, b"", cookies)[2] == "v=a user=-", f"{kind}: session not kept")
+
+        # login: a new id, the data kept, the old id worthless (server side)
+        old = dict(cookies)
+        status, cookies, text = call(port, b"op=login", cookies)
+        check(status == 200 and cookies["klin_sid"] != old["klin_sid"],
+              f"{kind}: no new id at login: {old} {cookies}")
+        check(call(port, b"", cookies)[2] == "v=a user=alice", f"{kind}: data lost at login")
+        if kind != "client":
+            check(call(port, b"", old)[2] == "v=- user=-", f"{kind}: the id before login still works")
+
+        # CSRF: GET passes; POST needs the token, in a field or a form value
+        status, cookies, token = call(port, b"op=csrf", cookies)
+        check(status == 200 and len(token) == 64, f"{kind}: bad CSRF token {token!r}")
+        check(call(port, b"op=change", cookies)[0] == 200, f"{kind}: GET refused by the CSRF check")
+        check(call(port, b"op=change", cookies, b"POST", b"x=1")[0] == 403,
+              f"{kind}: POST without a CSRF token accepted")
+        check(call(port, b"op=change", cookies, b"POST", b"x=1",
+                   b"X-CSRF-Token: " + ("0" * 64).encode() + b"\r\n")[0] == 403,
+              f"{kind}: a wrong CSRF token accepted")
+        check(call(port, b"op=change", cookies, b"POST", b"x=1",
+                   b"X-CSRF-Token: " + token.encode() + b"\r\n")[0] == 200,
+              f"{kind}: the CSRF token in X-CSRF-Token refused")
+        check(call(port, b"op=change", cookies, b"POST", b"csrf_token=" + token.encode())[0] == 200,
+              f"{kind}: the CSRF token as a form value refused")
+
+        if kind == "client":
+            # sealed with AES-256-GCM: no HMAC cookie, and any change to the
+            # data, the mtime or the id is refused
+            check("KL1_CLISES_HMAC" not in cookies and "KL1_CLISES_IV" not in cookies,
+                  f"client: old-format cookies written: {sorted(cookies)}")
+            data = cookies["KL1_CLISES_DATA"]
+            for name, value in [("KL1_CLISES_DATA", data[:40] + ("0" if data[40] != "0" else "1") + data[41:]),
+                                ("KL1_CLISES_MTIME", str(int(cookies["KL1_CLISES_MTIME"]) + 1)),
+                                ("klin_sid", planted)]:
+                forged = dict(cookies, **{name: value})
+                check(call(port, b"", forged)[2] == "v=- user=-",
+                      f"client: a session with a changed {name} was accepted")
+            check(call(port, b"", cookies)[2] == "v=a user=alice", "client: sealed session not read")
+
+    # idle (2 s) and absolute (4 s) timeouts on 'limits'
+    status, cookies, _ = call(limits, b"op=set&v=idle", {})
+    time.sleep(3)
+    check(call(limits, b"", cookies)[2] == "v=- user=-", "The idle timeout did not end the session")
+    # used every second (never idle), it must end between 4 s and 6 s (the
+    # creation time is kept in whole seconds)
+    status, cookies, _ = call(limits, b"op=set&v=busy", {})
+    start, ended = time.monotonic(), None
+    while ended is None and time.monotonic() - start < 6.5:
+        time.sleep(1)
+        status, cookies, text = call(limits, b"", cookies)
+        if text != "v=busy user=-":
+            ended = time.monotonic() - start
+    check(ended is not None and ended >= 3.9,
+          f"The absolute timeout ended a session in use at {ended} s (4 s to 6 s)")
+
+
 def run_bad_auth_checks(check, daemon, env, temp):
     """Unsafe or broken auth (and route) configurations stop klind at
     startup, instead of serving the realm unprotected (the reason goes to
@@ -1783,7 +1877,8 @@ def run_server_checks(args, env, output, daemon):
                 ("memlog", memlog, False, "memory",
                  "log\n    {\n        type memory\n    }\n    sandbox no"),
                 ("blocked", blocked, False, "memory", BLOCKED),
-                ("limits", limits, False, "memory", LIMITS)]:
+                ("limits", limits, False,
+                 "memory\n        idle_timeout 2s\n        absolute_timeout 4s", LIMITS)]:
             blocks.append(f"""{name}
 {{
     type {'https' if tls else 'http'}
@@ -1909,14 +2004,15 @@ def run_server_checks(args, env, output, daemon):
                               f"Old session file not loaded: {reply[:400]!r}")
                         check(saved[0].exists() and not old_file.exists(),
                               f"Old session file not renamed: {list(sessions.iterdir())}")
-                    if "KL1_CLISES_HMAC" in cookies:
-                        tag = cookies["KL1_CLISES_HMAC"]
-                        cookies["KL1_CLISES_HMAC"] = ("0" if tag[0] != "0" else "1") + tag[1:]
+                    if "KL1_CLISES_DATA" in cookies:
+                        # the last hex digit is in the GCM tag
+                        data = cookies["KL1_CLISES_DATA"]
+                        cookies["KL1_CLISES_DATA"] = data[:-1] + ("0" if data[-1] != "0" else "1")
                         cookie_header = "; ".join(f"{k}={v}" for k, v in cookies.items()).encode()
                         reply = exchange(port, b"GET /session.kl1 HTTP/1.1\r\nHost: localhost\r\nCookie: " +
                                          cookie_header + b"\r\n\r\n", context)
                         check(b"persisted" not in reply.partition(b"\r\n\r\n")[2],
-                              "Accepted a forged client-session MAC")
+                              "Accepted a forged client-session tag")
                 # a multipart/form-data POST: a field and an uploaded file
                 body = (b"--XyZ\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\n"
                         b"value 1\r\n--XyZ\r\nContent-Disposition: form-data; name=\"file\"; "
@@ -1948,6 +2044,7 @@ def run_server_checks(args, env, output, daemon):
                 run_sse_checks(args, check, plain, secure, temp)
                 run_websocket_checks(check, plain, secure)
                 run_limit_checks(args, check, plain, limits, temp)
+                run_session_checks(check, plain, client, files, limits, sessions)
                 run_route_checks(args, check, plain)
                 run_access_checks(check, client, blocked, temp)
                 run_validation_checks(check, plain)

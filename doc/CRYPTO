@@ -29,6 +29,10 @@ THE INTERFACE (klin/crypto.h)
 - ciphers: kc_cipher_new(KC_AES_256_CBC, encrypt, key, iv), update,
   final, free; the cipher codec (codec_cipher_create) and
   u_cipher_encrypt/decrypt take a KC_* cipher.
+- authenticated encryption: kc_aead_seal() and kc_aead_open(), AES-256-GCM
+  with additional data (KC_AEAD_KEY, KC_AEAD_NONCE, KC_AEAD_TAG); open
+  fails on any change to key, nonce, data or ciphertext. Client-side
+  sessions use it (doc/SESSIONS).
 - sizes: KC_MD_MAX, KC_KEY_MAX, KC_IV_MAX, KC_BLOCK_MAX equal OpenSSL's
   EVP_MAX_* values, so key buffers, session cookies and encrypted pages
   keep their formats.

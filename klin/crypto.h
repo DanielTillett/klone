@@ -85,6 +85,22 @@ int kc_cipher_update(kc_cipher_t *c, unsigned char *out, size_t *outlen,
 int kc_cipher_final(kc_cipher_t *c, unsigned char *out, size_t *outlen);
 void kc_cipher_free(kc_cipher_t *c);
 
+/* authenticated encryption (AES-256-GCM): 'out' holds 'len' bytes; open
+ * fails, and writes nothing usable, unless the tag matches the key, nonce,
+ * additional data and ciphertext. A nonce must never be used twice with a
+ * key (draw it with kc_random()) */
+enum {
+    KC_AEAD_KEY = 32,           /* AES-256 key                           */
+    KC_AEAD_NONCE = 12,         /* GCM nonce                             */
+    KC_AEAD_TAG = 16            /* GCM tag                               */
+};
+int kc_aead_seal(const unsigned char *key, const unsigned char *nonce,
+        const void *aad, size_t aadlen, const void *in, size_t len,
+        unsigned char *out, unsigned char *tag);
+int kc_aead_open(const unsigned char *key, const unsigned char *nonce,
+        const void *aad, size_t aadlen, const void *in, size_t len,
+        const unsigned char *tag, unsigned char *out);
+
 #ifdef __cplusplus
 }
 #endif

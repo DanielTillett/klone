@@ -36,6 +36,16 @@ int session_load(session_t *ss);
 int session_save(session_t *ss);
 int session_save_to_io(session_t*, const char*);
 
+/* a new session id, keeping the data (call it at login and at any change
+   of privilege, before the page prints anything): doc/SESSIONS */
+int session_regenerate_id(session_t *ss);
+
+/* CSRF: the session's token for forms and requests, and the check of a
+   request's token (X-CSRF-Token field or csrf_token argument; GET and HEAD
+   need none): 0 if it may go ahead */
+const char *session_csrf_token(session_t *ss);
+int session_csrf_check(session_t *ss, request_t *rq);
+
 #ifdef SSL_ON
 int session_set_cipher_key(session_t*, const char*, size_t);
 int session_get_cipher_key(session_t*, char*, size_t*);

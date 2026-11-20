@@ -15,6 +15,18 @@ Klin 4.0.0:
 	  entries, so they survive a reconfigure. The Windows service keeps
 	  the name kloned. All of it is in cmake/klone_compat.cmake and the
 	  lines marked "before KLone was renamed Klin"
+	- session hardening (doc/SESSIONS): a session id a client sends that
+	  names no stored session is no longer taken on (session fixation;
+	  file sessions no longer create a file for it);
+	  session_regenerate_id() gives a new id at login or a change of
+	  privilege; an absolute timeout, absolute_timeout (default 8 hours,
+	  0 turns it off; a new default), next to the idle one (max_age, now
+	  also idle_timeout; both take minutes or "Ns" seconds); client-side
+	  sessions are sealed with AES-256-GCM through klin/crypto.h
+	  (kc_aead_seal/open), binding the data to the session id and time
+	  (the CBC+HMAC format is still read in 4.x, removed in 5.0);
+	  session_csrf_token() and session_csrf_check() for CSRF tokens. An
+	  expired session no longer stops the request from starting a new one
 	- fuzzing and static analysis (doc/FUZZING): a libFuzzer target per
 	  parser in fuzz/ (request, multipart, header, url, json, ws, digest,
 	  session, translate), with seeds and dictionaries, built with

@@ -159,6 +159,11 @@ requests iteratively in a single process. -f overrides values in the
 embedded configuration. See klind(8) and klind.conf(5) in doc/man for all
 options.
 
+Sessions: HttpOnly, SameSite=Lax (and Secure over TLS) cookies, ids a
+client makes up refused, session_regenerate_id() at login, idle and
+absolute timeouts, client-side sessions sealed with AES-256-GCM, and CSRF
+tokens (session_csrf_token/check) (doc/SESSIONS).
+
 Fuzzing: every parser a client reaches has a libFuzzer target (fuzz/,
 test/run_fuzz.py), run by ClusterFuzzLite on pull requests and daily;
 CodeQL, clang-tidy and Coverity Scan analyse the code (doc/FUZZING).

@@ -1,0 +1,40 @@
+<%!
+    #include <string.h>
+%><%
+    /* session hardening (doc/SESSIONS): ?op=set&v=X, ?op=login (a new id),
+       ?op=csrf (the token), ?op=change (needs the token unless GET);
+       anything else prints the session */
+    const char *op = request_get_arg(request, "op"), *v, *u;
+
+    if(op && !strcmp(op, "set"))
+    {
+        v = request_get_arg(request, "v");
+        session_set(session, "v", v ? v : "");
+        io_printf(out, "set\n");
+    }
+    else if(op && !strcmp(op, "login"))
+    {
+        if(session_regenerate_id(session))
+            response_set_status(response, 500);
+        session_set(session, "user", "alice");
+        io_printf(out, "login\n");
+    }
+    else if(op && !strcmp(op, "csrf"))
+        io_printf(out, "%s\n", session_csrf_token(session));
+    else if(op && !strcmp(op, "change"))
+    {
+        if(session_csrf_check(session, request))
+        {
+            response_set_status(response, 403);
+            io_printf(out, "forbidden\n");
+        }
+        else
+            io_printf(out, "changed\n");
+    }
+    else
+    {
+        v = session_get(session, "v");
+        u = session_get(session, "user");
+        io_printf(out, "v=%s user=%s\n", v ? v : "-", u ? u : "-");
+    }
+%>

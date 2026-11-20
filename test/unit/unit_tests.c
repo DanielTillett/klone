@@ -710,6 +710,34 @@ static void test_crypto(void)
     kc_cleanse(wiped, sizeof wiped);
     CHECK(!memcmp(wiped, "\0\0\0\0\0\0\0\0", 8));
 
+    /* AES-256-GCM: the GCM specification's test cases 13 and 14 (zero key
+       and nonce; no plaintext, then one zero block), then forgeries */
+    {
+        unsigned char k[KC_AEAD_KEY] = { 0 }, nonce[KC_AEAD_NONCE] = { 0 },
+                      zero[16] = { 0 }, sealed[16], tag[KC_AEAD_TAG],
+                      back[16];
+
+        CHECK(kc_aead_seal(k, nonce, NULL, 0, NULL, 0, NULL, tag) == 0 &&
+                hex_is(tag, sizeof tag, "530f8afbc74536b9a963b4f1c4cb738b"));
+        CHECK(kc_aead_seal(k, nonce, NULL, 0, zero, 16, sealed, tag) == 0 &&
+                hex_is(sealed, 16, "cea7403d4d606b6e074ec5d3baf39d18") &&
+                hex_is(tag, sizeof tag, "d0d1c8a799996bf0265b98b5d48ab919"));
+        CHECK(kc_aead_open(k, nonce, NULL, 0, sealed, 16, tag, back) == 0 &&
+                !memcmp(back, zero, 16));
+        /* with additional data: it must match too */
+        CHECK(kc_aead_seal(k, nonce, "sid|1", 5, zero, 16, sealed, tag) == 0);
+        CHECK(kc_aead_open(k, nonce, "sid|1", 5, sealed, 16, tag, back) == 0);
+        CHECK(kc_aead_open(k, nonce, "sid|2", 5, sealed, 16, tag, back) != 0);
+        sealed[3] ^= 1;
+        CHECK(kc_aead_open(k, nonce, "sid|1", 5, sealed, 16, tag, back) != 0);
+        sealed[3] ^= 1;
+        tag[0] ^= 0x80;
+        CHECK(kc_aead_open(k, nonce, "sid|1", 5, sealed, 16, tag, back) != 0);
+        tag[0] ^= 0x80;
+        k[0] = 1;
+        CHECK(kc_aead_open(k, nonce, "sid|1", 5, sealed, 16, tag, back) != 0);
+    }
+
     /* base64 from a client: only the alphabet, '=' only at the end (a byte
        over 0x7f made LibU read out of its table: found by fuzzing) */
     {

@@ -10,6 +10,7 @@
  * doc/CRYPTO). Outside this file only the TLS layer uses OpenSSL. */
 
 #include "klin_conf.h"
+#include <limits.h>
 #include <string.h>
 #include <strings.h>
 #include <u/libu.h>
@@ -272,6 +273,68 @@ void kc_cipher_free(kc_cipher_t *c)
     }
 }
 
+/* one AES-256-GCM pass; 'tag' is written when sealing, checked when
+   opening */
+static int kc_aead(int seal, const unsigned char *key,
+        const unsigned char *nonce, const void *aad, size_t aadlen,
+        const void *in, size_t len, unsigned char *out, unsigned char *tag)
+{
+    EVP_CIPHER *ci = NULL;
+    EVP_CIPHER_CTX *ctx = NULL;
+    int n, rc = ~0;
+
+    dbg_return_if (key == NULL || nonce == NULL || tag == NULL, ~0);
+    dbg_return_if ((len && (in == NULL || out == NULL)) ||
+            (aadlen && aad == NULL), ~0);
+    dbg_return_if (len > INT_MAX || aadlen > INT_MAX, ~0);
+
+    dbg_err_if((ctx = EVP_CIPHER_CTX_new()) == NULL);
+    dbg_err_if((ci = EVP_CIPHER_fetch(NULL, "AES-256-GCM", NULL)) == NULL);
+    dbg_err_if(EVP_CipherInit_ex2(ctx, ci, key, nonce, seal ? 1 : 0, NULL)
+            != 1);
+    if(aadlen)
+        dbg_err_if(EVP_CipherUpdate(ctx, NULL, &n, aad, (int) aadlen) != 1);
+    if(len)
+        dbg_err_if(EVP_CipherUpdate(ctx, out, &n, in, (int) len) != 1);
+    if(seal)
+    {
+        dbg_err_if(EVP_CipherFinal_ex(ctx, out + len, &n) != 1);
+        dbg_err_if(EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG,
+                    KC_AEAD_TAG, tag) != 1);
+    } else {
+        dbg_err_if(EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG,
+                    KC_AEAD_TAG, tag) != 1);
+        /* the tag is checked here: a forgery fails */
+        nop_err_if(EVP_CipherFinal_ex(ctx, out + len, &n) != 1);
+    }
+    rc = 0;
+err:
+    EVP_CIPHER_free(ci);
+    EVP_CIPHER_CTX_free(ctx);
+    if(rc && !seal && len)
+        kc_cleanse(out, len);
+    return rc;
+}
+
+int kc_aead_seal(const unsigned char *key, const unsigned char *nonce,
+        const void *aad, size_t aadlen, const void *in, size_t len,
+        unsigned char *out, unsigned char *tag)
+{
+    return kc_aead(1, key, nonce, aad, aadlen, in, len, out, tag);
+}
+
+int kc_aead_open(const unsigned char *key, const unsigned char *nonce,
+        const void *aad, size_t aadlen, const void *in, size_t len,
+        const unsigned char *tag, unsigned char *out)
+{
+    /* EVP takes the expected tag through a non-const pointer */
+    unsigned char t[KC_AEAD_TAG];
+
+    dbg_return_if (tag == NULL, ~0);
+    memcpy(t, tag, sizeof t);
+    return kc_aead(0, key, nonce, aad, aadlen, in, len, out, t);
+}
+
 #else   /* no crypto library: everything fails */
 
 int kc_digest(int md, const void *data, size_t len, unsigned char *out,
@@ -364,5 +427,21 @@ int kc_cipher_final(kc_cipher_t *c, unsigned char *out, size_t *outlen)
 }
 
 void kc_cipher_free(kc_cipher_t *c) { u_unused_args(c); }
+
+int kc_aead_seal(const unsigned char *key, const unsigned char *nonce,
+        const void *aad, size_t aadlen, const void *in, size_t len,
+        unsigned char *out, unsigned char *tag)
+{
+    u_unused_args(key, nonce, aad, aadlen, in, len, out, tag);
+    return ~0;
+}
+
+int kc_aead_open(const unsigned char *key, const unsigned char *nonce,
+        const void *aad, size_t aadlen, const void *in, size_t len,
+        const unsigned char *tag, unsigned char *out)
+{
+    u_unused_args(key, nonce, aad, aadlen, in, len, tag, out);
+    return ~0;
+}
 
 #endif  /* SSL_OPENSSL */

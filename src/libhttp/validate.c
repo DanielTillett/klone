@@ -16,7 +16,6 @@
 
 #include "klin_conf.h"
 #include <errno.h>
-#include <fnmatch.h>
 #include <regex.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,15 +26,15 @@
 #include <klin/vars.h>
 #include <klin/vhost.h>
 
-enum { VT_REGEX, VT_INT, VT_LENGTH, VT_ENUM };
+enum { VALID_REGEX, VALID_INT, VALID_LENGTH, VALID_ENUM };
 
 struct validator_s
 {
     const char *name;
     int type;
-    regex_t re;             /* VT_REGEX, matched against the whole value */
-    long long min, max;     /* VT_INT, VT_LENGTH                         */
-    const char *values;     /* VT_ENUM, blank separated                  */
+    regex_t re;             /* VALID_REGEX, matched against the whole value */
+    long long min, max;     /* VALID_INT, VALID_LENGTH                         */
+    const char *values;     /* VALID_ENUM, blank separated                  */
 };
 
 /* parse a whole decimal integer (optional '-', digits, nothing else) */
@@ -58,13 +57,13 @@ static int valid_check(const validator_t *v, const char *value, size_t len)
 
     switch(v->type)
     {
-    case VT_REGEX:
+    case VALID_REGEX:
         return regexec(&v->re, value, 0, NULL, 0) == 0;
-    case VT_INT:
+    case VALID_INT:
         return valid_int(value, &n) == 0 && n >= v->min && n <= v->max;
-    case VT_LENGTH:
+    case VALID_LENGTH:
         return (long long) len >= v->min && (long long) len <= v->max;
-    case VT_ENUM:
+    case VALID_ENUM:
         for(p = v->values; *p; p = e)
         {
             p += strspn(p, " \t");
@@ -349,7 +348,7 @@ int validate_load(vhost_t *vhost)
 
             if((s = u_config_get_subkey_value(vc, "regex")) != NULL)
             {
-                v->type = VT_REGEX;
+                v->type = VALID_REGEX;
                 len = strlen(s) + 5;
                 dbg_err_if((pat = u_malloc(len)) == NULL);
                 (void) u_snprintf(pat, len, "^(%s)$", s);
@@ -358,16 +357,16 @@ int validate_load(vhost_t *vhost)
                 U_FREE(pat);
             } else if((s = u_config_get_subkey_value(vc, "int")) != NULL ||
                     (s = u_config_get_subkey_value(vc, "length")) != NULL) {
-                v->type = u_config_get_subkey_value(vc, "int") ? VT_INT :
-                    VT_LENGTH;
+                v->type = u_config_get_subkey_value(vc, "int") ? VALID_INT :
+                    VALID_LENGTH;
                 warn_err_ifm(sscanf(s, "%31s %31s", ka, kb) != 2 ||
                         valid_int(ka, &a) || valid_int(kb, &b) || a > b ||
-                        (v->type == VT_LENGTH && a < 0),
+                        (v->type == VALID_LENGTH && a < 0),
                         "validators: %s: give a minimum and a maximum", name);
                 v->min = a;
                 v->max = b;
             } else if((s = u_config_get_subkey_value(vc, "enum")) != NULL) {
-                v->type = VT_ENUM;
+                v->type = VALID_ENUM;
                 v->values = s;
             } else
                 warn_err("validators: %s needs regex, int, length or enum",
@@ -417,7 +416,7 @@ void validate_free(vhost_t *vhost)
     if(vhost == NULL)
         return;
     for(i = 0; i < vhost->nvalidators; ++i)
-        if(vhost->validators[i].type == VT_REGEX)
+        if(vhost->validators[i].type == VALID_REGEX)
             regfree(&vhost->validators[i].re);
     U_FREE(vhost->validators);
     vhost->nvalidators = 0;

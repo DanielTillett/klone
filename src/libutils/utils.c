@@ -8,6 +8,10 @@
  */
 
 #include "klin_conf.h"
+#include <u/libu.h>
+/* LibU's u/missing.h leaves out mkstemps(3), which it supplies where the
+   system has none (Windows) */
+#include <u/missing/mkstemps.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>

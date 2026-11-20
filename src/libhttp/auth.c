@@ -22,7 +22,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <fnmatch.h>
 #include <u/libu.h>
 #include <klin/auth.h>
 #include <klin/http.h>

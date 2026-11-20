@@ -86,9 +86,15 @@ static int tls_load_ctx_args (u_config_t *cfg, tls_ctx_args_t **pcargs)
     cargs->ca = u_config_get_subkey_value(cfg, "ca_file");
     cargs->dh = u_config_get_subkey_value(cfg, "dh_file");
     cargs->crl = u_config_get_subkey_value(cfg, "crl_file");
-    /* the private key in a separate process (doc/KEYMGR), by default */
+    /* the private key in a separate process (doc/KEYMGR), by default;
+       Windows has no key manager (it needs fork(2) and UNIX sockets) */
+#ifdef OS_WIN
+    dbg_err_if (u_config_get_subkey_value_b(cfg, "key_manager", 0,
+                &cargs->keymgr));
+#else
     dbg_err_if (u_config_get_subkey_value_b(cfg, "key_manager", 1,
                 &cargs->keymgr));
+#endif
     dbg_err_if (u_config_get_subkey_value_b(cfg, "sandbox", 1,
                 &cargs->sandbox));
     dbg_err_if (tls_set_ctx_crlopts(cfg, cargs));

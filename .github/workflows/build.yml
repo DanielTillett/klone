@@ -1,11 +1,11 @@
 # Copyright (c) 2026 Daniel Tillett. Part of Klin; see the LICENSE file.
 name: Build and test
-# Linux (GCC release, sanitizers, BSD make) on every push and pull request.
-# macOS runs weekly and by hand from the Actions tab: hosted macOS runners
-# are often not available for hours. Native Windows is not supported (README,
-# KNOWN LIMITATIONS); on Windows, Klin is built and tested in WSL
+# Linux (GCC release, sanitizers, BSD make) and native Windows (MinGW) on
+# every push and pull request. macOS runs weekly and by hand from the Actions
+# tab: hosted macOS runners are often not available for hours
 on:
   push:
+    branches-ignore: ["wip/**"]
   pull_request:
   workflow_dispatch:
   schedule:
@@ -75,6 +75,37 @@ jobs:
           path: |
             .build/release/*.log
             .build/release/build-info.json
+
+  # Native Windows: MinGW-w64 (UCRT64), the single-process server model
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
+        with:
+          msystem: UCRT64
+          install: >-
+            git openssl
+            mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-openssl
+            mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-libsystre
+            mingw-w64-ucrt-x86_64-python
+      - name: Fetch the pinned LibU
+        run: python -c "import sys; sys.path.insert(0, 'build'); import build; build.dependencies(False)"
+      - name: Build (MinGW, Ninja, example site)
+        run: |
+          cmake -S . -B .build/mingw -G Ninja -DLIBU_SOURCE_DIR=libu -DKLIN_SITE_DIR=$PWD/doc/example-site
+          cmake --build .build/mingw
+      - name: Serve pages (HTTP and HTTPS)
+        run: python test/run_windows_smoke.py --daemon .build/mingw/bin/klind.exe
+      - name: Regression suite (extracted functions)
+        run: python test/run_regressions.py --cc gcc
 
   macos:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'

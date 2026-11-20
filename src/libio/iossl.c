@@ -147,7 +147,13 @@ static int io_ssl_close(io_ssl_t *io_ssl)
 
     if(io_ssl->flags & IO_FD_CLOSE && io_ssl->fd != -1)
     {
+#ifdef OS_WIN
+        /* a Winsock socket, not a C runtime descriptor: close(2) would
+           leave the connection open */
+        closesocket(io_ssl->fd);
+#else
         close(io_ssl->fd);
+#endif
         io_ssl->fd = -1;
     }
 

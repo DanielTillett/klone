@@ -193,6 +193,11 @@ set(_libu_srcs
 foreach(_m vsyslog syslog strtok_r unlink getpid fnmatch timegm strsep
         strlcpy strlcat gettimeofday daemon mkstemps setenv)
     string(TOUPPER "HAVE_${_m}" _var)
+    # Windows has no fork(2): nothing calls daemon(3) there, and LibU's
+    # stand-in does not compile (it misses its own headers)
+    if(OS_WIN AND _m STREQUAL "daemon")
+        continue()
+    endif()
     if(NOT ${_var})
         list(APPEND _libu_srcs missing/${_m}.c)
     endif()
@@ -204,6 +209,11 @@ set_target_properties(libu PROPERTIES OUTPUT_NAME u)
 target_include_directories(libu PUBLIC "${LIBU_GENERATED_INCLUDE_DIR}")
 target_compile_definitions(libu PUBLIC HAVE_CONF_H)
 target_compile_definitions(libu PRIVATE ${_libu_defs})
+# LibU's u/missing.h leaves out the setenv(3) stand-in it compiles where the
+# system has none (MinGW): declare it for LibU's own sources
+if(OS_WIN AND NOT HAVE_SETENV AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(libu PRIVATE "SHELL:-include u/missing/setenv.h")
+endif()
 if(LIBU_DEBUG)
     target_compile_definitions(libu PRIVATE DEBUG)
 endif()

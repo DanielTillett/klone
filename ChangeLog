@@ -15,6 +15,13 @@ Klin 4.0.0:
 	  entries, so they survive a reconfigure. The Windows service keeps
 	  the name kloned. All of it is in cmake/klone_compat.cmake and the
 	  lines marked "before KLone was renamed Klin"
+	- native Windows: builds with MinGW-w64 (MSYS2 UCRT64) and serves HTTP
+	  and HTTPS in the single-process model. LibU's own stand-ins for
+	  setenv, mkstemps and fnmatch are declared and used, its daemon.c is
+	  left out; Winsock 2 and a POSIX regex library (libsystre) are linked;
+	  TLS sockets are closed with closesocket(); key_manager defaults to
+	  no. CI builds it on every push, serves pages over HTTP and HTTPS
+	  (test/run_windows_smoke.py) and runs the regression suite
 	- sandbox (doc/SANDBOX), on by default (sandbox no turns it off):
 	  workers, after the child_init hook, and the TLS key manager run
 	  under a seccomp-bpf filter with no_new_privs on Linux (x86-64,

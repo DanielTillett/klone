@@ -400,11 +400,13 @@ KNOWN LIMITATIONS
   and on macOS 15 (Apple Silicon, Apple Clang, Homebrew OpenSSL 3). *BSD
   is untested. On macOS, LeakSanitizer is unavailable, so the sanitizer
   build checks memory errors and undefined behavior only.
-* Native Windows is not supported: on Windows, build and run Klin in WSL.
-  LibU and Klin use POSIX interfaces (fork, poll, setenv, mkstemps,
-  fnmatch, syslog); an MSVC build stops at LibU's POSIX headers and a
-  MinGW build at missing POSIX functions (tried 20 Nov 2026). The old
-  Windows code paths (OS_WIN, the kloned service) are kept but unbuilt.
+* Native Windows builds with MinGW-w64 (MSYS2 UCRT64: gcc, cmake, ninja,
+  openssl, zlib, libsystre) and runs the single-process server model: no
+  prefork or fork models, no TLS key manager (key_manager defaults to no),
+  no sandbox. CI builds it, serves HTTP and HTTPS and runs the regression
+  suite; the full server tests need fork(2) and run on Linux and macOS.
+  MSVC is not supported: LibU needs POSIX headers. WSL remains the way to
+  run everything on Windows.
 * C++ pages (.klx) are not supported; the import stops with an error.
   LibU's SCTP support is off by default (LIBU_ENABLE_SCTP).
 * Client-side sessions still use encrypt-then-MAC around AES-CBC. Moving

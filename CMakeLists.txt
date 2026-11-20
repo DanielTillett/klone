@@ -173,6 +173,21 @@ endif()
 if(KLIN_WITH_ZLIB)
     list(APPEND KLIN_SYSTEM_LIBS ZLIB::ZLIB)
 endif()
+if(WIN32)
+    # Winsock 2 (the io drivers, the timer and the tools use sockets too)
+    list(APPEND KLIN_SYSTEM_LIBS ws2_32)
+endif()
+# POSIX regular expressions (request validators): in libc, or a separate
+# library where libc has none (MinGW: libsystre or libtre)
+check_symbol_exists(regcomp "sys/types.h;regex.h" KLIN_LIBC_HAS_REGCOMP)
+if(NOT KLIN_LIBC_HAS_REGCOMP)
+    find_library(KLIN_REGEX_LIBRARY NAMES systre tre regex gnurx)
+    if(NOT KLIN_REGEX_LIBRARY)
+        message(FATAL_ERROR "no POSIX regex library (regcomp) found; on "
+            "MSYS2 install mingw-w64-<env>-libsystre")
+    endif()
+    list(APPEND KLIN_SYSTEM_LIBS ${KLIN_REGEX_LIBRARY})
+endif()
 target_compile_options(libu PRIVATE ${KLIN_C_OPTIONS})
 
 # ---------------------------------------------------------------------------
@@ -399,7 +414,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "SunOS")
 elseif(CMAKE_SYSTEM_NAME STREQUAL "QNX")
     target_link_libraries(klind PRIVATE socket)
 elseif(WIN32)
-    target_link_libraries(klind PRIVATE wsock32 bcrypt)
+    target_link_libraries(klind PRIVATE bcrypt)
 endif()
 
 # ---------------------------------------------------------------------------

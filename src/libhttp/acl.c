@@ -17,8 +17,12 @@
 
 #include "klin_conf.h"
 #include <string.h>
-#include <fnmatch.h>
+#ifdef OS_WIN
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <arpa/inet.h>
+#endif
 #include <u/libu.h>
 #include <klin/acl.h>
 #include <klin/http.h>

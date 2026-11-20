@@ -73,6 +73,12 @@ typedef struct vhost_s
 
     /* the "access" block (acl.c), or NULL */
     u_config_t *access;
+
+    /* request validation (validate.c): the validators, owned, and whether
+       there are "params" blocks */
+    struct validator_s *validators;
+    size_t nvalidators;
+    int has_params;
 } vhost_t;
 
 typedef struct vhost_list_s vhost_list_t;

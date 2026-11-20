@@ -72,6 +72,8 @@ struct request_s
     void *auth_realm;
     int auth_stale;
     vars_t *route_params;       /* {name} values of a matched route       */
+    int data_parsed;            /* request_parse_data() has run ...       */
+    int data_rc;                /* ... and returned this                  */
 
     /* strings, last: request_create() does not zero them */
     char local_addr[256];       /* local address                            */
@@ -1677,7 +1679,22 @@ static int request_cb_close_idle(talarm_t *al, void *arg)
     return 0;
 }
 
+static int request_parse_data_once(request_t *rq);
+
+/* parse the arguments and the form body, once (the validators of
+   validate.c run it before the page, which runs it again) */
 int request_parse_data(request_t *rq)
+{
+    if(rq->data_parsed)
+        return rq->data_rc;
+
+    rq->data_rc = request_parse_data_once(rq);
+    rq->data_parsed = 1;
+
+    return rq->data_rc;
+}
+
+static int request_parse_data_once(request_t *rq)
 {
     talarm_t *al = NULL;
     io_t *io = request_io(rq);
@@ -2044,6 +2061,30 @@ int request_set_route(request_t *rq, const char *page)
     return 0;
 err:
     return ~0;
+}
+
+/* remove (and free) an argument: from the list that owns it and the GET
+   or POST list that links to it */
+int request_del_arg(request_t *rq, var_t *v)
+{
+    dbg_return_if (rq == NULL || v == NULL || rq->args == NULL, ~0);
+
+    if(rq->args_get)
+        (void) vars_del(rq->args_get, v);
+    if(rq->args_post)
+        (void) vars_del(rq->args_post, v);
+    dbg_err_if(vars_del(rq->args, v));
+    var_free(v);
+
+    return 0;
+err:
+    return ~0;
+}
+
+/* the route parameters (NULL if none) */
+vars_t *request_get_route_params(request_t *rq)
+{
+    return rq ? rq->route_params : NULL;
 }
 
 /* add a {name} value of the route (value: len bytes) */

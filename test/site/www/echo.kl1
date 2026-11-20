@@ -1,0 +1,15 @@
+<%!
+    #include <klin/vars.h>
+%><%
+    /* the arguments and route parameters the page sees, one per line */
+    vars_t *vs = request_get_args(request);
+    size_t i;
+
+    for(i = 0; vs && i < vars_count(vs); ++i)
+        io_printf(out, "%s=%s\n", var_get_name(vars_getn(vs, i)),
+                var_get_value(vars_getn(vs, i)));
+    vs = request_get_route_params(request);
+    for(i = 0; vs && i < vars_count(vs); ++i)
+        io_printf(out, "route:%s=%s\n", var_get_name(vars_getn(vs, i)),
+                var_get_value(vars_getn(vs, i)));
+%>

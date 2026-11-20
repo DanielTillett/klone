@@ -15,6 +15,15 @@ Klin 4.0.0:
 	  entries, so they survive a reconfigure. The Windows service keeps
 	  the name kloned. All of it is in cmake/klone_compat.cmake and the
 	  lines marked "before KLone was renamed Klin"
+	- request validation (doc/VALIDATE): named validators (anchored POSIX
+	  regex, int range, length range, enum) and "params" blocks per path
+	  and method naming each parameter's source (query, form, route,
+	  header), validator and whether it is required. Invalid or missing
+	  required values get 400 (or are dropped); unnamed arguments are
+	  dropped (or refused); a value hiding a NUL never passes. Checked
+	  before the page, after routing; bad configurations stop klind.
+	  request_parse_data() now runs once per request; request_del_arg(),
+	  request_get_route_params()
 	- IP access control (doc/ACCESS): an "access" block of rules, each
 	  for some paths or all, with allow and deny lines of IPv4/IPv6
 	  addresses, networks and "all"; the first rule for the path decides

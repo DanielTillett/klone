@@ -190,6 +190,11 @@ REST APIs: a "routes" block maps methods and path patterns such as
 /api/users/{id} to pages (doc/ROUTES), and <klin/json.h> reads request
 bodies and writes responses as JSON (doc/JSON).
 
+Request validation: "validators" and "params" blocks check query, form,
+route and header parameters before a page runs (regular expressions,
+integer and length ranges, value lists); invalid input gets 400 and
+parameters no rule names are dropped (doc/VALIDATE).
+
 Encrypted pages: give the import a pattern of pages to encrypt and the key
 file, with an absolute path, for example
 -DKLIN_IMPORT_ARGS="-e;*.kl1;-k;/path/to/key". Pages are re-encrypted when

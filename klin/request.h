@@ -65,6 +65,8 @@ int request_set_route(request_t *rq, const char *page);
 int request_add_route_param(request_t *rq, const char *name,
         const char *value, size_t len);
 const char *request_get_route_param(request_t *rq, const char *name);
+vars_t *request_get_route_params(request_t *rq);
+int request_del_arg(request_t *rq, var_t *v);
 int request_read_body(request_t *rq, size_t max, char **pbuf, size_t *plen);
 struct json_s;
 int request_get_json(request_t *rq, size_t max, struct json_s **pj);

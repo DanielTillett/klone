@@ -7,6 +7,7 @@
  * in the LICENSE file which you have received as part of this distribution.
  */
 #include <klin/vhost.h>
+#include <klin/validate.h>
 
 int vhost_create(vhost_t **pv)
 {
@@ -39,6 +40,7 @@ int vhost_free(vhost_t *v)
     u_free(v->rq_temp_dir);
     if(v->auth_users)
         u_config_free(v->auth_users);
+    validate_free(v);
     u_free(v);
 
     return 0;

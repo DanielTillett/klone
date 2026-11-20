@@ -119,6 +119,13 @@ HTTP authentication (Basic and Digest) of the paths in one or more realms:
 \fBusers_file\fR; also \fBnonce_lifetime\fR and \fBbasic_over_http\fR.
 Plaintext passwords are refused. See doc/AUTH.
 .TP
+\fBvalidators\fR, \fBparams\fR
+Request validation: named \fBvalidator\fRs (\fBregex\fR, \fBint\fR,
+\fBlength\fR, \fBenum\fR) and \fBparams\fR blocks per \fBpath\fR and
+\fBmethod\fR with a \fBparam\fR block per parameter (\fBname\fR,
+\fBsource\fR, \fBvalidator\fR, \fBrequired\fR), \fBunknown\fR and
+\fBon_invalid\fR. See doc/VALIDATE.
+.TP
 \fBroutes\fR
 REST-style routes: \fBroute\fR blocks with a \fBpath\fR pattern
 (\fI{name}\fR segments, a last \fI{name*}\fR), the \fBmethod\fRs it

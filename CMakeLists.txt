@@ -200,7 +200,7 @@ klin_library(codec ${_codec})
 klin_library(emb ${_src}/libemb/emb.c)
 
 set(_http broker.c cgi.c http.c sup_emb.c access.c acl.c auth.c route.c
-    vhost.c dypage.c)
+    validate.c vhost.c dypage.c)
 if(ENABLE_SUP_FS)
     list(APPEND _http sup_fs.c)
 endif()

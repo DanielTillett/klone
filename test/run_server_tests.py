@@ -995,6 +995,29 @@ def run_websocket_checks(check, plain, secure):
     check(ok, "WebSocket over TLS")
 
 
+VALIDATION_ROUTES = """
+        route
+        {
+            path /v/{id}
+            page /echo.kl1
+        }
+        route
+        {
+            path /d
+            page /echo.kl1
+        }
+        route
+        {
+            path /r
+            page /echo.kl1
+        }
+        route
+        {
+            path /h
+            page /echo.kl1
+        }"""
+
+
 ROUTES = """routes
     {
         route
@@ -1019,7 +1042,7 @@ ROUTES = """routes
         {
             path /api/files/{path*}
             page /api.kl1
-        }
+        }""" + VALIDATION_ROUTES + """
     }"""
 
 
@@ -1167,6 +1190,155 @@ def run_access_checks(check, client, blocked, temp):
     check(dropped, "A denied client was not dropped at connection time")
 
 
+VALIDATION = """validators
+    {
+        validator
+        {
+            name id
+            regex [0-9]{1,6}
+        }
+        validator
+        {
+            name page
+            int 1 100
+        }
+        validator
+        {
+            name word
+            length 1 8
+        }
+        validator
+        {
+            name order
+            enum asc desc
+        }
+        validator
+        {
+            name token
+            regex [a-f0-9]{8}
+        }
+    }
+    params
+    {
+        path /echo.kl1
+        param
+        {
+            name page
+            validator page
+            required yes
+        }
+        param
+        {
+            name order
+            validator order
+        }
+        param
+        {
+            name q
+            validator word
+            source query
+        }
+    }
+    params
+    {
+        path /v/*
+        param
+        {
+            name id
+            source route
+            validator id
+            required yes
+        }
+    }
+    params
+    {
+        path /d
+        on_invalid drop
+        unknown allow
+        param
+        {
+            name page
+            validator page
+        }
+    }
+    params
+    {
+        path /r
+        unknown reject
+        param
+        {
+            name page
+            validator page
+        }
+    }
+    params
+    {
+        path /h
+        method GET
+        param
+        {
+            name X-Token
+            source header
+            validator token
+            required yes
+        }
+    }"""
+
+def run_validation_checks(check, plain):
+    """Declarative validation (doc/VALIDATE): sources, validator types,
+    required, repeated values, NUL smuggling, drop/reject, unknown."""
+    def get(path, extra=b"", body=None):
+        method = b"POST" if body is not None else b"GET"
+        if body is not None:
+            extra += b"Content-Type: application/x-www-form-urlencoded\r\nContent-Length: " + \
+                str(len(body)).encode() + b"\r\n"
+        reply = exchange(plain, method + b" " + path + b" HTTP/1.1\r\nHost: localhost\r\n" +
+                         extra + b"\r\n" + (body or b""))
+        head, _, data = reply.partition(b"\r\n\r\n")
+        return int(head.split(b"\r\n")[0].split()[1]), sorted(data.decode().split())
+
+    for path, want, seen in [
+            (b"/echo.kl1?page=5&order=asc&q=abc", 200, ["order=asc", "page=5", "q=abc"]),
+            (b"/echo.kl1?page=100", 200, ["page=100"]),
+            (b"/echo.kl1?page=5&extra=1&x=y", 200, ["page=5"]),     # unknown: dropped
+            (b"/echo.kl1?page=0", 400, None),
+            (b"/echo.kl1?page=101", 400, None),
+            (b"/echo.kl1?page=abc", 400, None),
+            (b"/echo.kl1?page=+5", 400, None),
+            (b"/echo.kl1?page=5%00x", 400, None),                    # a NUL hiding the rest
+            (b"/echo.kl1?order=asc", 400, None),                     # required page missing
+            (b"/echo.kl1?page=5&order=up", 400, None),
+            (b"/echo.kl1?page=5&q=", 400, None),                     # length 1-8
+            (b"/echo.kl1?page=5&q=ninechars", 400, None),
+            (b"/echo.kl1?page=5&page=500", 400, None),               # each value checked
+            (b"/v/123456", 200, ["route:id=123456"]),
+            (b"/v/1234567", 400, None),
+            (b"/v/12a", 400, None),
+            (b"/d?page=0&keep=1", 200, ["keep=1"]),                  # drop mode, unknown allowed
+            (b"/d?page=7", 200, ["page=7"]),
+            (b"/r?page=1", 200, ["page=1"]),
+            (b"/r?page=1&zzz=1", 400, None)]:                        # unknown rejected
+        status, body = get(path)
+        check(status == want and (seen is None or body == seen),
+              f"Validation of {path!r}: {status} {body}, expected {want} {seen}")
+
+    # the source counts: q is a query parameter, a form q is unknown
+    status, body = get(b"/echo.kl1?page=5", body=b"q=abc&order=desc")
+    check(status == 200 and body == ["order=desc", "page=5"],
+          f"Form/query sources: {status} {body}")
+    status, body = get(b"/echo.kl1", body=b"page=7")
+    check(status == 200 and body == ["page=7"], f"Form value: {status} {body}")
+
+    for token, want in [(b"deadbeef", 200), (b"DEADBEEF", 400), (b"dead", 400), (None, 400)]:
+        extra = b"X-Token: " + token + b"\r\n" if token else b""
+        status, _ = get(b"/h", extra)
+        check(status == want, f"Header validation {token!r}: {status}, expected {want}")
+
+    # pages without params rules are not affected
+    status, _ = get(b"/pid.kl1?anything=at%00all")
+    check(status == 200, f"A page without rules was validated: {status}")
+
+
 def run_bad_auth_checks(check, daemon, env, temp):
     """Unsafe or broken auth (and route) configurations stop klind at
     startup, instead of serving the realm unprotected (the reason goes to
@@ -1223,6 +1395,23 @@ def run_bad_auth_checks(check, daemon, env, temp):
         check(not starts(route.replace("route", "rule") % body, "access"),
               f"klind started with a bad access rule ({name})")
 
+    def validated(validators, params):
+        return starts(validators + "\n}\nparams\n{\n" + params, "validators")
+    good = "validator\n{\nname n\nint 1 9\n}"
+    check(validated(good, "path /x\nparam\n{\nname a\nvalidator n\n}"),
+          "A valid validation configuration was refused")
+    for name, validators, params in [
+            ("no type", "validator\n{\nname n\n}", "path /x"),
+            ("bad regex", "validator\n{\nname n\nregex [a-\n}", "path /x"),
+            ("int range reversed", "validator\n{\nname n\nint 9 1\n}", "path /x"),
+            ("negative length", "validator\n{\nname n\nlength -1 5\n}", "path /x"),
+            ("defined twice", good + "\n" + good, "path /x"),
+            ("unknown validator", good, "path /x\nparam\n{\nname a\nvalidator m\n}"),
+            ("bad source", good, "path /x\nparam\n{\nname a\nsource cookie\n}"),
+            ("bad unknown", good, "path /x\nunknown ignore"),
+            ("no path", good, "param\n{\nname a\n}")]:
+        check(not validated(validators, params), f"klind started with bad validation ({name})")
+
 
 def run_server_checks(args, env, output, daemon):
     checks = 0
@@ -1254,7 +1443,8 @@ def run_server_checks(args, env, output, daemon):
         # memlog: a log on this server only (none at the top level), kept in
         # memory, which pages read back with server_foreach_memlog_line()
         for name, port, tls, session, extra in [
-                ("plain", plain, False, "memory", auth + "\n    " + ROUTES),
+                ("plain", plain, False, "memory",
+                 auth + "\n    " + ROUTES + "\n    " + VALIDATION),
                 ("client", client, False, "client", SECURITY_HEADERS + "\n    " + ACCESS),
                 ("secure", secure, True, "client", auth),
                 ("files", files, False, f"file\n        file.path {sessions}",
@@ -1423,6 +1613,7 @@ def run_server_checks(args, env, output, daemon):
                 run_websocket_checks(check, plain, secure)
                 run_route_checks(args, check, plain)
                 run_access_checks(check, client, blocked, temp)
+                run_validation_checks(check, plain)
                 run_keep_alive_checks(args, check, plain, secure, request)
                 check(b"200 OK" in exchange(plain, request), "Server failed after malformed requests")
             finally:

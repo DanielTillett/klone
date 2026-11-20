@@ -35,6 +35,7 @@
 #include <klin/auth.h>
 #include <klin/route.h>
 #include <klin/acl.h>
+#include <klin/validate.h>
 #include <klin/vhost.h>
 #include <klin/supplier.h>
 #include "http_s.h"
@@ -825,6 +826,7 @@ err:
 static int http_serve_page(http_t *h, request_t *rq, response_t *rs,
         int *served)
 {
+    char path[URI_MAX];
     const char *cstr;
     supplier_t *sup;
     int rc, routed = 0;
@@ -852,11 +854,19 @@ static int http_serve_page(http_t *h, request_t *rq, response_t *rs,
     if((rc = auth_check(h, rq)) != 0)
         return rc;
 
+    /* the path the client asked for (routing replaces it) */
+    dbg_err_if(u_snprintf(path, sizeof path, "%s%s", request_get_filename(rq),
+                request_get_path_info(rq) ? request_get_path_info(rq) : ""));
+
     /* a REST route gives the page that serves this path and method */
     if((rc = route_dispatch(h, rq, &routed)) != 0)
         return rc;
     if(routed)
         dbg_err_if(http_resolv_request(h, rq));
+
+    /* the page sees only the parameters its params rules let through */
+    if((rc = validate_request(h, rq, path)) != 0)
+        return rc;
 
     /* set default successfull status code */
     dbg_err_if(response_set_status(rs, HTTP_STATUS_OK));
@@ -1137,9 +1147,11 @@ static int http_add_vhost(http_t *http, const char *host, u_config_t *c)
     /* security headers */
     dbg_err_if(http_load_sec_headers(http, vhost));
 
-    /* REST routes and IP access rules (a bad one stops the server) */
+    /* REST routes, IP access rules, validators (a bad one stops the
+       server) */
     dbg_err_if(route_load(vhost));
     dbg_err_if(acl_load(vhost));
+    dbg_err_if(validate_load(vhost));
 
     dbg_err_if(vhost_list_add(http->vhosts, vhost));
 

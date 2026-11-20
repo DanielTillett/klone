@@ -1,61 +1,69 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Daniel Tillett. Part of Klin; see the LICENSE file.
-"""Run a bounded libFuzzer smoke test against actual parser/utility libraries."""
+"""Build every fuzz target in fuzz/ (clang, libFuzzer, ASan and UBSan) and
+run each one briefly from its seeds (doc/FUZZING):
+
+    python3 test/run_fuzz.py [--runs N] [--target NAME ...]
+
+The build goes to .build/fuzz; a crash is left there as crash-*."""
 import argparse
 import os
 from pathlib import Path
+import shutil
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
+SANITIZERS = "-fsanitize=address,undefined,fuzzer-no-link -fno-sanitize-recover=undefined"
+
+
+def targets():
+    lines = (line.strip() for line in (ROOT / "fuzz/targets.txt").read_text().splitlines())
+    return [line for line in lines if line and not line.startswith("#")]
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--build", type=Path, required=True, help="CMake build directory")
-    parser.add_argument("--runs", type=int, default=10000)
+    parser.add_argument("--runs", type=int, default=10000, help="inputs per target")
+    parser.add_argument("--target", action="append", help="only this target (repeatable)")
+    parser.add_argument("--build", type=Path, help=argparse.SUPPRESS)  # older callers
     args = parser.parse_args()
-    tree = args.build.resolve()
-    if not tree.is_relative_to(ROOT / ".build"):
-        parser.error("Use a generated build inside .build")
-    output = tree.parent
-    executable = output / "fuzz-parsers"
-    # Compile the relevant complete translation units with fuzzer coverage.
-    # Remaining collaborators come from the corresponding full build archives.
-    sources = ["src/libpage/header.c", "src/libpage/field.c", "src/libutils/utils.c",
-               "src/libtrans/parser.c", "src/libtrans/trans_c.c", "src/libutils/json.c"]
-    source = Path(next(line.split("=", 1)[1]
-                       for line in (tree / "CMakeCache.txt").read_text().splitlines()
-                       if line.startswith("Klin_SOURCE_DIR:")))
-    libraries = sorted((tree / "lib").glob("*.a"))
-    includes = [tree / "include", tree / "libu/include", source]
-    command = ["clang", "-std=gnu99", "-fgnu89-inline", "-g", "-O1", "-DHAVE_CONF_H",
-               "-fsanitize=fuzzer,address,undefined", "-fno-omit-frame-pointer",
-               *[f"-I{path}" for path in includes],
-               str(ROOT / "test/fuzz_parsers.c")]
-    command += [str(source / name) for name in sources]
-    command += ["-Wl,--start-group", *map(str, libraries), "-Wl,--end-group",
-                "-lssl", "-lcrypto", "-lz", "-o", str(executable)]
-    subprocess.run(command, check=True)
-    corpus = output / "fuzz-corpus"
-    corpus.mkdir(exist_ok=True)
-    seeds = [b"Host: localhost\r\n\r\n", b"Content-Length: -1\r\n\r\n",
-             b"%", b"%4", b"%GG", b"&amp;", b"X: a\r\n folded\r\n\r\n",
-             # page translator input
-             b"<p><%= x %></p>", b"<% int i; %>\r\n<%! #include <x.h> %>",
-             b"<%@ include \"a\" %>", b"<%", b"%><%%", b"<%?bad %>",
-             # JSON
-             b'{"a": [1, -2.5e3, "x\\u00e9\\ud83d\\ude00", true, null], "b": {}}',
-             b'[[[[[]]]]]', b'"\\u0000<>&"', b'123456789012345678901234',
-             b'{"a\\u0000b": 1, "a": 2}']
-    for i, seed in enumerate(seeds):
-        (corpus / f"seed-{i}").write_bytes(seed)
-    with (output / "fuzz.log").open("w") as log:
-        result = subprocess.run([str(executable), f"-runs={args.runs}", "-max_len=8192",
-                                 f"-artifact_prefix={output}/", str(corpus)],
-                                env=os.environ.copy(), stdout=log, stderr=subprocess.STDOUT)
-    if result.returncode:
-        raise RuntimeError((output / "fuzz.log").read_text()[-6000:])
-    print(f"Parser fuzz smoke test passed ({args.runs} runs); log: {output / 'fuzz.log'}")
+    out = ROOT / ".build/fuzz"
+    log = out.parent / "fuzz.log"
+    out.mkdir(parents=True, exist_ok=True)
+    flags = f"-g -O1 -fno-omit-frame-pointer {SANITIZERS}"
+    # the targets link with the C++ driver (libFuzzer is C++)
+    env = dict(os.environ, CC="clang", CXX="clang++", CFLAGS=flags, CXXFLAGS=flags)
+    with log.open("w") as lf:
+        if not (out / "CMakeCache.txt").exists():
+            generator = ["-G", "Ninja"] if shutil.which("ninja") else []
+            subprocess.run(["cmake", "-S", str(ROOT), "-B", str(out), *generator,
+                            "-DKLIN_FUZZ=ON", "-DKLIN_HARDENING=OFF", "-DCMAKE_BUILD_TYPE=Debug"],
+                           env=env, stdout=lf, stderr=subprocess.STDOUT, check=True)
+        names = args.target or targets()
+        subprocess.run(["cmake", "--build", str(out), "--target", *[f"fuzz_{t}" for t in names]],
+                       env=env, stdout=lf, stderr=subprocess.STDOUT, check=True)
+    failed = []
+    for name in names:
+        corpus = out / "corpus" / name
+        corpus.mkdir(parents=True, exist_ok=True)
+        seeds = ROOT / "fuzz/seeds" / name
+        command = [str(out / "fuzz" / f"fuzz_{name}"), f"-runs={args.runs}", "-max_len=8192",
+                   "-timeout=10", f"-artifact_prefix={out}/{name}-", str(corpus)]
+        if seeds.is_dir():
+            command.append(str(seeds))
+        dictionary = ROOT / "fuzz" / f"fuzz_{name}.dict"
+        if dictionary.exists():
+            command.insert(1, f"-dict={dictionary}")
+        with log.open("a") as lf:
+            lf.write(f"\n=== {name}\n")
+            lf.flush()
+            result = subprocess.run(command, stdout=lf, stderr=subprocess.STDOUT)
+        if result.returncode:
+            failed.append(name)
+    if failed:
+        raise SystemExit(f"Fuzz targets failed: {', '.join(failed)}; see {log}\n" +
+                         log.read_text()[-6000:])
+    print(f"Fuzz smoke test passed: {len(names)} targets, {args.runs} runs each; log: {log}")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,10 @@
+# Fuzz targets: fuzz/fuzz_<name>.c, seeds in fuzz/seeds/<name>/ (doc/FUZZING)
+request
+multipart
+header
+url
+json
+ws
+digest
+session
+translate

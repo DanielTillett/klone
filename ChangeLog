@@ -15,6 +15,22 @@ Klin 4.0.0:
 	  entries, so they survive a reconfigure. The Windows service keeps
 	  the name kloned. All of it is in cmake/klone_compat.cmake and the
 	  lines marked "before KLone was renamed Klin"
+	- fuzzing and static analysis (doc/FUZZING): a libFuzzer target per
+	  parser in fuzz/ (request, multipart, header, url, json, ws, digest,
+	  session, translate), with seeds and dictionaries, built with
+	  -DKLIN_FUZZ=ON and run under ASan and UBSan by test/run_fuzz.py in
+	  CI; ClusterFuzzLite (.clusterfuzzlite/) on every pull request and in
+	  a daily batch with corpus pruning and coverage, the corpus kept in
+	  the cflite-corpus branch; CodeQL, clang-tidy, and a Coverity Scan
+	  workflow that waits for a COVERITY_SCAN_TOKEN secret
+	- fixed, found by fuzzing: a WebSocket worker crashed on an empty
+	  first message; LibU's base64 decoder read out of its table on bytes
+	  over 0x7f and wrote up to 2 bytes past its output (Basic
+	  credentials, WebSocket keys and password hashes now go through
+	  klin_b64_decode(), which checks the input first: unpadded base64 is
+	  refused); a session variable whose key did not decrypt leaked; the
+	  io drivers were called through pointers of another function type; a
+	  JSON -0 did not round-trip
 	- request limits and request smuggling (doc/LIMITS). New defaults, each
 	  configurable: at most 100 header fields (was 256), 8192 bytes a
 	  field and 32 KB a header (was 64 KB), answered 431 (was 400); a

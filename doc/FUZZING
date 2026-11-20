@@ -1,0 +1,98 @@
+KLIN FUZZING AND STATIC ANALYSIS
+--------------------------------
+
+FUZZ TARGETS
+
+fuzz/ has one libFuzzer target per parser that reads what a client sends
+(the list is fuzz/targets.txt):
+
+    request     a whole request: request line, header (limits, smuggling
+                checks), Content-Length, cookies, If-Modified-Since, the
+                query string and a urlencoded or multipart body
+    multipart   multipart/form-data bodies (parts, their headers, uploads)
+    header      header fields alone, strict (requests) and lenient
+                (multipart parts, CGI output)
+    url         URL, hex, HTML and SQL escapes; URI path normalisation
+                (aborts if a normalised path leaves the root)
+    json        the JSON reader and writer (parse, write, parse, write must
+                give the same bytes)
+    ws          WebSocket frames after the handshake: fragments, control
+                frames, close, masking, UTF-8
+    digest      Authorization (Digest) parameters, users blocks, stored
+                password hashes
+    session     session data as it is loaded: decryption, decompression,
+                variables (cookies are parsed by 'request')
+    translate   the .kl1 page translator
+
+Some targets include the .c file they test, to reach static functions;
+they link klind's objects without its main() (fuzz/fuzz_stubs.c).
+fuzz/seeds/<target>/ has seed inputs and fuzz/fuzz_<target>.dict a
+dictionary for the HTTP targets.
+
+RUNNING THEM
+
+    python3 test/run_fuzz.py [--runs N] [--target NAME ...]
+
+builds every target with clang, libFuzzer, ASan and UBSan into .build/fuzz
+and runs each N times (default 10000) from its seeds; CI runs it on every
+push. A crash is left as .build/fuzz/<target>-crash-*; reproduce it with
+
+    .build/fuzz/fuzz/fuzz_<target> .build/fuzz/<target>-crash-...
+
+The same build by hand: configure with -DKLIN_FUZZ=ON, CC=clang and the
+sanitizers in CFLAGS (e.g. -fsanitize=address,undefined,fuzzer-no-link);
+KLIN_FUZZ_ENGINE is the engine's link flag (-fsanitize=fuzzer).
+
+CLUSTERFUZZLITE
+
+.clusterfuzzlite/ (Dockerfile, build.sh, project.yaml) builds the targets
+for ClusterFuzzLite, which runs them from GitHub Actions:
+
+  - every pull request (.github/workflows/cflite_pr.yml): ASan and UBSan,
+    5 minutes, in code-change mode (the targets the change reaches);
+  - daily (cflite_batch.yml): ASan and UBSan for 30 minutes each, then
+    corpus pruning and a coverage report.
+
+Crashes appear as failed jobs with the crash input and stack as artifacts,
+and (batch runs) as code-scanning alerts.
+
+The corpus is kept the way ClusterFuzzLite recommends, in a git "storage
+repo": here the cflite-corpus branch of this repository (coverage reports
+in cflite-coverage), which the scheduled jobs create and update with the
+workflow's own token (contents: write); no personal access token or other
+secret is needed. Coverage reports are not published (ClusterFuzzLite's
+default branch for them, gh-pages, is not used); download them from the
+cflite-coverage branch.
+
+The Dockerfile builds OpenSSL 3 (pinned tag, checked against its commit)
+because OSS-Fuzz's base-builder image has 1.1, and links it statically, as
+the fuzzers run in another image. Dockerfile and build.sh are written so
+that they can serve as an OSS-Fuzz project's later (OSS-Fuzz keeps them in
+its own repository and clones the source instead of the COPY); nothing has
+been prepared or submitted for OSS-Fuzz.
+
+STATIC ANALYSIS
+
+  - CodeQL (.github/workflows/codeql.yml): the security-extended queries,
+    on every push to master and rename/**, pull requests and weekly;
+    results are code-scanning alerts.
+  - clang-tidy (analysis.yml, .clang-tidy): the clang static analyzer,
+    bugprone and some CERT checks over src/; findings are listed in the
+    job summary and as an artifact.
+  - Coverity Scan (coverity.yml): weekly, once the repository has a
+    COVERITY_SCAN_TOKEN secret and a COVERITY_EMAIL variable (and,
+    optionally, COVERITY_PROJECT if the project is not named owner/repo).
+    Until then the job only notes that it was skipped.
+
+WHAT FUZZING FOUND
+
+  - a WebSocket worker crashed on an empty first message (a NULL write);
+  - LibU's base64 decoder read out of its table on bytes over 0x7f, and
+    wrote up to 2 bytes past the output for a padded last group: Basic
+    credentials, WebSocket keys and password hashes now go through
+    klin_b64_decode(), which checks the input and gives LibU a buffer of
+    its own (LibU is pinned, and not changed);
+  - session loading leaked a variable whose key did not decrypt;
+  - the io drivers were called through a pointer of another function type
+    (undefined; UBSan's -fsanitize=function stops on it);
+  - a JSON -0 did not round-trip.

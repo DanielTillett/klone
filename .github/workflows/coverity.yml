@@ -1,0 +1,55 @@
+# Coverity Scan (doc/FUZZING, STATIC ANALYSIS): weekly, a build under
+# cov-build uploaded to scan.coverity.com. It does nothing until the
+# repository has the COVERITY_SCAN_TOKEN secret (the project's token on
+# scan.coverity.com) and the COVERITY_EMAIL variable (the account's email);
+# COVERITY_PROJECT, if set, names the project (default: owner/repository).
+name: Coverity Scan
+
+on:
+  schedule:
+    - cron: "23 5 * * 0"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      COVERITY_TOKEN: ${{ secrets.COVERITY_SCAN_TOKEN }}
+      COVERITY_EMAIL: ${{ vars.COVERITY_EMAIL }}
+      COVERITY_PROJECT: ${{ vars.COVERITY_PROJECT || github.repository }}
+    steps:
+      - name: Skipped until COVERITY_SCAN_TOKEN and COVERITY_EMAIL are set
+        if: env.COVERITY_TOKEN == '' || env.COVERITY_EMAIL == ''
+        run: echo "::notice::Coverity Scan skipped (no COVERITY_SCAN_TOKEN secret or COVERITY_EMAIL variable)"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: env.COVERITY_TOKEN != '' && env.COVERITY_EMAIL != ''
+        with:
+          persist-credentials: false
+      - name: Install build tools
+        if: env.COVERITY_TOKEN != '' && env.COVERITY_EMAIL != ''
+        run: sudo apt-get update && sudo apt-get install -y build-essential libssl-dev zlib1g-dev cmake ninja-build pkg-config
+      - name: Download the Coverity build tool
+        if: env.COVERITY_TOKEN != '' && env.COVERITY_EMAIL != ''
+        run: |
+          curl -fsS --form token="$COVERITY_TOKEN" --form project="$COVERITY_PROJECT" \
+            -o cov-tool.tgz https://scan.coverity.com/download/linux64
+          mkdir cov-tool
+          tar xzf cov-tool.tgz -C cov-tool --strip-components=1
+      - name: Build under cov-build
+        if: env.COVERITY_TOKEN != '' && env.COVERITY_EMAIL != ''
+        run: |
+          python3 -c "import sys; sys.path.insert(0, 'build'); import build; build.dependencies(False)"
+          cmake -S . -B out -G Ninja
+          cov-tool/bin/cov-build --dir cov-int cmake --build out
+          tar czf klin-cov.tgz cov-int
+      - name: Upload to Coverity Scan
+        if: env.COVERITY_TOKEN != '' && env.COVERITY_EMAIL != ''
+        run: |
+          curl -fsS --form token="$COVERITY_TOKEN" --form email="$COVERITY_EMAIL" \
+            --form file=@klin-cov.tgz --form version="$(cat VERSION)" \
+            --form description="$GITHUB_SHA" \
+            "https://scan.coverity.com/builds?project=$(python3 -c 'import os, urllib.parse; print(urllib.parse.quote(os.environ["COVERITY_PROJECT"], safe=""))')"

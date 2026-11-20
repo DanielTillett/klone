@@ -5,7 +5,7 @@ name: Build and test
 # tab: hosted macOS runners are often not available for hours
 on:
   push:
-    branches-ignore: ["wip/**"]
+    branches-ignore: ["wip/**", "cflite-*"]
   pull_request:
   workflow_dispatch:
   schedule:
@@ -31,9 +31,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y build-essential clang libclang-rt-dev libssl-dev zlib1g-dev python3 git cmake ninja-build pkg-config
       - name: Build and test (CMake + Ninja)
         run: python3 build/build.py --test ${{ matrix.mode == 'sanitize' && '--sanitize' || '' }}
-      - name: Fuzz smoke test (parsers and page translator)
+      - name: Fuzz smoke test (every target in fuzz/, ASan and UBSan)
         if: matrix.mode == 'release'
-        run: python3 test/run_fuzz.py --build .build/release/cmake --runs 10000
+        run: python3 test/run_fuzz.py --runs 20000
       - name: Build-system checks (site names, includes, flags, install, packages)
         if: matrix.mode == 'release'
         run: python3 test/run_build_checks.py

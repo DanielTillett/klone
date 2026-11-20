@@ -52,6 +52,9 @@ option(KLIN_WITH_OPENSSL "HTTPS, encrypted pages and client sessions (OpenSSL 3)
 option(KLIN_WITH_ZLIB "Compressed pages and responses (zlib)" ON)
 option(LIBU_ENABLE_SCTP "Build LibU with SCTP support" OFF)
 option(KLIN_BUILD_TESTS "Build the unit tests (run them with ctest)" OFF)
+option(KLIN_FUZZ "Build the fuzz targets in fuzz/ (doc/FUZZING)" OFF)
+set(KLIN_FUZZ_ENGINE "-fsanitize=fuzzer" CACHE STRING
+    "Link flags of the fuzzing engine (ClusterFuzzLite: $LIB_FUZZING_ENGINE)")
 set(KLIN_DAEMON_NAME "klind" CACHE STRING "Name of the daemon [--daemon_name]")
 set(KLIN_SITE_DIR "" CACHE PATH "Site directory to embed into klind (empty: none)")
 set(KLIN_IMPORT_ARGS "" CACHE STRING
@@ -594,4 +597,33 @@ if(KLIN_BUILD_TESTS AND UNIX)
         ${KLIN_SYSTEM_LIBS})
     add_test(NAME unit COMMAND klin_unit_tests)
     set_tests_properties(unit PROPERTIES LABELS unit TIMEOUT 60)
+endif()
+
+# ---------------------------------------------------------------------------
+# Fuzz targets (KLIN_FUZZ=ON, with clang and the sanitizers in CFLAGS, e.g.
+# -fsanitize=address,undefined,fuzzer-no-link): fuzz/build.sh for
+# ClusterFuzzLite, test/run_fuzz.py for a short local run (doc/FUZZING)
+# ---------------------------------------------------------------------------
+if(KLIN_FUZZ AND UNIX)
+    # libFuzzer is C++: the targets link with the C++ driver
+    enable_language(CXX)
+    file(STRINGS fuzz/targets.txt KLIN_FUZZ_TARGETS REGEX "^[a-z_]+$")
+    separate_arguments(_fuzz_engine UNIX_COMMAND "${KLIN_FUZZ_ENGINE}")
+    # klind without its main() (the engine has one) and without a site
+    set(_fuzz_daemon ${_klind})
+    list(FILTER _fuzz_daemon EXCLUDE REGEX "/entry\\.c$")
+    add_library(klin_fuzz_daemon STATIC ${_fuzz_daemon} fuzz/fuzz_stubs.c)
+    target_link_libraries(klin_fuzz_daemon PUBLIC klin_settings)
+    klin_link_group(_fuzz_libs klin_fuzz_daemon ${_klind_libs} klin_trans)
+    foreach(_t ${KLIN_FUZZ_TARGETS})
+        add_executable(fuzz_${_t} fuzz/fuzz_${_t}.c)
+        # some targets include the .c file they test ("src/...")
+        target_include_directories(fuzz_${_t} PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}")
+        target_link_libraries(fuzz_${_t} PRIVATE klin_settings ${_fuzz_libs}
+            ${KLIN_SYSTEM_LIBS})
+        target_link_options(fuzz_${_t} PRIVATE ${_fuzz_engine})
+        set_target_properties(fuzz_${_t} PROPERTIES LINKER_LANGUAGE CXX
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/fuzz")
+    endforeach()
 endif()

@@ -1,0 +1,97 @@
+# ClusterFuzzLite batch fuzzing (doc/FUZZING): daily, every fuzz target under
+# ASan and UBSan for half an hour, then corpus pruning and a coverage report.
+# Corpora go to the cflite-corpus branch of this repository and coverage
+# reports to cflite-coverage (not gh-pages: nothing is published), both
+# written with the workflow's own token, so no other key is needed. Crashes
+# are uploaded as workflow artifacts and as code-scanning (SARIF) results.
+name: ClusterFuzzLite batch fuzzing
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  batch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write          # the corpus branch
+      security-events: write   # SARIF results
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address, undefined]
+    steps:
+      - name: Build fuzzers (${{ matrix.sanitizer }})
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          language: c
+          sanitizer: ${{ matrix.sanitizer }}
+      - name: Run fuzzers (${{ matrix.sanitizer }})
+        id: run
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 1800
+          mode: batch
+          sanitizer: ${{ matrix.sanitizer }}
+          output-sarif: true
+          storage-repo: https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          storage-repo-branch: cflite-corpus
+          storage-repo-branch-coverage: cflite-coverage
+      - name: Upload results to code scanning
+        if: always() && hashFiles('sarif-cifuzz-results/*.sarif') != ''
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
+        with:
+          sarif_file: sarif-cifuzz-results
+          category: clusterfuzzlite-${{ matrix.sanitizer }}
+
+  prune:
+    needs: batch
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write          # the corpus branch
+    steps:
+      - name: Build fuzzers
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          language: c
+      - name: Prune the corpus
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 600
+          mode: prune
+          storage-repo: https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          storage-repo-branch: cflite-corpus
+          storage-repo-branch-coverage: cflite-coverage
+
+  coverage:
+    needs: prune
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write          # the coverage branch
+    steps:
+      - name: Build fuzzers (coverage)
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          language: c
+          sanitizer: coverage
+      - name: Coverage report
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 600
+          mode: coverage
+          sanitizer: coverage
+          storage-repo: https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          storage-repo-branch: cflite-corpus
+          storage-repo-branch-coverage: cflite-coverage

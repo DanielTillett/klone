@@ -1,0 +1,81 @@
+RUNNING KLIND UNDER SYSTEMD
+---------------------------
+
+contrib/systemd/klind.service is a hardened unit for klind. Copy it to
+/etc/systemd/system/, set the ExecStart paths, then
+
+    systemctl daemon-reload
+    systemctl enable --now klind
+
+ROOT, THEN NOT
+
+klind starts as root so that it can bind ports below 1024, read a TLS key
+that only root can read, and chroot. Once the sockets are open it chroots
+(if 'chroot' is set) and drops to the 'uid' and 'gid' in klind.conf; the
+TLS key manager (doc/KEYMGR) drops to them too. Give it an unprivileged
+account, e.g.
+
+    uid 65534
+    gid 65534
+
+klind refuses to start if it would keep root credentials: started as root
+it needs both 'uid' and 'gid' (a uid alone would leave group root, and a
+chroot alone is not enough, since root can leave a chroot), or an explicit
+
+    allow_root yes
+
+which is meant for tests and containers that are already unprivileged.
+
+WHAT THE UNIT RESTRICTS
+
+    CapabilityBoundingSet  only CAP_NET_BIND_SERVICE, CAP_SETUID, CAP_SETGID
+                           and CAP_SYS_CHROOT; all are gone once klind drops
+    NoNewPrivileges        no set-uid program can give privileges back
+    ProtectSystem=strict   the file system is read-only, except
+                           /run/klin, /var/lib/klin, /var/log/klin
+                           (RuntimeDirectory, StateDirectory, LogsDirectory);
+                           add ReadWritePaths= for anything else the site writes
+    ProtectHome, PrivateTmp, PrivateDevices, DevicePolicy=closed
+    ProtectKernel*, ProtectControlGroups, ProtectClock, ProtectHostname,
+    ProtectProc=invisible, ProcSubset=pid
+    RestrictNamespaces, RestrictRealtime, RestrictSUIDSGID, LockPersonality,
+    MemoryDenyWriteExecute, KeyringMode=private, RemoveIPC
+    RestrictAddressFamilies   AF_UNIX (the key manager), AF_INET, AF_INET6
+    SystemCallFilter       @system-service without @privileged, @mount,
+                           @debug etc., then @setuid and chroot back for the
+                           drop; klind adds its own, narrower filter in each
+                           worker (doc/SANDBOX)
+    LimitNOFILE, TasksMax
+
+'systemd-analyze security klind' rates the unit about 2.4 ("OK"). What is
+left is the price of starting as root (User=, CAP_SET*, CAP_SYS_CHROOT,
+@privileged) and of being a network server (PrivateNetwork=,
+AF_INET/AF_INET6).
+
+CGI scripts run inside the same unit: a script that needs to write
+somewhere, or to JIT (MemoryDenyWriteExecute), needs a drop-in, e.g.
+'systemctl edit klind':
+
+    [Service]
+    ReadWritePaths=/srv/www/uploads
+
+WITHOUT ROOT AT ALL
+
+If the key does not need protecting from klind's own user and chroot is not
+used, systemd can start klind unprivileged instead (a drop-in):
+
+    [Service]
+    User=klin
+    Group=klin
+    AmbientCapabilities=CAP_NET_BIND_SERVICE
+    CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+and klind.conf then has no uid, gid or chroot.
+
+TESTED
+
+test/run_systemd_test.py (run as root; CI runs it with sudo) installs the
+unit under /run, starts klind with it, and checks that it serves, that the
+main process runs as 65534 with no capabilities, no_new_privs and a
+seccomp filter, and that 'systemd-analyze security' stays at 3.0 or below.
+The server suite checks the root refusal when run as root.

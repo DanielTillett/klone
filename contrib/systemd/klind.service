@@ -1,0 +1,73 @@
+# Hardened systemd unit for klind (see doc/SYSTEMD).
+#
+# klind starts as root so that it can bind ports below 1024, read a TLS key
+# only root can read and chroot; it then drops to the uid and gid set in
+# klind.conf, and the TLS key manager drops with it. Set them, e.g.
+#
+#     uid 65534
+#     gid 65534
+#
+# (klind refuses to keep root credentials without 'allow_root yes').
+# Install: copy to /etc/systemd/system/, adjust the paths, then
+#     systemctl daemon-reload && systemctl enable --now klind
+
+[Unit]
+Description=Klin web server
+Documentation=man:klind(8) man:klind.conf(5)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/klind -F -f /etc/klin/klind.conf
+Restart=on-failure
+RestartSec=2s
+UMask=0027
+
+# Root is used only to bind, chroot and drop: no other capability.
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_SYS_CHROOT
+NoNewPrivileges=yes
+
+# File system: read-only except what the site writes (logs, sessions).
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RuntimeDirectory=klin
+StateDirectory=klin
+LogsDirectory=klin
+ReadWritePaths=-/var/log/klin -/var/lib/klin
+
+# Kernel and system interfaces klind never uses.
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+KeyringMode=private
+DevicePolicy=closed
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+# System calls: the usual service set, plus chroot(2); klind installs its
+# own, narrower seccomp filter in each worker (doc/SANDBOX).
+SystemCallArchitectures=native
+SystemCallFilter=@system-service chroot
+SystemCallFilter=~@privileged @mount @debug @cpu-emulation @obsolete @raw-io @reboot @swap @clock @module
+SystemCallFilter=@setuid chroot
+SystemCallErrorNumber=EPERM
+
+# Resource limits (klind's own limits apply too).
+LimitNOFILE=65536
+TasksMax=4096
+
+[Install]
+WantedBy=multi-user.target

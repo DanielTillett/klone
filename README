@@ -159,6 +159,10 @@ requests iteratively in a single process. -f overrides values in the
 embedded configuration. See klind(8) and klind.conf(5) in doc/man for all
 options.
 
+systemd: contrib/systemd/klind.service is a hardened unit; klind drops
+from root to the uid and gid in klind.conf and refuses to keep root
+credentials otherwise, unless 'allow_root yes' (doc/SYSTEMD).
+
 Hardening: klind is built with _FORTIFY_SOURCE, stack-clash and
 control-flow protection, PIE, full RELRO and a non-executable stack, each
 where the toolchain has it (doc/HARDENING); -DKLIN_HARDENING=OFF builds

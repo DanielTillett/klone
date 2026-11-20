@@ -1537,6 +1537,60 @@ def run_bad_auth_checks(check, daemon, env, temp):
         check(not validated(validators, params), f"klind started with bad validation ({name})")
 
 
+def run_root_checks(check, daemon, env, temp):
+    """klind will not keep root credentials: started as root it must drop
+    to a configured uid and gid, or be told 'allow_root yes' (a chroot alone
+    is not enough, root can leave one). Run as root only (WSL, CI with sudo)."""
+    if not hasattr(os, "geteuid"):
+        return
+    port = free_port()
+
+    def started(settings):
+        """The pid of a klind that came up with 'settings', or None."""
+        config = temp / "root-start.conf"
+        config.write_text(f"server_list one\n{settings}\none\n{{\ntype http\n"
+                          f"addr tcp4://127.0.0.1:{port}\ndir_root /www\n}}\n")
+        process = subprocess.Popen([str(daemon), "-F", "-d", "-f", str(config)], env=env,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        deadline = time.monotonic() + 5
+        while process.poll() is None and time.monotonic() < deadline:
+            try:
+                socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
+                return process
+            except OSError:
+                time.sleep(0.1)
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+        return None
+
+    def stop(process):
+        uids = Path(f"/proc/{process.pid}/status").read_text().split("Uid:")[1].split()[:4]
+        gids = Path(f"/proc/{process.pid}/status").read_text().split("Gid:")[1].split()[:4]
+        process.kill()
+        process.wait()
+        return uids, gids
+
+    if os.geteuid() != 0:
+        process = started("")
+        check(process is not None, "klind did not start as an ordinary user")
+        stop(process)
+        return
+    check(started("") is None, "klind kept root credentials without allow_root")
+    check(started(f"chroot {temp}") is None, "klind kept root credentials in a chroot")
+    check(started("uid 65534") is None, "klind kept group root (uid without gid)")
+    process = started("uid 65534\ngid 65534")
+    check(process is not None, "klind did not start with uid and gid configured")
+    if process is not None:
+        uids, gids = stop(process)
+        check(uids == ["65534"] * 4 and gids == ["65534"] * 4,
+              f"klind did not drop every user and group id: {uids} {gids}")
+    process = started("allow_root yes")
+    check(process is not None, "allow_root yes did not let klind run as root")
+    if process is not None:
+        stop(process)
+
+
 def run_server_checks(args, env, output, daemon):
     checks = 0
 
@@ -1555,6 +1609,7 @@ def run_server_checks(args, env, output, daemon):
         (temp / "old.txt").write_text("old client\n")
         auth = auth_config(*auth_users(daemon.parent / "klin", temp))
         run_bad_auth_checks(check, daemon, env, temp)
+        run_root_checks(check, daemon, env, temp)
         cert, key = temp / "cert.pem", temp / "key.pem"
         subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
                         "-keyout", str(key), "-out", str(cert), "-days", "1", "-subj", "/CN=localhost"],

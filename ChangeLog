@@ -15,6 +15,13 @@ Klin 4.0.0:
 	  entries, so they survive a reconfigure. The Windows service keeps
 	  the name kloned. All of it is in cmake/klone_compat.cmake and the
 	  lines marked "before KLone was renamed Klin"
+	- a hardened systemd unit, contrib/systemd/klind.service (doc/SYSTEMD):
+	  klind starts as root only to bind, chroot and drop, under a reduced
+	  capability set, ProtectSystem=strict, a system call filter and the
+	  other systemd protections (systemd-analyze security: 2.4, "OK");
+	  test/run_systemd_test.py runs klind under it (CI, with sudo). The
+	  refusal to keep root credentials without 'allow_root yes' (uid and
+	  gid are both needed; a chroot alone is not enough) is now tested
 	- compiler and linker hardening (doc/HARDENING), on by default
 	  (KLIN_HARDENING=OFF turns it off): _FORTIFY_SOURCE=3 in release
 	  builds, -fstack-clash-protection, -fcf-protection (x86) or

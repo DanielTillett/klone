@@ -190,7 +190,16 @@ Set the real and effective user ID of the running server.
 Set the real, effective group IDs and the saved set\-group\-ID of the running server.
 .TP
 \fBallow_root\fR
-A boolean which specifies if the server is allowed to run with root credentials (i.e. user ID 0).
+A boolean which specifies if the server is allowed to run with root credentials (i.e. user ID 0 or group ID 0). Started as root, klind refuses to run unless both
+\fBuid\fR
+and
+\fBgid\fR
+are set to non\-root IDs (a
+\fBchroot\fR
+alone is not enough) or
+\fBallow_root\fR
+is
+\fByes\fR. See doc/SYSTEMD for a hardened systemd unit.
 .TP
 \fBmax_child\fR
 Set the maximum number of child processes per server (i.e. total number of running backend child processes) available at run\-time. The default value is 300.

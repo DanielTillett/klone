@@ -86,6 +86,9 @@ static int tls_load_ctx_args (u_config_t *cfg, tls_ctx_args_t **pcargs)
     cargs->ca = u_config_get_subkey_value(cfg, "ca_file");
     cargs->dh = u_config_get_subkey_value(cfg, "dh_file");
     cargs->crl = u_config_get_subkey_value(cfg, "crl_file");
+    /* the private key in a separate process (doc/KEYMGR), by default */
+    dbg_err_if (u_config_get_subkey_value_b(cfg, "key_manager", 1,
+                &cargs->keymgr));
     dbg_err_if (tls_set_ctx_crlopts(cfg, cargs));
     dbg_err_if (tls_set_ctx_vdepth(cfg, cargs));
     dbg_err_if (tls_set_ctx_vmode(cfg, cargs));
@@ -219,8 +222,15 @@ static int tls_load_x509_creds (SSL_CTX *c, tls_ctx_args_t *cargs)
             "error loading server certificate from %s", cargs->cert);
 
     /* load private key (perhaps from the cert file) */
-    crit_err_ifm (tls_use_PrivateKey_file(c, cargs->key, SSL_FILETYPE_PEM) <= 0,
+    crit_err_ifm (tls_use_PrivateKey_file(c, cargs->key, SSL_FILETYPE_PEM,
+                cargs->keymgr) <= 0,
             "error loading the private key from %s", cargs->key);
+
+    /* RSA key exchange (TLS 1.2) decrypts with the private key, which the
+       key manager does not do; it has no forward secrecy anyway */
+    if (cargs->keymgr)
+        crit_err_ifm (SSL_CTX_set_cipher_list(c, "DEFAULT:!kRSA") != 1,
+                "cannot set the cipher list");
 
     /* check skey consistency against scert */
     crit_err_ifm (!SSL_CTX_check_private_key(c),

@@ -37,6 +37,7 @@
 #include <klin/hookprv.h>
 #include <klin/server_ppc_cmd.h>
 #include <klin/emb.h>
+#include <klin/keyproxy.h>
 #include "server_s.h"
 #include "child.h"
 
@@ -201,6 +202,17 @@ static void server_waitpid(server_t *s)
 
         if(WIFSIGNALED(status))
             u_warn("pid [%u], signal [%d]", pid, WTERMSIG(status));
+
+#ifdef SSL_OPENSSL
+        /* the key manager held the only copy of a TLS key: without it no
+           handshake can be signed, so stop rather than fail every one */
+        if(tls_keyproxy_is_manager(pid))
+        {
+            u_crit("TLS key manager [%u] exited, stopping", pid);
+            s->stop = 1;
+            continue;
+        }
+#endif
 
         /* decrement child count */
         server_reap_child(s, pid);
@@ -1072,6 +1084,9 @@ err:
 static void server_stop_children(server_t *s)
 {
     server_term_children(s);
+#ifdef SSL_OPENSSL
+    tls_keyproxy_stop();
+#endif
 
     sleep(1);
 

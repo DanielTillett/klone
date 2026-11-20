@@ -1339,6 +1339,74 @@ def run_validation_checks(check, plain):
     check(status == 200, f"A page without rules was validated: {status}")
 
 
+def key_needles(key):
+    """Byte strings that only a copy of the private key contains: a line of
+    its PEM text, and part of a prime in both byte orders (OpenSSL keeps
+    big numbers as little-endian words)."""
+    text = subprocess.run(["openssl", "pkey", "-in", str(key), "-text", "-noout"],
+                          capture_output=True, text=True, check=True).stdout
+    prime = re.search(r"prime1:\n((?:\s+[0-9a-f:]+\n)+)", text).group(1)
+    p = bytes.fromhex(re.sub(r"[\s:]", "", prime)).lstrip(b"\0")
+    pem = [line for line in key.read_text().splitlines() if not line.startswith("-----")]
+    return [pem[len(pem) // 2].encode(), p[8:40], p[::-1][8:40]]
+
+
+def process_has(pid, needles):
+    """Does the memory of process pid hold any of the needles? Read in
+    chunks that overlap by the longest needle."""
+    chunk, overlap = 1 << 22, max(len(n) for n in needles)
+    with open(f"/proc/{pid}/maps") as maps, open(f"/proc/{pid}/mem", "rb", 0) as mem:
+        for line in maps:
+            addr, perms = line.split()[:2]
+            if "r" not in perms or "[vvar]" in line or "[vsyscall]" in line:
+                continue
+            start, end = (int(x, 16) for x in addr.split("-"))
+            tail = b""
+            for at in range(start, end, chunk):
+                try:
+                    mem.seek(at)
+                    data = tail + mem.read(min(chunk, end - at))
+                except (OSError, OverflowError, ValueError):
+                    break
+                if any(n in data for n in needles):
+                    return True
+                tail = data[-overlap:]
+    return False
+
+
+def run_keymgr_checks(check, root_pid, key, sanitized):
+    """The TLS key manager (doc/KEYMGR): after TLS requests, only the key
+    manager's memory holds the private key, not klind's or any worker's."""
+    if not Path("/proc/self/mem").exists() or sanitized:
+        # no /proc (macOS); or a sanitizer build, whose terabytes of shadow
+        # and allocator mappings make a scan meaningless (release checks it)
+        return
+    needles = key_needles(key)
+    procs = {root_pid}
+    for _ in range(3):  # klind, its workers and key manager, their children
+        for entry in Path("/proc").iterdir():
+            if entry.name.isdigit():
+                try:
+                    ppid = int((entry / "stat").read_text().rsplit(")", 1)[1].split()[1])
+                except (OSError, ValueError, IndexError):
+                    continue
+                if ppid in procs:
+                    procs.add(int(entry.name))
+    holders = set()
+    for pid in sorted(procs):
+        try:
+            if process_has(pid, needles):
+                holders.add(pid)
+        except PermissionError:
+            check(False, f"Cannot read the memory of klind process {pid}")
+    # the key manager keeps only its control socket (and /dev/null)
+    managers = {pid for pid in procs if pid != root_pid and
+                len(list(Path(f"/proc/{pid}/fd").iterdir())) <= 4}
+    check(len(managers) == 1 and holders == managers,
+          f"Private key found in {sorted(holders)}; key manager {sorted(managers)}, "
+          f"processes {sorted(procs)}")
+
+
 def run_bad_auth_checks(check, daemon, env, temp):
     """Unsafe or broken auth (and route) configurations stop klind at
     startup, instead of serving the realm unprotected (the reason goes to
@@ -1614,6 +1682,9 @@ def run_server_checks(args, env, output, daemon):
                 run_route_checks(args, check, plain)
                 run_access_checks(check, client, blocked, temp)
                 run_validation_checks(check, plain)
+                run_keymgr_checks(check, process.pid, key,
+                                  "-fsanitize" in cmake_cache_value(daemon.parent.parent,
+                                                                    "CMAKE_C_FLAGS"))
                 run_keep_alive_checks(args, check, plain, secure, request)
                 check(b"200 OK" in exchange(plain, request), "Server failed after malformed requests")
             finally:

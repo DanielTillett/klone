@@ -233,7 +233,8 @@ list(TRANSFORM _page PREPEND ${_src}/libpage/)
 klin_library(page ${_page})
 
 if(SSL_OPENSSL)
-    klin_library(tls ${_src}/libtls/tls_glue.c ${_src}/libtls/tls.c)
+    klin_library(tls ${_src}/libtls/tls_glue.c ${_src}/libtls/tls.c
+        ${_src}/libtls/keyproxy.c)
 endif()
 
 set(_trans parser.c trans_c.c translat.c)

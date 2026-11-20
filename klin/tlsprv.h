@@ -33,6 +33,7 @@ struct tls_ctx_args_s
     int crlopts;            /* CRL check mode: 'all' or 'client-only' */
     int depth;              /* max depth for the cert chain verification */
     int vmode;              /* SSL verification mode */
+    int keymgr;             /* the private key is held by a key manager */
 };
 
 typedef struct tls_ctx_args_s tls_ctx_args_t;
@@ -45,7 +46,7 @@ STACK_OF(X509_NAME) *tls_load_client_CA_file(const char *);
 #endif
 int tls_load_verify_locations(SSL_CTX *, const char *);
 int tls_use_certificate_file(SSL_CTX *, const char *, int);
-int tls_use_PrivateKey_file(SSL_CTX *, const char *, int);
+int tls_use_PrivateKey_file(SSL_CTX *, const char *, int, int);
 int tls_use_certificate_chain(SSL_CTX *, const char *, int, 
         int (*)(char *, int, int, void *));
 int tls_use_crls (SSL_CTX *ctx, tls_ctx_args_t *cargs);

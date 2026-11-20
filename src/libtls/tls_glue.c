@@ -26,6 +26,10 @@ int tls_dummy_decl_stub = 0;
 #else
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
+#include <openssl/crypto.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <klin/keyproxy.h>
 
 /* map an emb resource to a OpenSSL memory BIO */
 BIO *bio_from_emb (const char *res_name)
@@ -38,7 +42,8 @@ BIO *bio_from_emb (const char *res_name)
     dbg_return_if (res_name == NULL, NULL);
 
     dbg_err_if (emb_open(res_name, &tmp));
-    dbg_err_if (!(b = BIO_new(BIO_s_mem())));
+    /* secure memory: wiped when freed (it may hold a private key) */
+    dbg_err_if (!(b = BIO_new(BIO_s_secmem())));
 
     for (;;)
     {
@@ -64,6 +69,38 @@ err:
     return NULL;
 }
 
+/* a file of the file system in a secure memory BIO: read here rather
+   than with BIO_new_file(), whose stdio buffer would keep a private key in
+   freed memory that every worker inherits (see keyproxy.c) */
+static BIO *bio_from_file(const char *path)
+{
+    enum { MAX = 1024 * 1024 };
+    char buf[4096];
+    BIO *b = NULL;
+    ssize_t n;
+    size_t total = 0;
+    int fd;
+
+    if((fd = open(path, O_RDONLY)) < 0)
+        return NULL;
+    dbg_err_if (!(b = BIO_new(BIO_s_secmem())));
+    while((n = read(fd, buf, sizeof buf)) > 0)
+    {
+        dbg_err_if ((total += (size_t) n) > MAX);
+        dbg_err_if (BIO_write(b, buf, (int) n) != (int) n);
+    }
+    dbg_err_if (n < 0);
+    OPENSSL_cleanse(buf, sizeof buf);
+    close(fd);
+    return b;
+err:
+    OPENSSL_cleanse(buf, sizeof buf);
+    close(fd);
+    if (b)
+        BIO_free(b);
+    return NULL;
+}
+
 BIO* tls_get_file_bio(const char *res_name)
 {
     BIO *b = NULL;
@@ -73,7 +110,7 @@ BIO* tls_get_file_bio(const char *res_name)
         return b;
 
     /* load the cert from the file system */
-    if((b = BIO_new_file(res_name, "r")) != NULL)
+    if((b = bio_from_file(res_name)) != NULL)
         return b;
 
     /* no cert found */
@@ -266,12 +303,15 @@ err:
 #endif  
 }
 
-/* wrapper for SSL_CTX_use_PrivateKey() */
-int tls_use_PrivateKey_file (SSL_CTX *ctx, const char *res_name, int type)
+/* wrapper for SSL_CTX_use_PrivateKey(); with 'keymgr' the key goes to a
+   key manager process and the context gets a proxy (doc/KEYMGR) */
+int tls_use_PrivateKey_file (SSL_CTX *ctx, const char *res_name, int type,
+        int keymgr)
 {
     int ret = 0;
     BIO *b = NULL;
     EVP_PKEY *pkey = NULL;
+    embres_t *er;
 
     dbg_return_if (!ctx, 0);
     dbg_return_if (!res_name, 0);
@@ -279,8 +319,18 @@ int tls_use_PrivateKey_file (SSL_CTX *ctx, const char *res_name, int type)
 
     dbg_goto_if (!(b = tls_get_file_bio(res_name)), end);
     dbg_goto_if (!(pkey = PEM_read_bio_PrivateKey(b, NULL, NULL, NULL)), end);
-    ret = SSL_CTX_use_PrivateKey(ctx, pkey);
-    EVP_PKEY_free(pkey);
+    if (keymgr)
+    {
+        /* built into klind, the key is in every process's memory anyway */
+        if (emb_lookup(res_name, &er) == 0)
+            warn("key_manager: %s is embedded in klind, so every process "
+                    "holds it; use a key file to keep it out of the "
+                    "workers", res_name);
+        ret = (tls_keyproxy_use_key(ctx, pkey) == 0);
+    }
+    else
+        ret = SSL_CTX_use_PrivateKey(ctx, pkey);
+    EVP_PKEY_free(pkey);    /* wiped: the key manager has its own copy */
     /* fall through */
 end:
     if (b)

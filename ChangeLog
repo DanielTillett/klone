@@ -15,6 +15,14 @@ Klin 4.0.0:
 	  entries, so they survive a reconfigure. The Windows service keeps
 	  the name kloned. All of it is in cmake/klone_compat.cmake and the
 	  lines marked "before KLone was renamed Klin"
+	- TLS key manager (doc/KEYMGR), on by default (key_manager no turns it
+	  off): the private key goes to a separate process before any worker
+	  is forked and klind wipes its copy; workers hold a proxy key (an
+	  OpenSSL 3 provider, klin-keyproxy) whose signatures the key manager
+	  makes. RSA (PKCS #1, PSS) and EC keys. TLS 1.2 RSA key exchange is
+	  turned off with it. klind stops if a key manager exits. Key and
+	  certificate files are read into secure memory. The server tests
+	  scan every klind process's memory for the key
 	- request validation (doc/VALIDATE): named validators (anchored POSIX
 	  regex, int range, length range, enum) and "params" blocks per path
 	  and method naming each parameter's source (query, form, route,

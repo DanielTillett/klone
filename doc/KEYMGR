@@ -1,0 +1,59 @@
+KLIN TLS KEY MANAGER
+--------------------
+
+The private key of an HTTPS server is kept out of the processes that
+serve requests. klind reads the key at startup and hands it to a key
+manager, a small process of its own, before any worker is forked; then
+it wipes its copy. Workers (and klind itself) only hold a proxy key: when
+a TLS handshake needs a signature, the worker sends the digest to the key
+manager, which signs it and sends the signature back. A worker that runs
+attacker-controlled code can ask for signatures while it runs, but it
+cannot read the key, and the key does not leave with a memory dump or a
+core file of a worker.
+
+It is on by default for every HTTPS server; to keep the key in klind's
+processes, as before 4.0.0:
+
+    secure
+    {
+        type        https
+        cert_file   /etc/klin/cert.pem
+        key_file    /etc/klin/key.pem
+        key_manager no
+    }
+
+HOW IT WORKS
+
+- One key manager per HTTPS server. It closes every descriptor but its
+  control socket, ignores HUP and ALRM, and, when klind runs as root with
+  uid and gid set, drops to them like klind does.
+- The proxy key is an OpenSSL 3 provider built into klind
+  ("klin-keyproxy"): its key management answers with the public key
+  (certificate checks, sizes, curve), its signature operation forwards
+  the digest and the RSA padding, PSS salt length and MGF1 digest. RSA
+  (PKCS #1 v1.5 and PSS, TLS 1.2 and 1.3) and EC keys (ECDSA) are
+  supported; other key types stop klind at startup (set key_manager no).
+- Each signature: the worker creates a socket pair, sends the request and
+  one end of the pair over the control socket every klind process
+  inherited, and waits up to 5 s for the answer on the other end.
+- TLS 1.2 RSA key exchange is turned off ("DEFAULT:!kRSA"): it decrypts
+  with the private key, which the key manager does not do, and it has no
+  forward secrecy. Every current client uses ECDHE.
+- If a key manager exits, klind stops: nothing else holds the key, so no
+  handshake could succeed. A key manager exits when klind does.
+- Key and certificate files are read into OpenSSL secure memory (wiped
+  when freed), not through stdio, so no copy of the key is left in the
+  freed memory the workers inherit.
+
+LIMITS
+
+- A key embedded in klind (a key_file in the site, see the import) is in
+  every process's memory as part of the program: klind warns at startup.
+  Keep keys in files outside the site.
+- The key manager is a signing oracle for the workers while they run: it
+  protects the key, not the TLS sessions of a compromised worker.
+- Native Windows has no key manager.
+
+The server tests check it: after TLS requests they scan the memory of
+klind and every process it started (Linux, /proc) for the private key,
+and expect to find it in the key manager only.

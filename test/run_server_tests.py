@@ -1602,14 +1602,20 @@ def run_limit_checks(args, check, plain, limits, temp):
         streams.pop().close()
         # the worker leaves its slot once the page has ended (after the
         # mark file is written): try for a few seconds
-        deadline = time.monotonic() + 5
+        # (meanwhile max_conn_per_ip may still count the closed connections'
+        # workers too, and close a new one at once: that is a retry as well)
+        deadline, status = time.monotonic() + 5, ""
         while True:
-            again = EventStream(limits, b"/sse.kl1?n=1")
-            again.close()
-            if again.status.startswith("HTTP/1.1 200") or time.monotonic() > deadline:
+            try:
+                again = EventStream(limits, b"/sse.kl1?n=1")
+                again.close()
+                status = again.status
+            except (EOFError, ConnectionResetError):
+                status = "closed"
+            if status.startswith("HTTP/1.1 200") or time.monotonic() > deadline:
                 break
             time.sleep(0.2)
-        check(again.status.startswith("HTTP/1.1 200"), "max_streams did not free a closed stream")
+        check(status.startswith("HTTP/1.1 200"), f"max_streams did not free a closed stream: {status}")
     finally:
         for stream in streams:
             stream.close()

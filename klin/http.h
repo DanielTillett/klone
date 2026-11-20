@@ -56,12 +56,16 @@ enum {
     /**< missing Content-Length header field */
     HTTP_STATUS_REQUEST_TOO_LARGE         = 413,
     /**< request body too large */
+    HTTP_STATUS_URI_TOO_LONG              = 414,
+    /**< request line (URI) too long */
     HTTP_STATUS_UNSUPPORTED_MEDIA_TYPE    = 415,
     /**< the request body is of a type the resource does not take */
     HTTP_STATUS_RANGE_NOT_SATISFIABLE     = 416,
     /**< no part of the requested range is in the resource */
     HTTP_STATUS_UPGRADE_REQUIRED          = 426,
     /**< the client must switch protocol (version) */
+    HTTP_STATUS_HEADER_TOO_LARGE          = 431,
+    /**< too many request header fields, or too large */
     /**< decryption key is needed - Klin extension */
     HTTP_STATUS_EXT_KEY_NEEDED            = 430,
     /**< request PDU too big */

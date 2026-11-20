@@ -23,6 +23,8 @@
 #include <u/libu.h>
 #include <klin/io.h>
 #include <klin/sse.h>
+#include <klin/http.h>
+#include <klin/conntab.h>
 #include <klin/timer.h>
 
 enum { SSE_WRITE_TIMEOUT = 30 };
@@ -75,6 +77,14 @@ int sse_start(request_t *rq, response_t *rs)
     static const char hello[] = ": klin\n\n";
 
     dbg_return_if (rq == NULL || rs == NULL, ~0);
+
+    /* max_streams of them are open: try again later */
+    if(conntab_stream())
+    {
+        (void) response_set_status(rs, HTTP_STATUS_SERVICE_UNAVAILABLE);
+        (void) response_set_field(rs, "Retry-After", "5");
+        return ~0;
+    }
 
     dbg_err_if(response_set_content_type(rs, "text/event-stream"));
     dbg_err_if(response_set_field(rs, "Cache-Control", "no-store"));

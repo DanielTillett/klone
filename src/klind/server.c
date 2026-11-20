@@ -33,6 +33,7 @@
 #include <klin/ppc_cmd.h>
 #include <klin/utils.h>
 #include <klin/klog.h>
+#include <klin/conntab.h>
 #include <klin/hook.h>
 #include <klin/hookprv.h>
 #include <klin/server_ppc_cmd.h>
@@ -85,6 +86,9 @@ static int server_reap_child(server_t *s, pid_t pid)
 
     /* remove the child from the list */
     dbg_err_if(children_del(s->children, child));
+
+    /* and its connection, if it died serving one */
+    conntab_reap(pid);
     be = child->be;
 
     /* check that the minimum number of process are active */

@@ -26,6 +26,7 @@
 #include <klin/timer.h>
 #include <klin/http.h>
 #include <klin/crypto.h>
+#include <klin/conntab.h>
 
 enum {
     WS_IO_TIMEOUT = 30,             /* s to read or write one frame        */
@@ -274,6 +275,13 @@ int ws_accept(request_t *rq, response_t *rs, const char *protocols, int flags,
        the user's cookies (cross-site WebSocket hijacking) */
     if(!(flags & WS_ANY_ORIGIN) && !ws_same_origin(rq))
         return ws_refuse(rs, HTTP_STATUS_FORBIDDEN);
+
+    /* max_streams of them are open: try again later */
+    if(conntab_stream())
+    {
+        (void) response_set_field(rs, "Retry-After", "5");
+        return ws_refuse(rs, HTTP_STATUS_SERVICE_UNAVAILABLE);
+    }
 
     dbg_err_if(ws_accept_key(key, accept, sizeof accept));
     if(protocols)

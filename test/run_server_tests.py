@@ -1152,6 +1152,12 @@ ACCESS = """access
         }
     }"""
 
+LIMITS = """max_conn_per_ip 3
+    max_streams 2
+    keep_alive_timeout 8
+    prefork.start_child 4
+    prefork.max_child 6"""
+
 BLOCKED = """access
     {
         rule
@@ -1463,6 +1469,134 @@ def run_sandbox_checks(args, check, root_pid, plain, unsandboxed):
     check(reply.endswith(b"klin integration test\n"), "Server not serving after a worker was killed")
 
 
+def run_limit_checks(args, check, plain, limits, temp):
+    """Request limits and request smuggling (doc/LIMITS): each refused
+    request gets its status and the connection is closed (a request sent
+    after it on the connection is not answered); then the header deadline,
+    and (prefork) the caps on connections per address and on streams."""
+    get = b"GET /static/hello.txt HTTP/1.1\r\nHost: localhost\r\n"
+    after = b"GET /static/hello.txt HTTP/1.1\r\nHost: localhost\r\n\r\n"
+
+    def status(header, line=get):
+        reply = exchange(plain, line + header + b"\r\n" + after)
+        check(reply.count(b"HTTP/1.1 ") <= 1 and b"klin integration test" not in reply,
+              f"A request after a refused one was answered: {header[:60]!r}")
+        return int(reply.split(b" ", 2)[1]) if reply.startswith(b"HTTP/1.") else None
+
+    long_line = b"GET /static/" + b"a" * 9000 + b" HTTP/1.1\r\nHost: localhost\r\n"
+    for name, header, line, want in [
+            ("100 fields", b"X-A: 1\r\n" * 98, get, 200),
+            ("101 fields", b"X-A: 1\r\n" * 99, get, 431),
+            ("a field of 8192 bytes", b"X: " + b"x" * 8187 + b"\r\n", get, 200),
+            ("a field over 8192 bytes", b"X: " + b"x" * 8188 + b"\r\n", get, 431),
+            ("a header over 32 KB", (b"X: " + b"x" * 995 + b"\r\n") * 33, get, 431),
+            ("a request line over 8 KB", b"", long_line, 414),
+            ("a body over post_maxsize", b"Content-Length: 6000000\r\n", get, 413),
+            ("token characters", b"X-!#$%&'*+.^_`|~: v\r\n", get, 200),
+            ("obs-text in a value", b"X: caf\xe9\r\n", get, 200),
+            ("a blank in the name", b"Bad Header: v\r\n", get, 400),
+            ("a blank before the colon", b"Content-Length : 0\r\n", get, 400),
+            ("an empty name", b": v\r\n", get, 400),
+            ("a control character in the name", b"X\x01Y: v\r\n", get, 400),
+            ("a control character in the value", b"X: a\x01b\r\n", get, 400),
+            ("DEL in the value", b"X: a\x7fb\r\n", get, 400),
+            ("a bare CR", b"X: a\rb\r\n", get, 400),
+            ("obs-fold", b"X: a\r\n folded\r\n", get, 400),
+            ("obs-fold with a tab", b"X: a\r\n\tfolded\r\n", get, 400),
+            ("Content-Length and Transfer-Encoding",
+             b"Content-Length: 0\r\nTransfer-Encoding: chunked\r\n", get, 400),
+            ("Transfer-Encoding and Content-Length",
+             b"Transfer-Encoding: chunked\r\nContent-Length: 0\r\n", get, 400),
+            ("equal Content-Lengths", b"Content-Length: 0\r\nContent-Length: 0\r\n", get, 400),
+            ("conflicting Content-Lengths", b"Content-Length: 0\r\nContent-Length: 5\r\n", get, 400),
+            ("a Content-Length list", b"Content-Length: 0, 0\r\n", get, 400),
+            ("a signed Content-Length", b"Content-Length: +0\r\n", get, 400),
+            ("chunked", b"Transfer-Encoding: chunked\r\n", get, 501),
+            ("an unknown transfer-coding", b"Transfer-Encoding: x-smuggle\r\n", get, 501),
+            ("repeated transfer-codings", b"Transfer-Encoding: chunked, chunked\r\n", get, 501),
+            ("two Transfer-Encoding fields",
+             b"Transfer-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n", get, 501),
+            ("a Transfer-Encoding look-alike", b"Transfer-Encoding\x0b: chunked\r\n", get, 400)]:
+        if want == 200:
+            reply = exchange(plain, line + header + b"\r\n")
+            check(b"200 OK" in reply, f"Refused a valid request ({name}): {reply[:80]!r}")
+        else:
+            got = status(header, line)
+            check(got == want, f"{name}: expected {want}, got {got}")
+
+    # slowloris: the whole header must arrive within idle_timeout (2 s here)
+    # however slowly it trickles in
+    start = time.monotonic()
+    with socket.create_connection(("127.0.0.1", plain), timeout=10) as sock:
+        reply = b""
+        try:
+            sock.sendall(get)
+            for _ in range(40):
+                sock.sendall(b"X: a\r\n")
+                time.sleep(0.25)
+                sock.setblocking(False)
+                try:
+                    data = sock.recv(4096)
+                    if not data:
+                        break
+                    reply += data
+                except BlockingIOError:
+                    pass
+                finally:
+                    sock.setblocking(True)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+    elapsed = time.monotonic() - start
+    check(elapsed < 5, f"A trickled header held the connection for {elapsed:.1f} s")
+    check(b"200 OK" not in reply, "A trickled header was answered")
+
+    if not args.prefork:
+        return  # one connection at a time: no caps to reach
+
+    # three connections at once per address on 'limits': a fourth is closed
+    held = []
+    try:
+        for _ in range(3):
+            conn = Connection(limits)
+            conn.send(after)
+            check(conn.response()[0].startswith("HTTP/1.1 200"), "A connection under max_conn_per_ip was refused")
+            held.append(conn)
+        reply = exchange(limits, after)
+        check(reply == b"", f"A connection over max_conn_per_ip was answered: {reply[:80]!r}")
+        held.pop().sock.close()
+        time.sleep(0.3)
+        check(b"200 OK" in exchange(limits, after), "max_conn_per_ip did not free a closed connection")
+    finally:
+        for conn in held:
+            conn.sock.close()
+    time.sleep(0.3)
+
+    # two SSE/WebSocket connections at once on 'limits': a third gets 503
+    streams = []
+    try:
+        for i in range(2):
+            stream = EventStream(limits, f"/sse.kl1?n=1&mark={temp}/cap{i}".encode())
+            check(stream.status.startswith("HTTP/1.1 200"), f"A stream under max_streams was refused: {stream.status}")
+            streams.append(stream)
+        third = EventStream(limits, b"/sse.kl1?n=1")
+        check(third.status.startswith("HTTP/1.1 503") and third.fields.get("retry-after") == "5",
+              f"A third SSE stream was not refused with 503: {third.status}")
+        third.close()
+        ws = WebSocket(limits)
+        check(ws.status == 503, f"A WebSocket over max_streams was not refused: {ws.status}")
+        ws.sock.close()
+        streams.pop().close()
+        deadline = time.monotonic() + 5
+        while not (temp / "cap1").exists() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        again = EventStream(limits, b"/sse.kl1?n=1")
+        check(again.status.startswith("HTTP/1.1 200"), "max_streams did not free a closed stream")
+        again.close()
+    finally:
+        for stream in streams:
+            stream.close()
+
+
 def run_bad_auth_checks(check, daemon, env, temp):
     """Unsafe or broken auth (and route) configurations stop klind at
     startup, instead of serving the realm unprotected (the reason goes to
@@ -1614,7 +1748,7 @@ def run_server_checks(args, env, output, daemon):
         subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
                         "-keyout", str(key), "-out", str(cert), "-days", "1", "-subj", "/CN=localhost"],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        plain, client, secure, files, memlog, blocked = (free_port() for _ in range(6))
+        plain, client, secure, files, memlog, blocked, limits = (free_port() for _ in range(7))
         sessions = temp / "sessions"
         sessions.mkdir()
         config = temp / "klind.conf"
@@ -1630,7 +1764,8 @@ def run_server_checks(args, env, output, daemon):
                  "index missing.kl1 pid.kl1\n    send_enc_deflate yes"),
                 ("memlog", memlog, False, "memory",
                  "log\n    {\n        type memory\n    }\n    sandbox no"),
-                ("blocked", blocked, False, "memory", BLOCKED)]:
+                ("blocked", blocked, False, "memory", BLOCKED),
+                ("limits", limits, False, "memory", LIMITS)]:
             blocks.append(f"""{name}
 {{
     type {'https' if tls else 'http'}
@@ -1651,9 +1786,12 @@ def run_server_checks(args, env, output, daemon):
     {extra}
 }}
 """)
+        # 'limits' sets its own keep-alive and worker counts
+        blocks[-1] = re.sub(r"\n    (keep_alive_timeout|prefork\.start_child|prefork\.max_child) \d+",
+                            "", blocks[-1])
         # blanks of every kind between the names: all servers must start (a
         # doubled or leading blank used to drop the ones after it)
-        config.write_text("server_list  plain client\tsecure  files memlog blocked\nallow_root yes\n" +
+        config.write_text("server_list  plain client\tsecure  files memlog blocked limits\nallow_root yes\n" +
                           "\n".join(blocks))
         log_path = output / ("server-prefork-test.log" if args.prefork else "server-test.log")
         with log_path.open("w") as log:
@@ -1791,6 +1929,7 @@ def run_server_checks(args, env, output, daemon):
                 run_conditional_checks(check, plain, files)
                 run_sse_checks(args, check, plain, secure, temp)
                 run_websocket_checks(check, plain, secure)
+                run_limit_checks(args, check, plain, limits, temp)
                 run_route_checks(args, check, plain)
                 run_access_checks(check, client, blocked, temp)
                 run_validation_checks(check, plain)

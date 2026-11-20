@@ -66,6 +66,9 @@ struct request_s
     size_t hdr_end;             /* stream offset of the end of the header   */
     int ka_wait;                /* waiting on a kept-alive connection       */
     int conn_closed;            /* closed or idle before any request byte   */
+    int parse_status;           /* why request_parse_header() failed        */
+    size_t max_fields;          /* header limits (request_parse_header)     */
+    size_t max_line, max_header;
     /* HTTP authentication (see auth.c): the realm the path is in, the user
        who authenticated (both in the configuration), a stale nonce */
     const char *auth_user;
@@ -91,6 +94,10 @@ enum {
     REQUEST_DEFAULT_IDLE_TIMEOUT = 10,         /* 10 secs */
     REQUEST_DEFAULT_POST_TIMEOUT = 600,        /* 10 mins */
     REQUEST_DEFAULT_POST_MAXSIZE = 5*1024000,  /* 5 MB    */
+    REQUEST_DEFAULT_MAX_FIELDS = 100,          /* header fields           */
+    REQUEST_DEFAULT_MAX_LINE = 8192,           /* bytes in one field      */
+    REQUEST_DEFAULT_MAX_HEADER = 32768,        /* bytes in the header     */
+    REQUEST_LINE_MAX = 8192,                   /* bytes in the request line */
 };
 
 
@@ -1790,12 +1797,12 @@ int request_parse_header(request_t *rq,
         int (*is_valid_uri)(void*, const char *, size_t),
         void* arg)
 {
-    enum { BUFSZ = 4096 };
     const char WP[] = " \t\r\n";
-    char ln[BUFSZ], *pp, *method, *uri, *proto;
+    char ln[REQUEST_LINE_MAX + 2], *pp, *method, *uri, *proto;
     talarm_t *al = NULL;
-    size_t lengths = 0, start;
+    size_t lengths = 0, codings = 0, start;
     field_t *field;
+    int status;
 
     dbg_err_if (rq == NULL);
     dbg_err_if (rq->io == NULL); /* must call rq_bind before rq_parse */
@@ -1808,17 +1815,24 @@ int request_parse_header(request_t *rq,
     io_set_read_limit(rq->io, -1);
 
     start = rq->io->rtot;
+    rq->parse_status = 0;
 
     if(!rq->cgi)
     {
         /* cp the first line */
-        if(io_gets(rq->io, ln, BUFSZ) <= 0)
+        if(io_gets(rq->io, ln, sizeof ln) <= 0)
         {
             /* closed (or timed out) before sending anything */
             rq->conn_closed = (rq->io->rtot == start);
             goto err;
         }
-        dbg_err_if(strchr(ln, '\n') == NULL);
+        if(strchr(ln, '\n') == NULL)
+        {
+            /* too long, or the client stopped in the middle of it */
+            if(strlen(ln) > REQUEST_LINE_MAX)
+                rq->parse_status = HTTP_STATUS_URI_TOO_LONG;
+            goto err;
+        }
 
         /* save the verbatim request line */
         dbg_err_if(request_set_client_request(rq, ln));
@@ -1834,23 +1848,43 @@ int request_parse_header(request_t *rq,
         dbg_err_if(!proto || request_set_proto(rq, proto)); 
         dbg_err_if(strtok_r(NULL, WP, &pp) != NULL);
 
-        dbg_err_if(header_load(rq->header, rq->io));
+        if(header_load_request(rq->header, rq->io, rq->max_fields,
+                    rq->max_line, rq->max_header, &status))
+        {
+            rq->parse_status = status;
+            goto err;
+        }
     } else {
         dbg_err_if(header_load_from_cgienv(rq->header));
     }
 
-    /* Chunked transfer coding is not implemented. Reject it explicitly, and
-     * reject every duplicate Content-Length, even equal values. */
+    /* request smuggling: a body framed two ways, or framed in a way one
+     * server in the chain may read differently. Chunked transfer coding is
+     * not implemented (501); with Content-Length too, or with a duplicate
+     * Content-Length (even equal values), the request is refused (400) */
+    rq->parse_status = HTTP_STATUS_BAD_REQUEST;
     for (field = NULL; (field = header_next_field(rq->header, NULL, field)); )
     {
         if (!strcasecmp(field_get_name(field), "Content-Length"))
             ++lengths;
-        else
-            dbg_err_if(!strcasecmp(field_get_name(field), "Transfer-Encoding"));
+        else if (!strcasecmp(field_get_name(field), "Transfer-Encoding"))
+            ++codings;
     }
-    dbg_err_if(lengths > 1);
+    nop_err_if(lengths > 1 || (codings && lengths));
+    if (codings)
+    {
+        rq->parse_status = HTTP_STATUS_NOT_IMPLEMENTED;
+        goto err;
+    }
     if (lengths)
-        dbg_err_if(request_set_content_length(rq));
+        nop_err_if(request_set_content_length(rq));
+
+    /* the body limit (post_maxsize) holds for every method */
+    if (rq->content_length > rq->post_maxsize)
+    {
+        rq->parse_status = HTTP_STATUS_REQUEST_TOO_LARGE;
+        goto err;
+    }
 
     /* set if-modified-since time_t value */
     dbg_err_if(request_parse_ims(rq));
@@ -1907,6 +1941,21 @@ void request_set_keep_alive_wait(request_t *rq, size_t timeout)
 int request_conn_closed(request_t *rq)
 {
     return rq->conn_closed;
+}
+
+/**
+ * \ingroup request
+ * \brief   Why request_parse_header() failed
+ *
+ * \param rq  request object
+ *
+ * \return the status to answer with (400, 413 body too large, 414 request
+ *         line too long, 431 header too large, 501 transfer coding), or 0
+ *         if there is nothing to answer (or it is a plain 400)
+ */
+int request_parse_status(request_t *rq)
+{
+    return rq->parse_status;
 }
 
 /**
@@ -2333,6 +2382,17 @@ static int request_load_config(request_t *rq)
         vhost->rq_idle_timeout = REQUEST_DEFAULT_IDLE_TIMEOUT;
         vhost->rq_post_timeout = REQUEST_DEFAULT_POST_TIMEOUT;
         vhost->rq_post_maxsize = REQUEST_DEFAULT_POST_MAXSIZE;
+        vhost->rq_max_fields = REQUEST_DEFAULT_MAX_FIELDS;
+        vhost->rq_max_line = REQUEST_DEFAULT_MAX_LINE;
+        vhost->rq_max_header = REQUEST_DEFAULT_MAX_HEADER;
+
+        /* request header limits (431 beyond them) */
+        if((v = u_config_get_subkey_value(c, "max_header_fields")) != NULL)
+            vhost->rq_max_fields = U_MAX(8, atoi(v));
+        if((v = u_config_get_subkey_value(c, "max_header_line")) != NULL)
+            vhost->rq_max_line = U_MIN(65534, U_MAX(256, atoi(v)));
+        if((v = u_config_get_subkey_value(c, "max_header_size")) != NULL)
+            vhost->rq_max_header = U_MAX(1024, atoi(v));
 
         /* idle timeout */
         if((v = u_config_get_subkey_value(c, "idle_timeout")) != NULL)
@@ -2357,6 +2417,9 @@ static int request_load_config(request_t *rq)
     rq->idle_timeout = vhost->rq_idle_timeout;
     rq->post_timeout = vhost->rq_post_timeout;
     rq->post_maxsize = vhost->rq_post_maxsize;
+    rq->max_fields = vhost->rq_max_fields;
+    rq->max_line = vhost->rq_max_line;
+    rq->max_header = vhost->rq_max_header;
     rq->temp_dir = vhost->rq_temp_dir;
 
     return 0;

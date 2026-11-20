@@ -3,8 +3,9 @@
 """Run klind under the hardened unit in contrib/systemd/klind.service.
 
 Needs root and a running systemd (WSL with systemd, or CI with sudo);
-otherwise it says so and passes. Everything it creates is under /run and
-removed afterwards:
+otherwise it says so and passes. It creates /opt/klin-test-PID (/run may
+be noexec; /home and /tmp are hidden by the unit) and a unit under
+/run/systemd/system, and removes both afterwards:
 
     sudo python3 test/run_systemd_test.py --build .build/release/cmake
 """
@@ -52,7 +53,7 @@ def main():
         return
     daemon = args.build / "bin/klind"
     name = f"klin-test-{os.getpid()}"
-    home = Path("/run") / name
+    home = Path("/opt") / name
     unit = Path("/run/systemd/system") / f"{name}.service"
     port = free_port()
     checks = 0
@@ -64,7 +65,7 @@ def main():
             raise AssertionError(message)
 
     try:
-        # outside /home (ProtectHome) and with only system libraries
+        # outside /home and /tmp (hidden by the unit), with only system libraries
         home.mkdir(mode=0o755)
         shutil.copy2(daemon, home / "klind")
         (home / "klind.conf").write_text(

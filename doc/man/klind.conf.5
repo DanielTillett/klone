@@ -86,7 +86,16 @@ NOTE
 at present this directive is inhibited, and a default of 300 is assumed.
 .TP
 \fBidle_timeout\fR
-Set the maximum number of seconds the server waits for an HTTP request on an already connected socket. The default value is 10 seconds.
+Set the maximum number of seconds the server waits for an HTTP request on an already connected socket: the request line and the whole header must arrive within it, however slowly they trickle in (a "slowloris" client is closed when it runs out). The default value is 10 seconds.
+.TP
+\fBmax_header_fields\fR, \fBmax_header_line\fR, \fBmax_header_size\fR
+Request header limits: the number of fields (default 100), the bytes of one field line (default 8192) and of the whole header (default 32768). A request over any of them is answered 431 and the connection closed. A request line over 8192 bytes is answered 414. See doc/LIMITS.
+.TP
+\fBmax_conn_per_ip\fR
+Connections served at once from one client address (default 32; 0: no limit). Beyond it a new connection is closed as soon as it is accepted, before any TLS handshake.
+.TP
+\fBmax_streams\fR
+Server-sent event and WebSocket connections open at once on this server (default 100; 0: no limit), so that they cannot take every worker. Beyond it \fBsse_start\fR() and \fBws_accept\fR() answer 503 with Retry-After.
 .TP
 \fBkeep_alive\fR
 Keep connections open for further requests (HTTP persistent connections): \fIyes\fR (default) or \fIno\fR. A connection stays open after a response if the client asks for it (HTTP/1.1 by default, HTTP/1.0 with \fIConnection: keep\-alive\fR) and the response body is delimited by a Content\-Length or, for HTTP/1.1, chunked transfer coding. Always off in the iterative server model (and so with \fB\-d\fR), where an idle client would block the server.
@@ -101,9 +110,9 @@ Maximum number of requests served on one connection. The default value is 100.
 Set the maximum number of seconds the server waits for an HTTP POST request on an already connected socket. The default value is 10 minutes.
 .TP
 \fBpost_maxsize\fR
-Set the maximum number of bytes the server is willing to accept for a given HTTP POST request. If Content\-Length of a POST request is greater than
+Set the maximum number of bytes the server is willing to accept in a request body, whatever the method (CGI uploads included). A request whose Content\-Length is greater than
 \fBpost_maxsize\fR
-the connection is immediately terminated. The default value is 5 MB.
+is answered 413 and the connection closed. The default value is 5 MB.
 .TP
 \fBsandbox\fR, \fBsandbox_allow\fR
 \fIyes\fR (default) runs the workers and the TLS key manager in a

@@ -15,6 +15,18 @@ Klin 4.0.0:
 	  entries, so they survive a reconfigure. The Windows service keeps
 	  the name kloned. All of it is in cmake/klone_compat.cmake and the
 	  lines marked "before KLone was renamed Klin"
+	- request limits and request smuggling (doc/LIMITS). New defaults, each
+	  configurable: at most 100 header fields (was 256), 8192 bytes a
+	  field and 32 KB a header (was 64 KB), answered 431 (was 400); a
+	  request line over 8 KB is 414; post_maxsize (5 MB) now limits the
+	  body of every method, CGI uploads included (413); max_conn_per_ip
+	  32 connections at once from one address (0: off), closed when
+	  accepted; max_streams 100 SSE/WebSocket connections at once per
+	  server (0: off), beyond which sse_start()/ws_accept() answer 503.
+	  Header field names must be tokens right before the colon, values
+	  free of control characters (400). Transfer-Encoding is 501 (it was
+	  400), and 400 with a Content-Length. A refused request is answered
+	  before the connection is closed (lingering close, plain HTTP)
 	- a hardened systemd unit, contrib/systemd/klind.service (doc/SYSTEMD):
 	  klind starts as root only to bind, chroot and drop, under a reduced
 	  capability set, ProtectSystem=strict, a system call filter and the

@@ -1,0 +1,71 @@
+KLIN REQUEST LIMITS
+-------------------
+
+What klind refuses, and how to change it. Every setting goes in a server
+block of klind.conf.
+
+THE REQUEST
+
+    setting             default   beyond it
+    max_header_fields   100       431 Request Header Fields Too Large
+    max_header_line     8192      431 (bytes of one field, with its CRLF)
+    max_header_size     32768     431 (bytes of the whole header)
+    (request line)      8192      414 URI Too Long (not configurable)
+    post_maxsize        5 MB      413 (the body, whatever the method)
+    idle_timeout        10 s      the connection is closed
+
+idle_timeout is a deadline for the whole request line and header, not for
+each read: a client that sends one byte a second ("slowloris") is closed
+when it runs out. post_timeout (10 min) bounds the body the same way.
+
+These are the server block's settings: they apply before the Host field
+is read, so a vhost block cannot change them.
+
+REQUEST SMUGGLING
+
+A proxy in front of klind and klind must agree on where a request ends.
+klind refuses what two HTTP implementations might read differently:
+
+    Transfer-Encoding with Content-Length        400
+    two Content-Length fields (even equal)       400
+    a Content-Length that is not just digits     400
+    any Transfer-Encoding (chunked is not        501
+      implemented; unknown or repeated codings)
+    obsolete line folding (a line starting       400
+      with a blank or a tab)
+    a field name that is not a token, or a       400
+      blank before the colon
+    a control character (other than tab) in      400
+      a field, a bare CR, a NUL
+    a line over the limits above                 431
+
+After any of these the connection is closed: a request pipelined behind
+it is never read. The response is sent before the close, and klind reads
+for a moment what the client is still sending, so that its kernel does
+not reset the connection and drop the response (plain HTTP).
+
+CONNECTIONS
+
+    max_conn_per_ip     32        a new connection from the same address is
+                                  closed when accepted (before TLS)
+    max_streams         100       sse_start() and ws_accept() answer 503 with
+                                  Retry-After: 5
+
+Both count the connections being served by all of a server's workers (in
+memory shared by them), and 0 turns either off. max_streams keeps
+long-lived SSE and WebSocket connections from taking every worker: with
+prefork.max_child 150 (the default) at least 50 are left for ordinary
+requests. Behind a proxy every client has the proxy's address: raise
+max_conn_per_ip, or set it to 0 and limit clients at the proxy.
+
+In the iterative model (klind -d) there is one connection at a time and
+these caps never apply.
+
+TESTED
+
+test/run_server_tests.py sends each refused request with a valid request
+pipelined behind it (checking the status, and that the second is never
+answered), valid requests at each limit, a header trickled in 6-byte lines
+every 250 ms (closed within the deadline), and in the prefork model a
+fourth connection over max_conn_per_ip 3 and a third stream over
+max_streams 2. With either cap set to 0 the corresponding checks fail.

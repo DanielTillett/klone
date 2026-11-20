@@ -36,6 +36,8 @@ struct http_s
     int ka_max;             /* max requests per connection                   */
     /* HTTP authentication: signs the Digest nonces (auth.c) */
     unsigned char auth_secret[32];
+    /* caps on connections per client and on SSE/WebSocket ones (conntab) */
+    int conn_class;
 };
 
 #endif

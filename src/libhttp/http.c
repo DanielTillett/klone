@@ -11,6 +11,11 @@
 #include <sys/types.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <time.h>
+#ifdef OS_UNIX
+#include <poll.h>
+#include <sys/socket.h>
+#endif
 #ifdef SSL_ON
 #endif 
 #include <u/libu.h>
@@ -33,6 +38,7 @@
 #include <klin/auth.h>
 #include <klin/route.h>
 #include <klin/acl.h>
+#include <klin/conntab.h>
 #include <klin/validate.h>
 #include <klin/vhost.h>
 #include <klin/supplier.h>
@@ -41,6 +47,8 @@
 enum {
     HTTP_KEEP_ALIVE_TIMEOUT = 5,        /* secs to wait for the next request  */
     HTTP_KEEP_ALIVE_MAX = 100,          /* max requests per connection        */
+    HTTP_MAX_CONN_PER_IP = 32,          /* connections at once per client     */
+    HTTP_MAX_STREAMS = 100,             /* SSE/WebSocket connections at once  */
     HTTP_KEEP_ALIVE_DRAIN_MAX = 65536,  /* max unread body bytes to skip      */
     HTTP_CONN_WBUFSZ = 65536            /* connection write buffer: large
                                            responses go out in large blocks */
@@ -71,6 +79,8 @@ struct http_status_map_s
     { HTTP_STATUS_UNSUPPORTED_MEDIA_TYPE, "Unsupported Media Type"  },
     { HTTP_STATUS_LENGTH_REQUIRED       , "Content-Length required" },
     { HTTP_STATUS_REQUEST_TOO_LARGE     , "Request data too big"    },
+    { HTTP_STATUS_URI_TOO_LONG          , "URI Too Long"            },
+    { HTTP_STATUS_HEADER_TOO_LARGE      , "Request Header Fields Too Large" },
     { HTTP_STATUS_EXT_KEY_NEEDED        , "Key needed"              },
     { HTTP_STATUS_NOT_IMPLEMENTED       , "Not Implemented"         },
     { HTTP_STATUS_BAD_GATEWAY           , "Bad Gateway"             },
@@ -79,6 +89,9 @@ struct http_status_map_s
 };
 
 enum { URI_MAX = 2048 };
+
+/* a request refused before it was read to the end (431, 413...) */
+static int http_refused = 0;
 
 /* in cgi.c */
 int cgi_set_request(request_t *rq);
@@ -908,6 +921,10 @@ static int http_serve_request(http_t *h, io_t *cin, io_t *cout, int cgi,
         /* the client closed (or left idle) the connection: nothing to do */
         if(request_conn_closed(rq))
             goto end;
+        /* 400, or 413, 414, 431, 501 (the connection is closed after it) */
+        if(request_parse_status(rq))
+            rc = request_parse_status(rq);
+        http_refused = 1;
         goto err;
     }
 
@@ -978,10 +995,53 @@ end:
     return ~0;
 }
 
+/* after a refused request: send the response, stop writing and read what
+   the client was still sending, for a moment, before closing. Closing with
+   unread data would reset the connection, and the client could lose the
+   response (RFC 9112, 9.6) */
+static void http_linger(int fd, io_t *cout)
+{
+#ifdef OS_UNIX
+    enum { LINGER_MS = 1000, LINGER_MAX = 1 << 20 };
+    struct pollfd pfd;
+    char buf[4096];
+    size_t total = 0;
+    ssize_t n;
+    time_t end = time(NULL) + LINGER_MS / 1000;
+
+    dbg_if(io_flush(cout));
+    if(shutdown(fd, SHUT_WR))
+        return;
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+    while(total < LINGER_MAX && time(NULL) <= end &&
+            poll(&pfd, 1, LINGER_MS) > 0 &&
+            (n = recv(fd, buf, sizeof buf, 0)) > 0)
+        total += (size_t) n;
+#else
+    u_unused_args(fd, cout);
+#endif
+}
+
+/* "1.2.3.4" of "1.2.3.4:5678", "::1" of "[::1]:5678" */
+static void http_peer_host(const char *peer, char *host, size_t size)
+{
+    const char *e;
+
+    if(peer[0] == '[' && (e = strchr(peer, ']')) != NULL)
+        ++peer;
+    else
+        e = strrchr(peer, ':');
+    if(e == NULL)
+        e = peer + strlen(peer);
+    (void) u_strlcpy(host, peer, U_MIN(size, (size_t) (e - peer) + 1));
+}
+
 static int http_serve(http_t *h, int fd, int keep_alive)
 {
     io_t *conn = NULL, *cout = NULL;
     http_conn_addr_t ca;
+    char host[sizeof ca.peer];
     const char *gwi = NULL;
     vhost_t *top;
     int cgi = 0, nreq, keep = 0, owned = 1;   /* fd is ours to close */
@@ -1003,6 +1063,16 @@ static int http_serve(http_t *h, int fd, int keep_alive)
     if(!cgi && (top = vhost_list_get_n(h->vhosts, 0)) != NULL &&
             acl_check_conn(top->access, ca.peer))
     {
+        close(fd);
+        return 0;
+    }
+
+    /* so is one with max_conn_per_ip connections open already */
+    http_peer_host(ca.peer, host, sizeof host);
+    if(!cgi && conntab_enter(h->conn_class, host))
+    {
+        u_info("%s: too many connections from this address (max_conn_per_ip)",
+                host);
         close(fd);
         return 0;
     }
@@ -1049,8 +1119,13 @@ static int http_serve(http_t *h, int fd, int keep_alive)
         dbg_if(server_watchdog(ctx->server, 0));
     }
 
+    if(http_refused && !cgi && !h->ssl)
+        http_linger(fd, cout);
+    http_refused = 0;
+
     io_free(cout);
     io_free(conn);
+    conntab_leave();
 
     return 0;
 err:
@@ -1060,6 +1135,8 @@ err:
         io_free(conn);
     if(owned && fd >= 0)
         close(fd);
+    conntab_leave();
+    http_refused = 0;
     return ~0;
 }
 
@@ -1233,6 +1310,7 @@ err:
 static int http_create(u_config_t *config, int ssl, http_t **ph)
 {
     http_t *h = NULL;
+    int per_ip, streams;
 
     dbg_err_if (config == NULL);
     dbg_err_if (ph == NULL);
@@ -1258,6 +1336,14 @@ static int http_create(u_config_t *config, int ssl, http_t **ph)
                 HTTP_KEEP_ALIVE_MAX, &h->ka_max));
     h->ka_timeout = U_MAX(1, h->ka_timeout);
     h->ka_max = U_MAX(1, h->ka_max);
+
+    /* connections at once from one address, and SSE/WebSocket ones, so
+       that neither can take every worker (0: no cap; doc/LIMITS) */
+    dbg_err_if(u_config_get_subkey_value_i(config, "max_conn_per_ip",
+                HTTP_MAX_CONN_PER_IP, &per_ip));
+    dbg_err_if(u_config_get_subkey_value_i(config, "max_streams",
+                HTTP_MAX_STREAMS, &streams));
+    h->conn_class = conntab_class(per_ip, streams);
 
     dbg_err_if(vhost_list_create(&h->vhosts));
 

@@ -37,6 +37,8 @@ int header_create(header_t**);
 int header_load(header_t*, io_t *);
 int header_load_from_cgienv(header_t *h);
 int header_load_ex(header_t *h , io_t *io, int mode);
+int header_load_request(header_t *h, io_t *io, size_t max_fields,
+        size_t max_line, size_t max_size, int *status);
 int header_free(header_t*);
 int header_add_field(header_t *h, field_t *f);
 int header_del_field(header_t *h, field_t *f);

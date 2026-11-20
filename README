@@ -159,6 +159,11 @@ requests iteratively in a single process. -f overrides values in the
 embedded configuration. See klind(8) and klind.conf(5) in doc/man for all
 options.
 
+Limits: request header size and field count (431), body size (413), a
+header deadline against slow clients, connections per client address and
+SSE/WebSocket connections per server are capped, and requests that could be
+smuggled past a proxy are refused (doc/LIMITS).
+
 systemd: contrib/systemd/klind.service is a hardened unit; klind drops
 from root to the uid and gid in klind.conf and refuses to keep root
 credentials otherwise, unless 'allow_root yes' (doc/SYSTEMD).

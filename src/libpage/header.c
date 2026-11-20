@@ -8,9 +8,11 @@
  */
 
 #include "klin_conf.h"
+#include <string.h>
 #include <u/libu.h>
 #include <klin/os.h>
 #include <klin/header.h>
+#include <klin/http.h>
 #include <klin/utils.h>
 
 /**
@@ -456,6 +458,101 @@ int header_load_ex(header_t *h, io_t *io, int mode)
     }
     return 0;
 err:
+    return ~0;
+}
+
+/* RFC 9110 token characters (a field name) */
+static int header_is_tchar(unsigned char c)
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+        (c >= '0' && c <= '9') || (c && strchr("!#$%&'*+-.^_`|~", c));
+}
+
+/* "name: value" with a token name right before the colon, and no control
+   characters but HTAB in the value */
+static int header_line_ok(const char *line, size_t len)
+{
+    const unsigned char *p = (const unsigned char *) line,
+          *end = p + len, *colon = memchr(p, ':', len);
+
+    if(colon == NULL || colon == p)
+        return 0;
+    for(; p < colon; ++p)
+        if(!header_is_tchar(*p))
+            return 0;
+    for(++p; p < end; ++p)
+        if((*p < 0x20 && *p != '\t') || *p == 0x7f)
+            return 0;
+    return 1;
+}
+
+/**
+ * \ingroup header
+ * \brief   Load the header of a request, within limits
+ *
+ * Like header_load(), but a request header must be well formed: CRLF (or
+ * LF) lines of "name: value" with a token name and no control characters,
+ * no obsolete line folding, at most \p max_fields fields of at most
+ * \p max_line bytes each and \p max_size bytes in all.
+ *
+ * \param h           header object
+ * \param io          the client connection
+ * \param max_fields  most fields
+ * \param max_line    most bytes in one field line (with its CRLF)
+ * \param max_size    most bytes in the whole header (with the blank line)
+ * \param status      on failure: 431 for a limit, 400 for a bad line, 0 if
+ *                    the client closed the connection or timed out
+ *
+ * \return \c 0 on success, non-zero otherwise
+ */
+int header_load_request(header_t *h, io_t *io, size_t max_fields,
+        size_t max_line, size_t max_size, int *status)
+{
+    enum { LINE_BUF = 65536 };
+    char *text = NULL;
+    size_t count = 0, total = 0, len;
+    ssize_t rc;
+
+    dbg_err_if(h == NULL || io == NULL || status == NULL);
+    *status = 0;
+    max_line = U_MIN(U_MAX(max_line, 64), LINE_BUF - 2);
+    dbg_err_if((text = u_malloc(max_line + 2)) == NULL);
+
+    for (;;)
+    {
+        /* a line, its '\n' and one more byte to tell that it is too long */
+        rc = io_get_until(io, '\n', text, max_line + 2);
+        nop_err_if(rc <= 0);    /* EOF, a read error or the deadline */
+        len = (size_t) rc;
+        if(text[len - 1] != '\n')
+        {
+            /* EOF before the end of the line, or a line too long */
+            *status = (len > max_line) ? HTTP_STATUS_HEADER_TOO_LARGE : 0;
+            goto err;
+        }
+        *status = HTTP_STATUS_HEADER_TOO_LARGE;
+        nop_err_if(len > max_line || len > max_size - U_MIN(total, max_size));
+        total += len;
+        *status = HTTP_STATUS_BAD_REQUEST;
+        nop_err_if(memchr(text, '\0', len) != NULL);
+        text[--len] = '\0';
+        if (len && text[len - 1] == '\r')
+            text[--len] = '\0';
+        if (len == 0)
+            break;
+        /* obsolete line folding, a bare CR, a blank or another character
+           before the colon: each is read differently by some proxies */
+        nop_err_if(!header_line_ok(text, len));
+        *status = HTTP_STATUS_HEADER_TOO_LARGE;
+        nop_err_if(++count > max_fields);
+        *status = HTTP_STATUS_BAD_REQUEST;
+        nop_err_if(header_process_line(h, text, HLM_ADD));
+    }
+    *status = 0;
+    u_free(text);
+    return 0;
+err:
+    U_FREE(text);
     return ~0;
 }
 

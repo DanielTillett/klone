@@ -37,6 +37,7 @@ int request_parse_data(request_t *rq);
 /* persistent connections (HTTP keep-alive) */
 void request_set_keep_alive_wait(request_t *rq, size_t timeout);
 int request_conn_closed(request_t *rq);
+int request_parse_status(request_t *rq);
 int request_keep_alive(request_t *rq);
 int request_drain_body(request_t *rq, size_t max);
 

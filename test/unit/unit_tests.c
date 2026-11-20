@@ -25,6 +25,7 @@
 #include <klin/timer.h>
 #include <klin/translat.h>
 #include <klin/json.h>
+#include <klin/utils.h>
 #include <math.h>
 #include <klin/crypto.h>
 #ifdef SSL_OPENSSL
@@ -708,6 +709,34 @@ static void test_crypto(void)
     CHECK(kc_random(out, sizeof out) == 0);
     kc_cleanse(wiped, sizeof wiped);
     CHECK(!memcmp(wiped, "\0\0\0\0\0\0\0\0", 8));
+
+    /* base64 from a client: only the alphabet, '=' only at the end (a byte
+       over 0x7f made LibU read out of its table: found by fuzzing) */
+    {
+        unsigned char raw[16];
+        size_t rlen;
+
+        rlen = sizeof raw;
+        CHECK(klin_b64_decode("aGk=", 4, raw, &rlen) == 0 && rlen == 2 &&
+                !memcmp(raw, "hi", 2));
+        rlen = sizeof raw;
+        CHECK(klin_b64_decode("aG\xc6k", 4, raw, &rlen) != 0);
+        rlen = sizeof raw;
+        CHECK(klin_b64_decode("a=Gk", 4, raw, &rlen) != 0);
+        rlen = sizeof raw;
+        CHECK(klin_b64_decode("aG===", 5, raw, &rlen) != 0);
+        rlen = sizeof raw;
+        CHECK(klin_b64_decode("aG k", 4, raw, &rlen) != 0);
+        rlen = sizeof raw;
+        CHECK(klin_b64_decode("aGk", 3, raw, &rlen) != 0);  /* unpadded */
+        /* an exact fit, and one byte short (LibU wrote 3 bytes here) */
+        memset(raw, 0x55, sizeof raw);
+        rlen = 2;
+        CHECK(klin_b64_decode("aGk=", 4, raw, &rlen) == 0 && rlen == 2 &&
+                raw[2] == 0x55);
+        rlen = 1;
+        CHECK(klin_b64_decode("aGk=", 4, raw, &rlen) != 0);
+    }
 }
 #endif
 

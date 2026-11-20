@@ -166,8 +166,8 @@ int auth_password_verify(const char *password, const char *stored)
     *p = '\0';
     key64 = p + 1;
 
-    nop_err_if(u_b64_decode(salt64, strlen(salt64), salt, &saltlen));
-    nop_err_if(u_b64_decode(key64, strlen(key64), want, &wantlen));
+    nop_err_if(klin_b64_decode(salt64, strlen(salt64), salt, &saltlen));
+    nop_err_if(klin_b64_decode(key64, strlen(key64), want, &wantlen));
     nop_err_if(saltlen != AUTH_SALT_SZ || wantlen != AUTH_KEY_SZ);
 
     nop_err_if(auth_pbkdf2(password, salt, (unsigned int) iterations, key));

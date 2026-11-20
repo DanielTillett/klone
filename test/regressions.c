@@ -288,10 +288,10 @@ static void test_headers_and_seek(void)
     io.lines = lines;
     fail_read = 0; io.offset = 1; fail_process = 1;
     CHECK(header_load_ex(&h, &io, 0) != 0);
-    CHECK(io_mem_seek(&mem, 3) == 3 && mem.off == 3);
-    CHECK(io_mem_seek(&mem, 4) == -1 && mem.off == 3);
+    CHECK(io_mem_seek((io_t *) &mem, 3) == 3 && mem.off == 3);
+    CHECK(io_mem_seek((io_t *) &mem, 4) == -1 && mem.off == 3);
     mem.size = 0; mem.off = 0;
-    CHECK(io_mem_seek(&mem, 0) == 0);
+    CHECK(io_mem_seek((io_t *) &mem, 0) == 0);
 }
 
 static void test_file_supplier(void)

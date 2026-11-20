@@ -40,6 +40,56 @@
 
 enum { LF = 0xA, CR = 0xD };
 
+/**
+ * \brief   Decode base64 that a client sent
+ *
+ * Like u_b64_decode(), for untrusted text, which must be canonical: groups
+ * of 4 characters of the base64 alphabet, '=' only as the last one or two.
+ * Anything else fails before LibU sees it, and LibU decodes into a buffer
+ * of its own. Found by fuzzing, LibU's decoder indexes its table with each
+ * byte (a byte over 0x7f read out of bounds), and writes 3 bytes for every
+ * group, even a padded last one (up to 2 bytes past \p out).
+ *
+ * \return \c 0 on success, \c ~0 on bad input or a short \p out
+ */
+int klin_b64_decode(const char *in, size_t len, unsigned char *out,
+        size_t *outlen)
+{
+    size_t i, pad = 0, n;
+    unsigned char c, *tmp = NULL;
+
+    dbg_return_if (in == NULL || out == NULL || outlen == NULL, ~0);
+
+    if(len == 0 || len % 4)
+        return ~0;
+    for(i = 0; i < len; ++i)
+    {
+        c = (unsigned char) in[i];
+        if(c == '=')
+            ++pad;
+        else if(pad || !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                    (c >= '0' && c <= '9') || c == '+' || c == '/'))
+            return ~0;
+    }
+    if(pad > 2)
+        return ~0;
+
+    /* every group written whole */
+    n = len / 4 * 3;
+    if(n - pad > *outlen || (tmp = u_malloc(n)) == NULL)
+        return ~0;
+    if(u_b64_decode(in, len, tmp, &n) || n > *outlen)
+    {
+        u_free(tmp);
+        return ~0;
+    }
+    memcpy(out, tmp, n);
+    *outlen = n;
+    u_free(tmp);
+
+    return 0;
+}
+
 /* Fail closed if the operating system cannot supply cryptographic entropy. */
 int u_random_bytes(unsigned char *buf, size_t size)
 {

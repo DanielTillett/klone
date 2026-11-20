@@ -377,7 +377,7 @@ static u_config_t *auth_basic(http_t *h, vhost_t *vhost, const char *cred)
     char *colon;
 
     cred += strspn(cred, " \t");
-    nop_err_if(u_b64_decode(cred, strcspn(cred, " \t"), raw, &len));
+    nop_err_if(klin_b64_decode(cred, strcspn(cred, " \t"), raw, &len));
     raw[len] = '\0';
     nop_err_if(memchr(raw, '\0', len) != NULL);
     nop_err_if((colon = strchr((char *) raw, ':')) == NULL);

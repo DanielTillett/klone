@@ -31,9 +31,9 @@ struct io_ssl_s
 
 typedef struct io_ssl_s io_ssl_t;
 
-static ssize_t io_ssl_read(io_ssl_t *io, char *buf, size_t size);
-static ssize_t io_ssl_write(io_ssl_t *io, const char *buf, size_t size);
-static int io_ssl_close(io_ssl_t *io_ssl);
+static ssize_t io_ssl_read(io_t *io_, char *buf, size_t size);
+static ssize_t io_ssl_write(io_t *io_, const char *buf, size_t size);
+static int io_ssl_close(io_t *io_);
 
 int io_ssl_get_SSL(io_t *io, SSL **pssl)
 {
@@ -95,8 +95,9 @@ size_t io_ssl_pending(io_t *io)
     return (n = SSL_pending(io_ssl->ssl)) > 0 ? (size_t) n : 0;
 }
 
-static ssize_t io_ssl_read(io_ssl_t *io_ssl, char *buf, size_t size)
+static ssize_t io_ssl_read(io_t *io_, char *buf, size_t size)
 {
+    io_ssl_t *io_ssl = (io_ssl_t *) io_;
     int c, rc;
 
     dbg_err_if (io_ssl == NULL);
@@ -121,8 +122,9 @@ err:
     return -1;
 }
 
-static ssize_t io_ssl_write(io_ssl_t *io_ssl, const char *buf, size_t size)
+static ssize_t io_ssl_write(io_t *io_, const char *buf, size_t size)
 {
+    io_ssl_t *io_ssl = (io_ssl_t *) io_;
     int c;
 
     dbg_err_if (io_ssl == NULL);
@@ -143,8 +145,9 @@ err:
 }
 
 /* close the underlaying fd (may be called more then once) */
-static int io_ssl_close(io_ssl_t *io_ssl)
+static int io_ssl_close(io_t *io_)
 {
+    io_ssl_t *io_ssl = (io_ssl_t *) io_;
     dbg_err_if(io_ssl == NULL);
 
     if(io_ssl->flags & IO_FD_CLOSE && io_ssl->fd != -1)
@@ -165,8 +168,9 @@ err:
 }
 
 /* free data alloc'ed by this io type */
-static int io_ssl_free(io_ssl_t *io_ssl)
+static int io_ssl_free(io_t *io_)
 {
+    io_ssl_t *io_ssl = (io_ssl_t *) io_;
     dbg_err_if(io_ssl == NULL);
 
     /* tell the peer the data is complete (close_notify); not done in
@@ -174,7 +178,7 @@ static int io_ssl_free(io_ssl_t *io_ssl)
     if(io_ssl->ssl && io_ssl->fd != -1)
         (void) SSL_shutdown(io_ssl->ssl);
 
-    dbg_if(io_ssl_close(io_ssl));
+    dbg_if(io_ssl_close(io_));
 
     if(io_ssl->ssl)
     {
@@ -209,7 +213,7 @@ static int io_ssl_cb_handshake_timeout(talarm_t *al, void *arg)
     u_unused_args(al);
 
     warn("TLS handshake timed out");
-    dbg_if(io_ssl_close((io_ssl_t*) arg));
+    dbg_if(io_ssl_close((io_t *) arg));
 
     return 0;
 }
@@ -270,10 +274,10 @@ int io_ssl_create(int fd, int flags, int client_mode,
     dbg_err_sif(fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK) == -1);
 #endif
 
-    io_ssl->io.read = (io_read_op) io_ssl_read;
-    io_ssl->io.write = (io_write_op) io_ssl_write;
-    io_ssl->io.close = (io_close_op) io_ssl_close; 
-    io_ssl->io.free = (io_free_op) io_ssl_free; 
+    io_ssl->io.read = io_ssl_read;
+    io_ssl->io.write = io_ssl_write;
+    io_ssl->io.close = io_ssl_close; 
+    io_ssl->io.free = io_ssl_free; 
     io_ssl->io.size = 0;
 
     /* set the secure flag (encrypted connection) */

@@ -27,6 +27,7 @@
 #include <klin/http.h>
 #include <klin/crypto.h>
 #include <klin/conntab.h>
+#include <klin/utils.h>
 
 enum {
     WS_IO_TIMEOUT = 30,             /* s to read or write one frame        */
@@ -268,7 +269,7 @@ int ws_accept(request_t *rq, response_t *rs, const char *protocols, int flags,
         return ws_refuse(rs, HTTP_STATUS_UPGRADE_REQUIRED);
     if((key = request_get_field_value(rq, "Sec-WebSocket-Key")) == NULL ||
             strlen(key) != 24 ||
-            u_b64_decode(key, strlen(key), raw, &rawlen) || rawlen != 16)
+            klin_b64_decode(key, strlen(key), raw, &rawlen) || rawlen != 16)
         return ws_refuse(rs, HTTP_STATUS_BAD_REQUEST);
 
     /* a page of another site must not reach the user's connection with
@@ -414,7 +415,9 @@ static int ws_grow(ws_t *ws, size_t more)
     size_t cap;
     char *m;
 
-    if(ws->len + more <= ws->cap)
+    /* there is always a buffer, even for an empty first message: it ends
+       with a NUL (found by fuzzing: an empty message wrote through NULL) */
+    if(ws->msg != NULL && ws->len + more <= ws->cap)
         return 0;
     cap = U_MAX(ws->cap * 2, ws->len + more);
     dbg_err_if((m = u_realloc(ws->msg, cap + 1)) == NULL);

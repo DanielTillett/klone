@@ -24,22 +24,24 @@ struct io_mem_s
 
 typedef struct io_mem_s io_mem_t;
 
-static ssize_t io_mem_read(io_mem_t *io, char *buf, size_t size);
-static ssize_t io_mem_write(io_mem_t *io, const char *buf, size_t size);
-static ssize_t io_mem_seek(io_mem_t *io, size_t off);
-static ssize_t io_mem_tell(io_mem_t *im);
-static int io_mem_close(io_mem_t *io);
-static int io_mem_free(io_mem_t *io);
+static ssize_t io_mem_read(io_t *io_, char *buf, size_t size);
+static ssize_t io_mem_write(io_t *io_, const char *buf, size_t size);
+static ssize_t io_mem_seek(io_t *io_, size_t off);
+static ssize_t io_mem_tell(io_t *io_);
+static int io_mem_close(io_t *io_);
+static int io_mem_free(io_t *io_);
 
-static ssize_t io_mem_tell(io_mem_t *im)
+static ssize_t io_mem_tell(io_t *io_)
 {
+    io_mem_t *im = (io_mem_t *) io_;
     dbg_return_if (im == NULL, -1);
 
     return im->off;
 }
 
-static ssize_t io_mem_seek(io_mem_t *im, size_t off)
+static ssize_t io_mem_seek(io_t *io_, size_t off)
 {
+    io_mem_t *im = (io_mem_t *) io_;
     dbg_return_if (im == NULL, -1);
     
     if(off > im->size)
@@ -50,8 +52,9 @@ static ssize_t io_mem_seek(io_mem_t *im, size_t off)
     return off;
 }
 
-static ssize_t io_mem_read(io_mem_t *im, char *buf, size_t size)
+static ssize_t io_mem_read(io_t *io_, char *buf, size_t size)
 {
+    io_mem_t *im = (io_mem_t *) io_;
     char *ptr;
     size_t sz;
 
@@ -69,8 +72,9 @@ static ssize_t io_mem_read(io_mem_t *im, char *buf, size_t size)
     return sz;
 }
 
-static ssize_t io_mem_write(io_mem_t *im, const char *buf, size_t size)
+static ssize_t io_mem_write(io_t *io_, const char *buf, size_t size)
 {
+    io_mem_t *im = (io_mem_t *) io_;
     char *ptr;
     size_t sz;
 
@@ -88,14 +92,16 @@ static ssize_t io_mem_write(io_mem_t *im, const char *buf, size_t size)
     return sz;
 }
 
-static int io_mem_close(io_mem_t *im)
+static int io_mem_close(io_t *io_)
 {
+    io_mem_t *im = (io_mem_t *) io_;
     u_unused_args(im);
     return 0;
 }
 
-static int io_mem_free(io_mem_t *im)
+static int io_mem_free(io_t *io_)
 {
+    io_mem_t *im = (io_mem_t *) io_;
     dbg_return_if (im == NULL, ~0);
 
     if(im->flags & IO_MEM_FREE_BUF)
@@ -147,12 +153,12 @@ int io_mem_create(char *buf, size_t size, int flags, io_t **pio)
     im->size = size;
     im->flags = flags;
     im->off = 0;
-    im->io.read = (io_read_op) io_mem_read;
-    im->io.write = (io_write_op) io_mem_write;
-    im->io.seek = (io_seek_op) io_mem_seek;
-    im->io.tell = (io_tell_op) io_mem_tell;
-    im->io.close = (io_close_op) io_mem_close; 
-    im->io.free = (io_free_op) io_mem_free; 
+    im->io.read = io_mem_read;
+    im->io.write = io_mem_write;
+    im->io.seek = io_mem_seek;
+    im->io.tell = io_mem_tell;
+    im->io.close = io_mem_close; 
+    im->io.free = io_mem_free; 
 
     *pio = (io_t*)im;
 

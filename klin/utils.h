@@ -118,6 +118,8 @@ int u_asctime_to_tt(const char *str, time_t *tp);
 void u_print_version_and_exit(void);
 
 int u_uri_normalize(char *fqn);
+int klin_b64_decode(const char *in, size_t len, unsigned char *out,
+        size_t *outlen);
 int u_path_where_art_thou(const char *fqn, int *where);
 
 int u_pwd_init_agnostic (const char *fqn, int hashed, int in_memory, 

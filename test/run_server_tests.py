@@ -933,6 +933,13 @@ def run_websocket_checks(check, plain, secure):
     check(ws.close_code() == 4001, "Close not echoed")
     check(ws.frame() is None, "Connection not closed after the close handshake")
     ws.close()
+    # an empty first message (there is no buffer yet: found by fuzzing, it
+    # crashed the worker); after the first connection: -d serves one at a time
+    first = WebSocket(plain)
+    first.send("")
+    check(first.frame() == (1, b""), "Empty first message not echoed")
+    first.send("bye")
+    first.close()
 
     # the page closes
     ws = WebSocket(plain)
@@ -1406,8 +1413,7 @@ def run_keymgr_checks(check, root_pid, key, sanitized):
         except PermissionError:
             check(False, f"Cannot read the memory of klind process {pid}")
     # the key manager keeps only its control socket (and /dev/null)
-    managers = {pid for pid in procs if pid != root_pid and
-                len(list(Path(f"/proc/{pid}/fd").iterdir())) <= 4}
+    managers = {pid for pid in procs if pid != root_pid and few_fds(pid)}
     check(len(managers) == 1 and holders == managers,
           f"Private key found in {sorted(holders)}; key manager {sorted(managers)}, "
           f"processes {sorted(procs)}")
@@ -1428,6 +1434,15 @@ def klind_processes(root_pid):
     return procs
 
 
+def few_fds(pid):
+    """The key manager keeps only its control socket (and /dev/null). A
+    worker may exit (or be a zombie) between the listing and this."""
+    try:
+        return len(list(Path(f"/proc/{pid}/fd").iterdir())) <= 4
+    except OSError:
+        return False
+
+
 def seccomp_mode(pid):
     for line in Path(f"/proc/{pid}/status").read_text().splitlines():
         if line.startswith("Seccomp:"):
@@ -1443,8 +1458,7 @@ def run_sandbox_checks(args, check, root_pid, plain, unsandboxed):
         return
     procs = klind_processes(root_pid)
     check(seccomp_mode(root_pid) == 0, "klind itself (not a worker) is sandboxed")
-    managers = {pid for pid in procs if pid != root_pid and
-                len(list(Path(f"/proc/{pid}/fd").iterdir())) <= 4}
+    managers = {pid for pid in procs if pid != root_pid and few_fds(pid)}
     check(managers and all(seccomp_mode(pid) == 2 for pid in managers),
           f"Key manager not sandboxed: {[(p, seccomp_mode(p)) for p in managers]}")
     if not args.prefork:
@@ -1586,12 +1600,16 @@ def run_limit_checks(args, check, plain, limits, temp):
         check(ws.status == 503, f"A WebSocket over max_streams was not refused: {ws.status}")
         ws.sock.close()
         streams.pop().close()
+        # the worker leaves its slot once the page has ended (after the
+        # mark file is written): try for a few seconds
         deadline = time.monotonic() + 5
-        while not (temp / "cap1").exists() and time.monotonic() < deadline:
-            time.sleep(0.1)
-        again = EventStream(limits, b"/sse.kl1?n=1")
+        while True:
+            again = EventStream(limits, b"/sse.kl1?n=1")
+            again.close()
+            if again.status.startswith("HTTP/1.1 200") or time.monotonic() > deadline:
+                break
+            time.sleep(0.2)
         check(again.status.startswith("HTTP/1.1 200"), "max_streams did not free a closed stream")
-        again.close()
     finally:
         for stream in streams:
             stream.close()

@@ -497,8 +497,11 @@ int session_prv_load_from_io(session_t *ss, io_t *io)
                     ss->so->session_iv, (char *)key, &ksz, 
                     var_get_value(v), var_get_value_size(v)))
                 {
-                    v = vars_get(ss->vars, SESSION_KEY_VAR);
-                    vars_del(ss->vars, v);
+                    /* drop the key that does not decrypt (vars_del() only
+                       unlinks it: found by fuzzing, it leaked) */
+                    if(vars_del(ss->vars, v) == 0)
+                        var_free(v);
+                    v = NULL;
                 } else {
                     /* save it to the var list */
                     dbg_err_if(var_set_bin_value(v, key, ksz));

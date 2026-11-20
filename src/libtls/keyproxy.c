@@ -47,6 +47,7 @@
 #include <u/libu.h>
 #include <klin/context.h>
 #include <klin/keyproxy.h>
+#include <klin/tlsprv.h>
 #include <klin/sandbox.h>
 
 #define KP_PROVIDER     "klin-keyproxy"

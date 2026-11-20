@@ -25,6 +25,7 @@
 #include <klin/timer.h>
 #include <klin/translat.h>
 #include <klin/json.h>
+#include <klin/crypto.h>
 #ifdef SSL_OPENSSL
 #include <klin/auth.h>
 #endif
@@ -596,6 +597,111 @@ static void test_json_write(void)
     CHECK(!strcmp(json_out, "{\"a\\u0000b\":1,\"a\":2}"));
 }
 
+#ifdef SSL_OPENSSL
+/* the crypto interface (klin/crypto.h) against published vectors: SHA-256
+   (FIPS 180-2 "abc"), HMAC-SHA256 (RFC 4231 case 2), PBKDF2-HMAC-SHA256
+   (RFC 7914 section 11), AES-256-CBC (NIST SP 800-38A F.2.5) */
+static int hex_is(const unsigned char *b, size_t n, const char *hex)
+{
+    char buf[2 * KC_MD_MAX + 1];
+    size_t i;
+
+    if(n * 2 >= sizeof buf || strlen(hex) != n * 2)
+        return 0;
+    for(i = 0; i < n; ++i)
+        sprintf(buf + 2 * i, "%02x", b[i]);
+    return !strcmp(buf, hex);
+}
+
+static void test_crypto(void)
+{
+    static const unsigned char key[32] = {
+        0x60, 0x3d, 0xeb, 0x10, 0x15, 0xca, 0x71, 0xbe, 0x2b, 0x73, 0xae,
+        0xf0, 0x85, 0x7d, 0x77, 0x81, 0x1f, 0x35, 0x2c, 0x07, 0x3b, 0x61,
+        0x08, 0xd7, 0x2d, 0x98, 0x10, 0xa3, 0x09, 0x14, 0xdf, 0xf4 };
+    static const unsigned char iv[16] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+        11, 12, 13, 14, 15 };
+    static const unsigned char pt[16] = { 0x6b, 0xc1, 0xbe, 0xe2, 0x2e,
+        0x40, 0x9f, 0x96, 0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93, 0x17, 0x2a };
+    unsigned char out[KC_MD_MAX], ct[64], back[64];
+    size_t n, n2, total;
+    kc_hmac_t *h = NULL;
+    kc_cipher_t *c = NULL;
+    char wiped[8] = "secret!";
+
+    CHECK(kc_digest(KC_SHA256, "abc", 3, out, &n) == 0 && hex_is(out, n,
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"));
+    CHECK(kc_md_size(KC_SHA256) == 32 && kc_md_size(KC_SHA1) == 20 &&
+            kc_md_size(KC_MD5) == 16);
+    CHECK(kc_md_from_name("SHA256") == KC_SHA256 &&
+            kc_md_from_name("ripemd160") == KC_RIPEMD160 &&
+            kc_md_from_name("sha512") == 0 && kc_md_from_name(NULL) == 0);
+
+    CHECK(kc_hmac(KC_SHA256, "Jefe", 4, "what do ya want for nothing?", 28,
+                out, &n) == 0 && hex_is(out, n,
+                "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"));
+    /* a reused context: the same MAC for the message in parts, twice */
+    CHECK(kc_hmac_new(KC_SHA256, "Jefe", 4, &h) == 0);
+    if(h)
+    {
+        for(n2 = 0; n2 < 2; ++n2)
+        {
+            CHECK(kc_hmac_init(h) == 0 &&
+                    kc_hmac_update(h, "what do ya ", 11) == 0 &&
+                    kc_hmac_update(h, "want for nothing?", 17) == 0 &&
+                    kc_hmac_final(h, out, &n) == 0 && hex_is(out, n,
+                "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"));
+        }
+        kc_hmac_free(h);
+    }
+
+    CHECK(kc_pbkdf2_sha256("passwd", 6, (const unsigned char *) "salt", 4, 1,
+                out, 32) == 0 && hex_is(out, 32,
+                "55ac046e56e3089fec1691c22544b605f94185216dde0465e68b9d57c20dacbc"));
+
+    /* AES-256-CBC: the NIST block, then the PKCS #7 padding block */
+    CHECK(kc_cipher_key_len(KC_AES_256_CBC) == 32 &&
+            kc_cipher_iv_len(KC_AES_256_CBC) == 16 &&
+            kc_cipher_block_size(KC_AES_256_CBC) == 16);
+    CHECK(kc_cipher_new(KC_AES_256_CBC, 1, key, iv, &c) == 0);
+    total = 0;
+    if(c)
+    {
+        CHECK(kc_cipher_update(c, ct, &n, pt, sizeof pt) == 0);
+        total = n;
+        CHECK(kc_cipher_final(c, ct + total, &n) == 0);
+        total += n;
+        kc_cipher_free(c);
+        c = NULL;
+    }
+    CHECK(total == 32 && hex_is(ct, 16, "f58c4c04d6e5f1ba779eabfb5f7bfbd6"));
+    CHECK(kc_cipher_new(KC_AES_256_CBC, 0, key, iv, &c) == 0);
+    if(c)
+    {
+        CHECK(kc_cipher_update(c, back, &n, ct, total) == 0);
+        CHECK(kc_cipher_final(c, back + n, &n2) == 0);
+        CHECK(n + n2 == sizeof pt && !memcmp(back, pt, sizeof pt));
+        kc_cipher_free(c);
+        c = NULL;
+    }
+    /* a wrong key: the padding check fails */
+    back[0] = 0;
+    CHECK(kc_cipher_new(KC_AES_256_CBC, 0, iv, key, &c) == 0);
+    if(c)
+    {
+        (void) kc_cipher_update(c, back, &n, ct, total);
+        CHECK(kc_cipher_final(c, back + n, &n2) != 0 ||
+                memcmp(back, pt, sizeof pt));
+        kc_cipher_free(c);
+    }
+
+    CHECK(kc_memeq("abc", "abc", 3) && !kc_memeq("abc", "abd", 3));
+    CHECK(kc_random(out, sizeof out) == 0);
+    kc_cleanse(wiped, sizeof wiped);
+    CHECK(!memcmp(wiped, "\0\0\0\0\0\0\0\0", 8));
+}
+#endif
+
 int main(void)
 {
     test_header_fields();
@@ -604,6 +710,9 @@ int main(void)
     test_timer();
     test_translate();
     test_json_parse();
+#ifdef SSL_OPENSSL
+    test_crypto();
+#endif
     test_json_write();
 #ifdef SSL_OPENSSL
     test_auth();

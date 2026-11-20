@@ -25,9 +25,7 @@
 #include <klin/ws.h>
 #include <klin/timer.h>
 #include <klin/http.h>
-#ifdef SSL_OPENSSL
-#include <openssl/evp.h>
-#endif
+#include <klin/crypto.h>
 
 enum {
     WS_IO_TIMEOUT = 30,             /* s to read or write one frame        */
@@ -165,12 +163,12 @@ static int ws_utf8_ok(const unsigned char *s, size_t len)
 /* Sec-WebSocket-Accept: base64(SHA-1(key GUID)) */
 static int ws_accept_key(const char *key, char *out, size_t size)
 {
-    unsigned char md[EVP_MAX_MD_SIZE];
-    unsigned int mdlen = 0;
+    unsigned char md[KC_MD_MAX];
+    size_t mdlen = 0;
     char buf[128];
 
     dbg_err_if(u_snprintf(buf, sizeof buf, "%s%s", key, WS_GUID));
-    dbg_err_if(!EVP_Digest(buf, strlen(buf), md, &mdlen, EVP_sha1(), NULL));
+    dbg_err_if(kc_digest(KC_SHA1, buf, strlen(buf), md, &mdlen));
 
     return u_b64_encode(md, mdlen, out, size);
 err:

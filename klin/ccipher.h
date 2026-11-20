@@ -14,7 +14,7 @@
 #include <klin/codec.h>
 
 #ifdef SSL_ON
-#include <openssl/evp.h>
+#include <klin/crypto.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -25,14 +25,15 @@ extern "C" {
 enum { CIPHER_ENCRYPT, CIPHER_DECRYPT };
 
 enum {
-    CODEC_CIPHER_KEY_LEN = EVP_MAX_KEY_LENGTH, 
-    CODEC_CIPHER_KEY_BUFSZ = 2 * EVP_MAX_KEY_LENGTH, 
-    CODEC_CIPHER_IV_LEN = EVP_MAX_IV_LENGTH,
-    CODEC_CIPHER_BLOCK_LEN = EVP_MAX_BLOCK_LENGTH,
+    CODEC_CIPHER_KEY_LEN = KC_KEY_MAX,
+    CODEC_CIPHER_KEY_BUFSZ = 2 * KC_KEY_MAX,
+    CODEC_CIPHER_IV_LEN = KC_IV_MAX,
+    CODEC_CIPHER_BLOCK_LEN = KC_BLOCK_MAX,
 };
 
-int codec_cipher_create(int op, const EVP_CIPHER *cipher, 
-    unsigned char *key, unsigned char *iv, codec_t **pcc);
+/* 'cipher' is a KC_* cipher of klin/crypto.h (KC_AES_256_CBC) */
+int codec_cipher_create(int op, int cipher, unsigned char *key,
+    unsigned char *iv, codec_t **pcc);
 
 #ifdef __cplusplus
 }

@@ -17,11 +17,7 @@
 #include <klin/auth.h>
 #include <klin/utils.h>
 
-#ifdef SSL_OPENSSL
-#include <openssl/crypto.h>
-#include <openssl/evp.h>
-#include <openssl/rand.h>
-#endif
+#include <klin/crypto.h>
 
 enum { AUTH_SALT_SZ = 16, AUTH_KEY_SZ = 32 };
 
@@ -47,15 +43,15 @@ const char *auth_alg_name(int alg)
 
 int auth_hash_hex(int alg, const char *data, size_t len, char hex[AUTH_HEX_SZ])
 {
-    unsigned char md[EVP_MAX_MD_SIZE];
-    unsigned int mdlen = 0;
+    unsigned char md[KC_MD_MAX];
+    size_t mdlen = 0;
 
     dbg_return_if (data == NULL, ~0);
     dbg_return_if (hex == NULL, ~0);
     dbg_return_if (alg != AUTH_ALG_MD5 && alg != AUTH_ALG_SHA256, ~0);
 
-    dbg_err_if(!EVP_Digest(data, len, md, &mdlen,
-                alg == AUTH_ALG_MD5 ? EVP_md5() : EVP_sha256(), NULL));
+    dbg_err_if(kc_digest(alg == AUTH_ALG_MD5 ? KC_MD5 : KC_SHA256, data, len,
+                md, &mdlen));
 
     u_tohex(hex, (const char *) md, mdlen);
 
@@ -113,9 +109,8 @@ err:
 static int auth_pbkdf2(const char *password, const unsigned char *salt,
         unsigned int iterations, unsigned char key[AUTH_KEY_SZ])
 {
-    return PKCS5_PBKDF2_HMAC(password, (int) strlen(password), salt,
-            AUTH_SALT_SZ, (int) iterations, EVP_sha256(), AUTH_KEY_SZ,
-            key) == 1 ? 0 : ~0;
+    return kc_pbkdf2_sha256(password, strlen(password), salt, AUTH_SALT_SZ,
+            iterations, key, AUTH_KEY_SZ);
 }
 
 int auth_password_hash(const char *password, unsigned int iterations,
@@ -129,7 +124,7 @@ int auth_password_hash(const char *password, unsigned int iterations,
     dbg_return_if (out == NULL, ~0);
     dbg_return_if (iterations == 0, ~0);
 
-    dbg_err_if(RAND_bytes(salt, sizeof salt) != 1);
+    dbg_err_if(kc_random(salt, sizeof salt));
     dbg_err_if(auth_pbkdf2(password, salt, iterations, key));
 
     dbg_err_if(u_b64_encode(salt, sizeof salt, salt64, sizeof salt64));
@@ -139,11 +134,11 @@ int auth_password_hash(const char *password, unsigned int iterations,
             salt64, key64);
     dbg_err_if(n < 0 || (size_t) n >= size);
 
-    OPENSSL_cleanse(key, sizeof key);
+    kc_cleanse(key, sizeof key);
 
     return 0;
 err:
-    OPENSSL_cleanse(key, sizeof key);
+    kc_cleanse(key, sizeof key);
     return ~0;
 }
 
@@ -177,8 +172,8 @@ int auth_password_verify(const char *password, const char *stored)
 
     nop_err_if(auth_pbkdf2(password, salt, (unsigned int) iterations, key));
 
-    rc = CRYPTO_memcmp(key, want, AUTH_KEY_SZ) ? ~0 : 0;
-    OPENSSL_cleanse(key, sizeof key);
+    rc = kc_memeq(key, want, AUTH_KEY_SZ) ? 0 : ~0;
+    kc_cleanse(key, sizeof key);
 
     return rc;
 err:

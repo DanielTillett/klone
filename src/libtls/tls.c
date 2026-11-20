@@ -46,7 +46,8 @@ static int tls_load_ctx_args (u_config_t *cfg, tls_ctx_args_t **cargs);
 static SSL_CTX *tls_init_ctx (tls_ctx_args_t *cargs);
 static int cb_vfy (int ok, X509_STORE_CTX *store_ctx);
 
-SSL_CTX *tls_load_init_ctx (u_config_t *cfg)
+/* the tls_ctx_t of klin/tls.h is an OpenSSL SSL_CTX */
+tls_ctx_t *tls_load_init_ctx (u_config_t *cfg)
 {
     SSL_CTX *ctx = NULL;
     tls_ctx_args_t *cargs = NULL;
@@ -58,7 +59,7 @@ SSL_CTX *tls_load_init_ctx (u_config_t *cfg)
 
     tls_free_ctx_args(cargs);
 
-    return ctx;
+    return (tls_ctx_t *) ctx;
 err:
     if (cargs)
         tls_free_ctx_args(cargs);
@@ -296,13 +297,20 @@ static int cb_vfy (int ok, X509_STORE_CTX *store_ctx)
     return 0;
 }
 
+void tls_ctx_free (tls_ctx_t *ctx)
+{
+    SSL_CTX_free((SSL_CTX *) ctx);
+}
+
 int tls_init (void)
 {
     if (tls_inited)
         return 0;
 
-    SSL_load_error_strings();
-    dbg_err_if (!SSL_library_init());
+    /* OpenSSL 3 initialises itself; this makes it explicit (and loads the
+       error strings, which SSL_load_error_strings() did) */
+    dbg_err_if (OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS |
+                OPENSSL_INIT_LOAD_CRYPTO_STRINGS, NULL) != 1);
     dbg_err_if (RAND_status() != 1);
     tls_inited++;
 

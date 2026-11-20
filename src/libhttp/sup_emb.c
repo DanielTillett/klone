@@ -434,7 +434,7 @@ static int supemb_serve_static(request_t *rq, response_t *rs, embfile_t *e)
         /* do not cache encrypted content */
         response_disable_caching(rs);
 
-        dbg_err_if(codec_cipher_create(CIPHER_DECRYPT, EVP_aes_256_cbc(),
+        dbg_err_if(codec_cipher_create(CIPHER_DECRYPT, KC_AES_256_CBC,
                     (unsigned char *)key, NULL, &decrypt));
         /* delete the key from the stack */
         memset(key, 0, CODEC_CIPHER_KEY_BUFSZ);

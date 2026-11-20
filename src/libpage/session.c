@@ -18,9 +18,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #ifdef SSL_ON
-#include <openssl/evp.h>
-#include <openssl/hmac.h>
-#include <openssl/rand.h>
+#include <klin/crypto.h>
 #include <klin/ccipher.h>
 #endif 
 #include <u/libu.h>
@@ -77,9 +75,9 @@ int session_module_term(session_opt_t *so)
 {
     if (so)
         dbg_if(atoms_free(so->atoms));
-#ifdef SSL_OPENSSL
+#ifdef SSL_ON
     if (so)
-        EVP_MAC_CTX_free(so->hmac_ctx);
+        kc_hmac_free(so->hmac);
 #endif
     U_FREE(so);
 
@@ -154,20 +152,16 @@ int session_module_init(u_config_t *config, session_opt_t **pso)
                      "lib is linked");
 #else
 
-#ifdef SSL_OPENSSL
-        /* init cipher EVP algo, the random key and IV */
-        so->cipher = EVP_aes_256_cbc(); /* use AES-256 in CBC mode */
-
-        EVP_add_cipher(so->cipher);
+        /* the cipher, the random key and IV */
+        so->cipher = KC_AES_256_CBC;
 
         /* key and iv for client-side session */
-        dbg_err_if(!RAND_bytes(so->cipher_key, CIPHER_KEY_LEN));
-        dbg_err_if(!RAND_bytes(so->cipher_iv, CIPHER_IV_LEN));
+        dbg_err_if(kc_random(so->cipher_key, CIPHER_KEY_LEN));
+        dbg_err_if(kc_random(so->cipher_iv, CIPHER_IV_LEN));
 
         /* create a random key and iv to crypt the SESSION_KEY_VAR variable */
-        dbg_err_if(!RAND_bytes(so->session_key, CIPHER_KEY_LEN));
-        dbg_err_if(!RAND_bytes(so->session_iv, CIPHER_IV_LEN));
-#endif
+        dbg_err_if(kc_random(so->session_key, CIPHER_KEY_LEN));
+        dbg_err_if(kc_random(so->session_iv, CIPHER_IV_LEN));
 
 
 #endif
@@ -499,7 +493,7 @@ int session_prv_load_from_io(session_t *ss, io_t *io)
                 /* decrypt key and save it to key */
                 memset(key, 0, sizeof(key));
 				ksz = sizeof(key);
-                dbg_ifb(u_cipher_decrypt(EVP_aes_256_cbc(), ss->so->session_key,
+                dbg_ifb(u_cipher_decrypt(KC_AES_256_CBC, ss->so->session_key,
                     ss->so->session_iv, (char *)key, &ksz, 
                     var_get_value(v), var_get_value_size(v)))
                 {
@@ -941,7 +935,7 @@ int session_prv_save_var(var_t *v, void *vp)
 			eksz = sizeof(ekey);;
 
             /* encrypt the key and save it to ekey */
-            dbg_err_if(u_cipher_encrypt(EVP_aes_256_cbc(), 
+            dbg_err_if(u_cipher_encrypt(KC_AES_256_CBC, 
                 pprm->ss->so->session_key, pprm->ss->so->session_iv, 
                 (char *)ekey, &eksz, (const char *)pkey, pksz));
 

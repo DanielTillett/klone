@@ -23,27 +23,20 @@
 #include <klin/emb.h>
 #include <klin/ses_prv.h>
 #include <klin/codecs.h>
-#ifdef SSL_ON
-#include <openssl/hmac.h>
-#include <openssl/rand.h>
-#ifdef SSL_OPENSSL
-#include <openssl/core_names.h>
-#include <openssl/params.h>
-#endif
-#endif
+#include <klin/crypto.h>
 
 #define KL1_CLISES_DATA     "KL1_CLISES_DATA"
 #define KL1_CLISES_MTIME    "KL1_CLISES_MTIME"
 #define KL1_CLISES_HMAC     "KL1_CLISES_HMAC"
 #define KL1_CLISES_IV       "KL1_CLISES_IV"
 
-enum { HMAC_HEX_SIZE = 2*EVP_MAX_MD_SIZE + 1 };
+enum { HMAC_HEX_SIZE = 2*KC_MD_MAX + 1 };
 
 /* calc the hmac of data+sid+mtime */
 static int session_client_hmac(session_opt_t *so, char *hmac, size_t hmac_sz,
     const char *data, const char *sid, const char *mtime, const char *hex_iv)
 {
-    unsigned char mac[EVP_MAX_MD_SIZE];
+    unsigned char mac[KC_MD_MAX];
     size_t mac_len;
 
     dbg_err_if (so == NULL);
@@ -53,19 +46,17 @@ static int session_client_hmac(session_opt_t *so, char *hmac, size_t hmac_sz,
     dbg_err_if (mtime == NULL);
     /* hex_iv may be NULL */
     
-#if SSL_OPENSSL
-    /* hmac must be at least 'EVP_MAX_MD_SIZE*2 + 1' (it will be hex encoded) */
-    dbg_err_if(hmac_sz < EVP_MAX_MD_SIZE*2 + 1);
+    /* hmac must be at least 'KC_MD_MAX*2 + 1' (it will be hex encoded) */
+    dbg_err_if(hmac_sz < KC_MD_MAX*2 + 1);
 
     /* calc HMAC hash of the data buf + mtime (reuse stored key and md) */
-    dbg_err_if(EVP_MAC_init(so->hmac_ctx, NULL, 0, NULL) != 1);
-    dbg_err_if(EVP_MAC_update(so->hmac_ctx, (const unsigned char *)data, strlen(data)) != 1);
-    dbg_err_if(EVP_MAC_update(so->hmac_ctx, (const unsigned char *)sid, strlen(sid)) != 1);
-    dbg_err_if(EVP_MAC_update(so->hmac_ctx, (const unsigned char *)mtime, strlen(mtime)) != 1);
+    dbg_err_if(kc_hmac_init(so->hmac));
+    dbg_err_if(kc_hmac_update(so->hmac, data, strlen(data)));
+    dbg_err_if(kc_hmac_update(so->hmac, sid, strlen(sid)));
+    dbg_err_if(kc_hmac_update(so->hmac, mtime, strlen(mtime)));
     if(hex_iv)
-        dbg_err_if(EVP_MAC_update(so->hmac_ctx, (const unsigned char *)hex_iv, strlen(hex_iv)) != 1);
-    dbg_err_if(EVP_MAC_final(so->hmac_ctx, mac, &mac_len, sizeof(mac)) != 1);
-#endif
+        dbg_err_if(kc_hmac_update(so->hmac, hex_iv, strlen(hex_iv)));
+    dbg_err_if(kc_hmac_final(so->hmac, mac, &mac_len));
 
 
     /* encode the hash */
@@ -95,9 +86,7 @@ static int session_client_save(session_t *ss)
     if(ss->so->encrypt)
     {
         /* generate a new IV for each session */
-        #ifdef SSL_OPENSSL
-        dbg_err_if(RAND_bytes(ss->so->cipher_iv, CIPHER_IV_LEN) != 1);
-        #endif
+        dbg_err_if(kc_random(ss->so->cipher_iv, CIPHER_IV_LEN));
 
 
         /* hex encode the IV and save it in a cookie */
@@ -168,7 +157,7 @@ static int session_client_load(session_t *ss)
 
     /* compare HMACs */
     if(strlen(hmac) != strlen(cli_hmac) ||
-        CRYPTO_memcmp(hmac, cli_hmac, strlen(hmac)) != 0)
+        !kc_memeq(hmac, cli_hmac, strlen(hmac)))
     {
         session_remove(ss); /* remove all bad stale data */
         warn_err("HMAC don't match, rejecting session data");
@@ -267,7 +256,7 @@ int session_client_module_init(u_config_t *config, session_opt_t *so)
     dbg_err_if (so == NULL);
     
     /* default */
-    so->hash = EVP_sha256();
+    so->hash = KC_SHA256;
 
     /* always enable encryption for client-side sessions */
     if(!so->encrypt)
@@ -276,42 +265,17 @@ int session_client_module_init(u_config_t *config, session_opt_t *so)
 
     if(config && !u_config_get_subkey(config, "client", &c))
     {
-        if((v = u_config_get_subkey_value(c, "hash_function")) != NULL)
-        {
-            if(!strcasecmp(v, "sha256"))
-                so->hash = EVP_sha256();
-            else if(!strcasecmp(v, "md5"))
-                so->hash = EVP_md5();
-            else if(!strcasecmp(v, "sha1"))
-                so->hash = EVP_sha1();
-#ifdef SSL_OPENSSL
-            else if(!strcasecmp(v, "ripemd160"))
-                so->hash = EVP_ripemd160();
-#endif
-            else
-                warn_err("config error: bad hash_function");
-        } 
+        /* sha256, md5, sha1 or ripemd160 */
+        if((v = u_config_get_subkey_value(c, "hash_function")) != NULL &&
+                (so->hash = kc_md_from_name(v)) == 0)
+            warn_err("config error: bad hash_function");
     }
 
-#ifdef SSL_OPENSSL
-    /* initialize OpenSSL HMAC stuff */
-    EVP_MAC *mac = EVP_MAC_fetch(NULL, "HMAC", NULL);
-    OSSL_PARAM params[2];
-    dbg_err_if(mac == NULL);
-    so->hmac_ctx = EVP_MAC_CTX_new(mac);
-    EVP_MAC_free(mac);
-    dbg_err_if(so->hmac_ctx == NULL);
-    params[0] = OSSL_PARAM_construct_utf8_string(OSSL_MAC_PARAM_DIGEST,
-        KLIN_UNCONST(EVP_MD_get0_name(so->hash)), 0);
-    params[1] = OSSL_PARAM_construct_end();
-
     /* gen HMAC key */
-    dbg_err_if(!RAND_bytes((unsigned char *)so->hmac_key, HMAC_KEY_LEN));
+    dbg_err_if(kc_random(so->hmac_key, HMAC_KEY_LEN));
 
-    /* init HMAC with our key and chose hash algorithm */
-    dbg_err_if(EVP_MAC_init(so->hmac_ctx, (const unsigned char *)so->hmac_key,
-        HMAC_KEY_LEN, params) != 1);
-#endif
+    /* HMAC with our key and the chosen hash algorithm */
+    dbg_err_if(kc_hmac_new(so->hash, so->hmac_key, HMAC_KEY_LEN, &so->hmac));
 
 
     return 0;

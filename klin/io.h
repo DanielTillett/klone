@@ -14,10 +14,6 @@
 #include <sys/types.h>
 #include <stdio.h>
 #include <stdarg.h>
-#ifdef SSL_ON
-#include <openssl/ssl.h>
-#include <openssl/err.h>
-#endif
 #include <klin/codec.h>
 
 #ifdef __cplusplus
@@ -26,6 +22,8 @@ extern "C" {
 
 struct io_s;
 typedef struct io_s io_t;
+
+struct tls_ctx_s;   /* klin/tls.h */
 
 enum io_type_e
 {
@@ -49,9 +47,8 @@ enum io_mem_flags {
 int io_fd_create(int fd, int flags, io_t **pio);
 int io_mem_create(char *buf, size_t size, int flags, io_t **pio);
 #ifdef SSL_ON
-int io_ssl_create(int fd, int flags, int client_mode, 
-        SSL_CTX *ssl_tx, io_t **pio);
-int io_ssl_get_SSL(io_t *io_ssl, SSL **pssl);
+int io_ssl_create(int fd, int flags, int client_mode,
+        struct tls_ctx_s *ctx, io_t **pio);
 int io_ssl_get_fd(io_t *io_ssl);
 size_t io_ssl_pending(io_t *io_ssl);
 #endif

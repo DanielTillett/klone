@@ -15,6 +15,19 @@ Klin 4.0.0:
 	  entries, so they survive a reconfigure. The Windows service keeps
 	  the name kloned. All of it is in cmake/klone_compat.cmake and the
 	  lines marked "before KLone was renamed Klin"
+	- cryptography behind one interface (doc/CRYPTO): klin/crypto.h (kc_*:
+	  digests, HMAC, PBKDF2, random bytes, constant-time compare, wiping,
+	  AES-256-CBC) implemented in src/libutils/crypto.c; TLS through an
+	  opaque tls_ctx_t. Only that file and the TLS layer call OpenSSL (a
+	  build check enforces it), and Klin's code builds with
+	  OPENSSL_NO_DEPRECATED: SSL_library_init/SSL_load_error_strings
+	  replaced by OPENSSL_init_ssl, EVP_add_cipher dropped. Behaviour,
+	  configuration, sessions and encrypted pages are unchanged. API:
+	  codec_cipher_create() and u_cipher_encrypt/decrypt() take
+	  KC_AES_256_CBC, tls_load_init_ctx() returns tls_ctx_t *, Klin's
+	  headers no longer include OpenSSL's. Decision: OpenSSL stays the only
+	  backend; mbedTLS (Apache 2.0), not wolfSSL, if a device ever needs
+	  another
 	- native Windows: builds with MinGW-w64 (MSYS2 UCRT64) and serves HTTP
 	  and HTTPS in the single-process model. LibU's own stand-ins for
 	  setenv, mkstemps and fnmatch are declared and used, its daemon.c is

@@ -12,6 +12,12 @@
 
 #include "klin_conf.h"
 #ifdef SSL_ON
+#include <u/libu.h>
+#include <klin/io.h>
+#ifdef SSL_OPENSSL
+#include <openssl/evp.h>
+#include <openssl/ssl.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -39,8 +45,11 @@ struct tls_ctx_args_s
 
 typedef struct tls_ctx_args_s tls_ctx_args_t;
 
-/* used by tls.c */
+/* used by tls.c and the io driver: the OpenSSL side of the TLS layer
+   (the only code besides src/libutils/crypto.c that calls OpenSSL) */
 #ifdef SSL_OPENSSL
+int tls_keyproxy_use_key(SSL_CTX *c, EVP_PKEY *key, int sandbox);
+int io_ssl_get_SSL(io_t *io_ssl, SSL **pssl);
 BIO *bio_from_emb (const char *);
 BIO *tls_get_file_bio(const char *res_name);
 STACK_OF(X509_NAME) *tls_load_client_CA_file(const char *);

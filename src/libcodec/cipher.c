@@ -12,23 +12,17 @@
 #include <klin/codec.h>
 #include <klin/ccipher.h>
 #include <klin/utils.h>
+#include <klin/crypto.h>
 
 enum { CODEC_CIPHER_MAX_INPUT = 4096 /* max src block size for transform() */ };
-
-typedef int (*EVP_Update_t)(EVP_CIPHER_CTX *ctx, unsigned char *out,
-    int *outl, const unsigned char *in, int inl);
-typedef int (*EVP_Final_ex_t)(EVP_CIPHER_CTX *ctx, unsigned char *out,
-    int *outl);
 
 struct codec_cipher_s
 {
     codec_t codec;
-    const EVP_CIPHER *cipher;   /* encryption cipher algorithm */
-    EVP_CIPHER_CTX *cipher_ctx; /* owned OpenSSL context */
+    kc_cipher_t *cipher;        /* the cipher, encrypting or decrypting */
     char *cbuf;
     size_t coff, ccount, cbuf_size;
-    EVP_Update_t update;        /* EVP_{Encrypt,Decrypt}Update func ptr */
-    EVP_Final_ex_t final;       /* EVP_{Encrypt,Decrypt}Final_ex func ptr */
+    int finalised;              /* the last block has been produced     */
 };
 
 typedef struct codec_cipher_s codec_cipher_t;
@@ -51,14 +45,14 @@ static void codec_cbufcpy(codec_cipher_t *cc, char *dst, size_t *dcount)
 static ssize_t cipher_flush(codec_t *codec, char *dst, size_t *dcount)
 {
     codec_cipher_t *cc;
-    int wr;
+    size_t wr;
 
     dbg_err_if (codec == NULL);
     dbg_err_if (dst == NULL);
     dbg_err_if (dcount == NULL);
 
     cc = (codec_cipher_t*)codec;
-    
+
     for(;;)
     {
         if(cc->ccount)
@@ -67,13 +61,12 @@ static ssize_t cipher_flush(codec_t *codec, char *dst, size_t *dcount)
             return CODEC_FLUSH_CHUNK; /* call flush again */
         }
 
-        if(cc->final)
+        if(!cc->finalised)
         {
-            wr = -1; /* just used to return an int value */
-            dbg_err_if(!cc->final(cc->cipher_ctx, (unsigned char *)cc->cbuf, &wr));
-
+            cc->finalised = 1;  /* can be called just once */
+            dbg_err_if(kc_cipher_final(cc->cipher, (unsigned char *)cc->cbuf,
+                        &wr));
             cc->ccount += wr;
-            cc->final = NULL; /* can be called just once */
 
             if(wr)
                 continue;
@@ -92,7 +85,7 @@ static ssize_t cipher_transform(codec_t *codec, char *dst, size_t *dcount,
 {
     codec_cipher_t *cc;
     ssize_t c;
-    int wr;
+    size_t wr;
 
     dbg_err_if (codec == NULL);
     dbg_err_if (src == NULL);
@@ -112,13 +105,12 @@ static ssize_t cipher_transform(codec_t *codec, char *dst, size_t *dcount,
         }
 
         /* the cbuf must be empty because we need the whole buffer to be sure to
-           have enough output space for EVP_{Encrypt,Decrypt}Update */
+           have enough output space for kc_cipher_update */
 
         c = U_MIN(src_sz, CODEC_CIPHER_MAX_INPUT);
 
-        wr = -1; /* just used to return an int value */
-        dbg_err_if(!cc->update(cc->cipher_ctx, (unsigned char *)cc->cbuf, &wr,
-            (const unsigned char *)src, c));
+        dbg_err_if(kc_cipher_update(cc->cipher, (unsigned char *)cc->cbuf, &wr,
+            (const unsigned char *)src, (size_t) c));
         cc->ccount += wr;
 
         if(wr == 0)
@@ -142,7 +134,7 @@ static int cipher_free(codec_t *codec)
         
     cc = (codec_cipher_t*)codec;
 
-    EVP_CIPHER_CTX_free(cc->cipher_ctx);
+    kc_cipher_free(cc->cipher);
     U_FREE(cc->cbuf);
     U_FREE(cc);
 
@@ -163,19 +155,19 @@ static int cipher_free(codec_t *codec)
  * the data transforms.
  *
  * \param   op      one of \c CIPHER_ENCRYPT or \c CIPHER_DECRYPT
- * \param   cipher  an OpenSSL \c EVP_CIPHER object 
+ * \param   cipher  the algorithm, a \c KC_* cipher (klin/crypto.h)
  * \param   key     the encryption/decryption key
  * \param   iv      the initialisation vector
  * \param   pcc     the created codec as a value-result arguement
  *
  * \return \c 0 on success, \c ~0 otherwise
  */
-int codec_cipher_create(int op, const EVP_CIPHER *cipher, 
-    unsigned char *key, unsigned char *iv, codec_t **pcc)
+int codec_cipher_create(int op, int cipher, unsigned char *key,
+    unsigned char *iv, codec_t **pcc)
 {
     codec_cipher_t *cc = NULL;
 
-    dbg_return_if (cipher == NULL, ~0);
+    dbg_return_if (kc_cipher_block_size(cipher) == 0, ~0);
     dbg_return_if (key == NULL, ~0);
     /* iv can be NULL */
     dbg_return_if (pcc == NULL, ~0);
@@ -187,37 +179,15 @@ int codec_cipher_create(int op, const EVP_CIPHER *cipher,
     cc->codec.flush = cipher_flush;
     cc->codec.free = cipher_free;      
 
-    cc->cipher = cipher;
-
-    /* be sure that the cipher stuff is loaded */
-    EVP_add_cipher(cc->cipher);
-
-    cc->cipher_ctx = EVP_CIPHER_CTX_new();
-    dbg_err_if(cc->cipher_ctx == NULL);
-
-    cc->cbuf_size = CODEC_CIPHER_MAX_INPUT + 
-        EVP_CIPHER_block_size(cc->cipher) -1;
+    /* an update writes at most its input plus a block */
+    cc->cbuf_size = CODEC_CIPHER_MAX_INPUT + kc_cipher_block_size(cipher);
 
     cc->cbuf = u_malloc(cc->cbuf_size);
     dbg_err_if(cc->cbuf == NULL);
 
-    switch(op)
-    {
-    case CIPHER_ENCRYPT:
-        dbg_err_if(!EVP_EncryptInit_ex(cc->cipher_ctx, cc->cipher, NULL,
-            key, iv));
-        cc->update = EVP_EncryptUpdate;
-        cc->final = EVP_EncryptFinal_ex;
-        break;
-    case CIPHER_DECRYPT:
-        dbg_err_if(!EVP_DecryptInit_ex(cc->cipher_ctx, cc->cipher, NULL,
-            key, iv));
-        cc->update = EVP_DecryptUpdate;
-        cc->final = EVP_DecryptFinal_ex;
-        break;
-    default:
-        dbg_err_if("bad cipher op");
-    }
+    dbg_err_if(op != CIPHER_ENCRYPT && op != CIPHER_DECRYPT);
+    dbg_err_if(kc_cipher_new(cipher, op == CIPHER_ENCRYPT, key, iv,
+                &cc->cipher));
 
 
     *pcc = (codec_t*)cc;

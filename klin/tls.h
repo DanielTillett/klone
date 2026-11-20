@@ -13,14 +13,18 @@
 #include "klin_conf.h"
 #include <u/libu.h>
 #ifdef SSL_ON
-#include <openssl/ssl.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+/* a TLS server context (an SSL_CTX of the backend, see doc/CRYPTO) */
+struct tls_ctx_s;
+typedef struct tls_ctx_s tls_ctx_t;
+
 int tls_init (void);
-SSL_CTX *tls_load_init_ctx (u_config_t *);
+tls_ctx_t *tls_load_init_ctx (u_config_t *);
+void tls_ctx_free (tls_ctx_t *);
 
 #ifdef __cplusplus
 }

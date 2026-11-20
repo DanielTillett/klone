@@ -945,7 +945,7 @@ int translate(trans_info_t *pti)
         if(pti->encrypt)
         {
             /* set a cipher filter */
-            dbg_err_if(codec_cipher_create(CIPHER_ENCRYPT, EVP_aes_256_cbc(),
+            dbg_err_if(codec_cipher_create(CIPHER_ENCRYPT, KC_AES_256_CBC,
                 (unsigned char *)pti->key, NULL, &aes));
             dbg_err_if(io_codec_add_tail(in, aes));
             aes = NULL;

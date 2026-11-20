@@ -26,6 +26,8 @@ int tls_dummy_decl_stub = 0;
 #else
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
+#include <openssl/err.h>
+#include <openssl/pem.h>
 #include <openssl/crypto.h>
 #include <fcntl.h>
 #include <unistd.h>

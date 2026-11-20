@@ -13,16 +13,13 @@
 
 #ifdef SSL_OPENSSL
 #include <sys/types.h>
-#include <openssl/evp.h>
-#include <openssl/ssl.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* the TLS key manager (doc/KEYMGR): the private key lives in a separate
- * process, workers sign through it */
-int tls_keyproxy_use_key(SSL_CTX *c, EVP_PKEY *key, int sandbox);
+ * process, workers sign through it (tls_keyproxy_use_key: tlsprv.h) */
 int tls_keyproxy_is_manager(pid_t pid);
 void tls_keyproxy_stop(void);
 

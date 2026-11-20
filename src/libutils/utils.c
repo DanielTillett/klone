@@ -29,9 +29,7 @@
 #include <klin/mime_map.h>
 #include <klin/version.h>
 #include <klin/utils.h>
-#ifdef SSL_ON
-#include <openssl/rand.h>
-#endif
+#include <klin/crypto.h>
 #ifdef OS_WIN
 #include <windows.h>
 #include <bcrypt.h>
@@ -47,7 +45,7 @@ int u_random_bytes(unsigned char *buf, size_t size)
 {
     dbg_return_if(buf == NULL || size > INT_MAX, ~0);
 #ifdef SSL_ON
-    return RAND_bytes(buf, (int)size) == 1 ? 0 : ~0;
+    return kc_random(buf, size);
 #elif defined(OS_WIN)
     return BCryptGenRandom(NULL, buf, (ULONG)size,
         BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0 ? 0 : ~0;
@@ -1392,20 +1390,54 @@ err:
 #endif
 
 #ifdef SSL_OPENSSL
+/* encrypt or decrypt src into dst in one go */
+static int u_cipher_run(int cipher, int encrypt, unsigned char *key,
+    unsigned char *iv, char *dst, size_t *dcount, const char *src, size_t ssz)
+{
+    kc_cipher_t *c = NULL;
+    size_t wr, dlen = 0;
+
+    dbg_return_if (key == NULL, ~0);
+    dbg_return_if (iv == NULL, ~0);
+    dbg_return_if (dcount == NULL, ~0);
+    dbg_return_if (src == NULL, ~0);
+    dbg_return_if (dst == NULL, ~0);
+    dbg_return_if (ssz > INT_MAX, ~0);
+
+    dbg_err_if(kc_cipher_new(cipher, encrypt, key, iv, &c));
+
+    dbg_err_if(kc_cipher_update(c, (unsigned char *)dst, &wr,
+                (const unsigned char *)src, ssz));
+    dlen += wr;
+    dst += wr;
+
+    dbg_err_if(kc_cipher_final(c, (unsigned char *)dst, &wr));
+    dlen += wr;
+
+    *dcount = dlen; /* # of bytes written to dst */
+
+    kc_cipher_free(c);
+
+    return 0;
+err:
+    kc_cipher_free(c);
+    return ~0;
+}
+
 /**
  * \ingroup ut
  * \brief   Encrypt a given data block
  *
  * Encrypt the data block \p src of size \p ssz using the encryption algorithm
  * \p cipher, with key \p key and initialisation vector \p iv.  The result is
- * stored at \p dst, a preallocated buffer with a size of at least 
+ * stored at \p dst, a preallocated buffer with a size of at least
  * \c cipher_block_size + the length in bytes of \p src.
  * The length of the encrypted buffer is stored at \p *dcount.
  *
- * \param   cipher  an OpenSSL \c EVP_CIPHER
+ * \param   cipher  a \c KC_* cipher (klin/crypto.h)
  * \param   key     encryption key string
  * \param   iv      initialisation vector
- * \param   dst     buffer holding the result 
+ * \param   dst     buffer holding the result
  * \param   dcount  size in bytes of the result buffer
  * \param   src     the buffer to be encrypted
  * \param   ssz     size of \p src in bytes
@@ -1414,45 +1446,10 @@ err:
  * - \c 0   successful
  * - \c ~0  error
  */
-int u_cipher_encrypt(const EVP_CIPHER *cipher, unsigned char *key, 
+int u_cipher_encrypt(int cipher, unsigned char *key,
     unsigned char *iv, char *dst, size_t *dcount, const char *src, size_t ssz)
 {
-    EVP_CIPHER_CTX *ctx = NULL;
-    ssize_t dlen = 0;  /* dst buffer length */
-    int wr;
-
-    dbg_return_if (cipher == NULL, ~0);
-    dbg_return_if (key == NULL, ~0);
-    dbg_return_if (iv == NULL, ~0);
-    dbg_return_if (dcount == NULL, ~0);
-    dbg_return_if (src == NULL, ~0);
-    dbg_return_if (dst == NULL, ~0);
-    
-    dbg_return_if (ssz > INT_MAX, ~0);
-
-    /* init the context */
-    dbg_err_if((ctx = EVP_CIPHER_CTX_new()) == NULL);
-
-    /* be sure that the cipher has been loaded */
-    EVP_add_cipher(cipher);
-    
-    dbg_err_if(!EVP_EncryptInit_ex(ctx, cipher, NULL, key, iv));
-
-    dbg_err_if(!EVP_EncryptUpdate(ctx, (unsigned char *)dst, &wr, (const unsigned char *)src, (int)ssz));
-    dlen += wr;
-    dst += wr;
-
-    dbg_err_if(!EVP_EncryptFinal_ex(ctx, (unsigned char *)dst, &wr));
-    dlen += wr;
-
-    *dcount = dlen; /* # of bytes written to dst */
-
-    EVP_CIPHER_CTX_free(ctx);
-
-    return 0;
-err:
-    EVP_CIPHER_CTX_free(ctx);
-    return ~0;
+    return u_cipher_run(cipher, 1, key, iv, dst, dcount, src, ssz);
 }
 
 /**
@@ -1463,7 +1460,7 @@ err:
  * \p cipher, with key \p key and initialisation vector \p iv.  The result is
  * stored at \p dst, with length \p dcount.
  *
- * \param   cipher  an OpenSSL \c EVP_CIPHER
+ * \param   cipher  a \c KC_* cipher (klin/crypto.h)
  * \param   key     decryption key string
  * \param   iv      initialisation vector
  * \param   dst     buffer holding the result
@@ -1475,45 +1472,10 @@ err:
  * - \c 0   successful
  * - \c ~0  error
  */
-int u_cipher_decrypt(const EVP_CIPHER *cipher, unsigned char *key, 
+int u_cipher_decrypt(int cipher, unsigned char *key,
     unsigned char *iv, char *dst, size_t *dcount, const char *src, size_t ssz)
 {
-    EVP_CIPHER_CTX *ctx = NULL;
-    ssize_t dlen = 0;  /* dst buffer length */
-    int wr;
-
-    dbg_return_if (cipher == NULL, ~0);
-    dbg_return_if (key == NULL, ~0);
-    dbg_return_if (iv == NULL, ~0);
-    dbg_return_if (dcount == NULL, ~0);
-    dbg_return_if (src == NULL, ~0);
-    dbg_return_if (dst == NULL, ~0);
-
-    dbg_return_if (ssz > INT_MAX, ~0);
-
-    /* init the context */
-    dbg_err_if((ctx = EVP_CIPHER_CTX_new()) == NULL);
-
-    /* be sure that the cipher has been loaded */
-    EVP_add_cipher(cipher);
-    
-    dbg_err_if(!EVP_DecryptInit_ex(ctx, cipher, NULL, key, iv));
-
-    dbg_err_if(!EVP_DecryptUpdate(ctx, (unsigned char *)dst, &wr, (const unsigned char *)src, (int)ssz));
-    dlen += wr;
-    dst += wr;
-
-    dbg_err_if(!EVP_DecryptFinal_ex(ctx, (unsigned char *)dst, &wr));
-    dlen += wr;
-
-    *dcount = dlen; /* # of bytes written to dst */
-
-    EVP_CIPHER_CTX_free(ctx);
-
-    return 0;
-err:
-    EVP_CIPHER_CTX_free(ctx);
-    return ~0;
+    return u_cipher_run(cipher, 0, key, iv, dst, dcount, src, ssz);
 }
 
 #endif

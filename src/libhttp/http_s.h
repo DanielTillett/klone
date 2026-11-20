@@ -16,8 +16,7 @@
 #include <klin/ses_prv.h>
 
 #ifdef SSL_ON
-#include <openssl/ssl.h>
-#include <openssl/err.h>
+#include <klin/tls.h>
 #endif 
 
 struct http_s 
@@ -26,7 +25,7 @@ struct http_s
     broker_t *broker;       /* pages broker                                  */
     int ssl;                /* >0 when SSL is enabled                        */
 #ifdef SSL_ON
-    SSL_CTX* ssl_ctx;       /* OpenSSL context                               */
+    tls_ctx_t *ssl_ctx;     /* TLS context                                   */
 #endif
     /* session options struct                        */
     session_opt_t *sess_opt;

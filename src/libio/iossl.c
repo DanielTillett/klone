@@ -15,6 +15,8 @@
 #include <klin/io.h>
 #include <klin/ioprv.h>
 #include <klin/timer.h>
+#include <klin/tls.h>
+#include <klin/tlsprv.h>
 #include <u/libu.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
@@ -234,9 +236,10 @@ err:
     return ~0;
 }
 
-int io_ssl_create(int fd, int flags, int client_mode, 
-        SSL_CTX *ssl_ctx, io_t **pio)
+int io_ssl_create(int fd, int flags, int client_mode,
+        struct tls_ctx_s *ctx, io_t **pio)
 {
+    SSL_CTX *ssl_ctx = (SSL_CTX *) ctx;     /* see klin/tls.h */
     io_ssl_t *io_ssl = NULL;
     long vfy;
 

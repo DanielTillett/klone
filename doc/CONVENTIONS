@@ -101,6 +101,16 @@ server.c), which must interrupt any code, a slow page or accept(2): the
 watchdog (it asks the parent for one more worker with a single ppc
 write(2)) and the idle timeout of a spare worker (server_stop()).
 
+CRYPTOGRAPHY
+
+Hashes, MACs, ciphers and random bytes go through klin/crypto.h (kc_*),
+TLS through klin/tls.h: only src/libutils/crypto.c and the TLS layer
+(src/libtls, src/libio/iossl.c, klin/tlsprv.h) call OpenSSL, with no API
+deprecated in OpenSSL 3. OpenSSL is the only backend; a second one waits
+until a device cannot take OpenSSL, and would be mbedTLS (Apache 2.0), not
+wolfSSL (GPL/commercial). See doc/CRYPTO.
+
+
 NAMES AND TEXT
 
 Public functions are prefixed with their module (request_, response_,

@@ -31,12 +31,7 @@
 #include <klin/utils.h>
 #include "http_s.h"
 
-#ifdef SSL_OPENSSL
-#include <openssl/crypto.h>
-#include <openssl/evp.h>
-#include <openssl/hmac.h>
-#include <openssl/rand.h>
-#endif
+#include <klin/crypto.h>
 
 enum {
     AUTH_SCHEME_BASIC = 1,
@@ -186,16 +181,16 @@ static int auth_equal(const char *a, const char *b)
 {
     size_t la = strlen(a);
 
-    return la == strlen(b) && !CRYPTO_memcmp(a, b, la);
+    return la == strlen(b) && kc_memeq(a, b, la);
 }
 
 /* the nonce for 'realm' issued at 't' */
 static int auth_nonce(http_t *h, const char *realm, unsigned long t,
         char *out, size_t size)
 {
-    unsigned char mac[EVP_MAX_MD_SIZE];
-    unsigned int maclen = 0;
-    char ts[32], msg[512], hex[2 * EVP_MAX_MD_SIZE + 1];
+    unsigned char mac[KC_MD_MAX];
+    size_t maclen = 0;
+    char ts[32], msg[512], hex[2 * KC_MD_MAX + 1];
     int n;
 
     n = snprintf(ts, sizeof ts, "%016lx", t);
@@ -203,8 +198,8 @@ static int auth_nonce(http_t *h, const char *realm, unsigned long t,
     n = snprintf(msg, sizeof msg, "%s:%s", ts, realm);
     dbg_err_if(n < 0 || (size_t) n >= sizeof msg);
 
-    dbg_err_if(HMAC(EVP_sha256(), h->auth_secret, sizeof h->auth_secret,
-                (const unsigned char *) msg, (size_t) n, mac, &maclen) == NULL);
+    dbg_err_if(kc_hmac(KC_SHA256, h->auth_secret, sizeof h->auth_secret,
+                msg, (size_t) n, mac, &maclen));
     u_tohex(hex, (const char *) mac, maclen);
 
     n = snprintf(out, size, "%s%s", ts, hex);
@@ -337,14 +332,17 @@ static struct { unsigned char key[32]; time_t when; } auth_cache[AUTH_BASIC_CACH
 static void auth_cache_key(http_t *h, const char *cred, const char *stored,
         unsigned char key[32])
 {
-    unsigned int len = 32;
+    unsigned char mac[KC_MD_MAX];
     char msg[1024];
     int n = snprintf(msg, sizeof msg, "%s\n%s", cred, stored);
 
     if(n < 0 || (size_t) n >= sizeof msg ||
-            HMAC(EVP_sha256(), h->auth_secret, sizeof h->auth_secret,
-                (const unsigned char *) msg, (size_t) n, key, &len) == NULL)
+            kc_hmac(KC_SHA256, h->auth_secret, sizeof h->auth_secret, msg,
+                (size_t) n, mac, NULL))
         memset(key, 0, 32);     /* never matches a filled slot */
+    else
+        memcpy(key, mac, 32);
+    kc_cleanse(msg, sizeof msg);
 }
 
 static int auth_cache_hit(const unsigned char key[32])
@@ -354,7 +352,7 @@ static int auth_cache_hit(const unsigned char key[32])
 
     for(i = 0; i < AUTH_BASIC_CACHE; ++i)
         if(auth_cache[i].when && now - auth_cache[i].when < AUTH_BASIC_CACHE_TTL
-                && !CRYPTO_memcmp(auth_cache[i].key, key, 32))
+                && kc_memeq(auth_cache[i].key, key, 32))
             return 1;
 
     return 0;
@@ -395,11 +393,11 @@ static u_config_t *auth_basic(http_t *h, vhost_t *vhost, const char *cred)
         auth_cache_add(key);
     }
 
-    OPENSSL_cleanse(raw, sizeof raw);
+    kc_cleanse(raw, sizeof raw);
 
     return user;
 err:
-    OPENSSL_cleanse(raw, sizeof raw);
+    kc_cleanse(raw, sizeof raw);
     return NULL;
 }
 
@@ -622,7 +620,7 @@ int auth_init_secret(http_t *h)
     dbg_return_if (h == NULL, ~0);
 
 #ifdef SSL_OPENSSL
-    dbg_err_if(RAND_bytes(h->auth_secret, sizeof h->auth_secret) != 1);
+    dbg_err_if(kc_random(h->auth_secret, sizeof h->auth_secret));
 #endif
 
     return 0;

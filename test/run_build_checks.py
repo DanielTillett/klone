@@ -87,6 +87,23 @@ def fetch_all(daemon, temp, paths, embedded_port=None):
         process.wait()
 
 
+# the only sources that may call OpenSSL: the crypto backend and the TLS
+# layer (doc/CRYPTO); everything else goes through klin/crypto.h and tls.h
+OPENSSL_ALLOWED = {"src/libutils/crypto.c", "src/libtls/tls.c", "src/libtls/tls_glue.c",
+                   "src/libtls/keyproxy.c", "src/libio/iossl.c", "klin/tlsprv.h"}
+
+
+def check_openssl_confined():
+    found = set()
+    for top in ("src", "klin", "webapp"):
+        for path in (ROOT / top).rglob("*.[ch]"):
+            text = path.read_text(errors="replace")
+            if "#include <openssl/" in text:
+                found.add(path.relative_to(ROOT).as_posix())
+    check(found <= OPENSSL_ALLOWED,
+          f"OpenSSL used outside the crypto backend and TLS layer: {sorted(found - OPENSSL_ALLOWED)}")
+
+
 def check_cgi(daemon, temp):
     cgi_dir = temp / "cgi-bin"
     cgi_dir.mkdir()
@@ -129,6 +146,7 @@ def check_cgi(daemon, temp):
 
 
 def main():
+    check_openssl_confined()
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--generator", default="Ninja" if shutil.which("ninja") else "Unix Makefiles")
     parser.add_argument("--make-program", help="build tool for the generator, e.g. bmake")

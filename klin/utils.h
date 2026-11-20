@@ -24,9 +24,7 @@
 #include <klin/md5.h>
 #include <klin/os.h>
 #include <klin/mime_map.h>
-#ifdef SSL_ON
-#include <openssl/evp.h>
-#endif
+#include <klin/crypto.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -126,9 +124,10 @@ int u_pwd_init_agnostic (const char *fqn, int hashed, int in_memory,
         u_pwd_t **ppwd);
 
 #ifdef SSL_ON
-int u_cipher_encrypt(const EVP_CIPHER *cipher, unsigned char *key, 
+/* 'cipher' is a KC_* cipher of klin/crypto.h */
+int u_cipher_encrypt(int cipher, unsigned char *key,
     unsigned char *iv, char *dst, size_t *dcount, const char *src, size_t ssz);
-int u_cipher_decrypt(const EVP_CIPHER *cipher, unsigned char *key, 
+int u_cipher_decrypt(int cipher, unsigned char *key,
     unsigned char *iv, char *dst, size_t *dcount, const char *src, size_t ssz);
 #endif
 

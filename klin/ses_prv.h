@@ -11,12 +11,8 @@
 #define _KLIN_SESPRV_H_
 
 #include "klin_conf.h"
-#ifdef SSL_OPENSSL
-#include <openssl/hmac.h>
-#include <openssl/evp.h>
-#include <openssl/rand.h>
-#endif
 #include <u/libu.h>
+#include <klin/crypto.h>
 #include <klin/session.h>
 #include <klin/request.h>
 #include <klin/response.h>
@@ -51,16 +47,12 @@ enum {
     SESSION_ID_BUFSZ = 1 + SESSION_ID_LENGTH    /* sid buffer size  */
 };
 
-/* hmac and cipher key size */
-enum { 
-    HMAC_KEY_LEN = 64, 
-    #ifdef SSL_OPENSSL
-    CIPHER_KEY_LEN = EVP_MAX_KEY_LENGTH, 
-    CIPHER_KEY_BUFSZ = 2* EVP_MAX_KEY_LENGTH,  /* key + padding */
-    CIPHER_IV_LEN = EVP_MAX_IV_LENGTH
-    #else
-    CIPHER_KEY_LEN = 32, CIPHER_KEY_BUFSZ = 64, CIPHER_IV_LEN = 16
-    #endif
+/* hmac and cipher key size (the session formats depend on them) */
+enum {
+    HMAC_KEY_LEN = 64,
+    CIPHER_KEY_LEN = KC_KEY_MAX,
+    CIPHER_KEY_BUFSZ = 2 * KC_KEY_MAX,     /* key + padding */
+    CIPHER_IV_LEN = KC_IV_MAX
  };
 
 
@@ -86,12 +78,12 @@ typedef struct session_opt_s
 
     #ifdef SSL_ON
     char keyvar[128]; /* name of the session variable w/ the description key */
-    const EVP_CIPHER *cipher; /* encryption cipher algorithm         */
+    int cipher;             /* encryption cipher (KC_*)              */
     unsigned char cipher_key[CIPHER_KEY_BUFSZ]; /* cipher secret key  */
     unsigned char cipher_iv[CIPHER_IV_LEN + 1]; /* hex decoder also writes NUL */
     /* client-side options/structs                                   */
-    EVP_MAC_CTX *hmac_ctx; /* owned OpenSSL 3 MAC context */
-    const EVP_MD *hash; /* client-side session HMAC hash algorithm   */
+    kc_hmac_t *hmac;        /* keyed HMAC (owned)                    */
+    int hash;               /* client-side session HMAC hash (KC_*)  */
     char hmac_key[HMAC_KEY_LEN]; /* session HMAC secret key         */
     #endif
 } session_opt_t;

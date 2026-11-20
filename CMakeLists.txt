@@ -140,6 +140,12 @@ target_include_directories(klin_settings BEFORE INTERFACE
     "${KLIN_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_definitions(klin_settings INTERFACE HAVE_CONF_H
     $<$<BOOL:${KLIN_DEBUG}>:DEBUG>)
+# Klin's own code uses no OpenSSL API deprecated in 3.0 (site pages, being
+# user code, are not held to it)
+if(KLIN_WITH_OPENSSL)
+    target_compile_definitions(klin_settings INTERFACE
+        OPENSSL_API_COMPAT=30000 OPENSSL_NO_DEPRECATED)
+endif()
 set(KLIN_C_OPTIONS "")
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     list(APPEND KLIN_C_OPTIONS -fgnu89-inline)
@@ -257,7 +263,7 @@ list(TRANSFORM _trans PREPEND ${_src}/libtrans/)
 klin_library(trans ${_trans})
 
 set(_utils utils.c md5.c mime_map.c timer.c date.c version.c path.c pwd.c
-    authhash.c json.c sandbox.c)
+    authhash.c json.c sandbox.c crypto.c)
 list(TRANSFORM _utils PREPEND ${_src}/libutils/)
 klin_library(utils ${_utils})
 

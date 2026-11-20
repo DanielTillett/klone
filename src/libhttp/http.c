@@ -12,8 +12,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 #ifdef SSL_ON
-#include <openssl/ssl.h>
-#include <openssl/err.h>
 #endif 
 #include <u/libu.h>
 #include <klin/utils.h>
@@ -1359,7 +1357,7 @@ static int https_backend_init(struct backend_s *be)
     /* turn on SSL encryption */
     https->ssl = 1;
 
-    /* load config values and set SSL_CTX accordingly */
+    /* load config values and set the TLS context accordingly */
     https->ssl_ctx = tls_load_init_ctx(http_get_config(https));
     warn_err_ifm (https->ssl_ctx == NULL, "bad or missing HTTPS credentials");
 
@@ -1380,7 +1378,7 @@ static int https_backend_term(struct backend_s *be)
     if (https == NULL)
         return 0;
 
-    SSL_CTX_free(https->ssl_ctx);
+    tls_ctx_free(https->ssl_ctx);
 
     return http_backend_term(be); 
 err:

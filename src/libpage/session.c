@@ -294,7 +294,7 @@ static int session_is_good_id(const char *id)
 
     for (p = id; *p != '\0'; ++p)
     {
-        if (!isxdigit(*p))
+        if (!isxdigit((unsigned char) *p))
             return 0;
     }
 

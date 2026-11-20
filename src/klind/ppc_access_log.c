@@ -62,7 +62,7 @@ int server_ppc_cb_access_log(ppc_t *ppc, int fd, unsigned char cmd, char *data,
     backend_t *be;
     vhost_t *vhost;
     vhost_list_t *vhost_list;
-    http_t *http;
+    http_t *http = NULL;
 
     u_unused_args(ppc, fd, cmd, size);
 
@@ -72,9 +72,10 @@ int server_ppc_cb_access_log(ppc_t *ppc, int fd, unsigned char cmd, char *data,
     pla = (ppc_access_log_t*) data;
     s = (server_t *) vso;
 
-    /* get the http object */
-    if(!server_get_backend_by_id(s, pla->bid, &be) && be->arg)
-        http = (http_t*)be->arg;
+    /* get the http object: a worker could send any backend id (and the
+       pointer was left unset when it matched none: found by clang-tidy) */
+    dbg_err_if(server_get_backend_by_id(s, pla->bid, &be) || be->arg == NULL);
+    http = (http_t*)be->arg;
 
     dbg_err_if((vhost_list = http_get_vhost_list(http)) == NULL);
 

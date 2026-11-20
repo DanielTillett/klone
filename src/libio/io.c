@@ -638,8 +638,9 @@ ssize_t io_vprintf(io_t *io, const char *fmt, va_list ap)
     char buf[BUFSZ];
     va_list apcpy;
 
-    dbg_err_if (io == NULL);
-    dbg_err_if (fmt == NULL);
+    /* not dbg_err_if: 'err' ends apcpy, which is not started yet */
+    dbg_return_if (io == NULL, -1);
+    dbg_return_if (fmt == NULL, -1);
 
 #ifdef VA_COPY_UNAVAIL
     u_unused_args(apcpy);

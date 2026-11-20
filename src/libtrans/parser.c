@@ -118,7 +118,7 @@ int parser_run(parser_t *p)
             }
             break;
         case S_START_CODE:
-            if(isspace(c))
+            if(isspace((unsigned char) c))
                 p->cmd_code = 0;
             else {
                 p->cmd_code = c;

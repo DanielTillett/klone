@@ -159,7 +159,7 @@ static void print_header(parser_t *p, lang_c_ctx_t *ctx)
     dbg_if (u_strlcat(dfun, file, URI_BUFSZ));
 
     for(i = 0; i < (int) strlen(dfun); ++i)
-        if(!isalnum(dfun[i]))
+        if(!isalnum((unsigned char) dfun[i]))
             dfun[i] = '_'; /* just a-zA-Z0-9 allowed */
 
     /* add a dummy function that the user can use to set a breakpoint when

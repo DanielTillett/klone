@@ -383,7 +383,7 @@ int u_match_ext(const char *filename, const char *extension)
     ext = extension + elen - 1;
     for( ; elen; --fn, --ext, --elen)
     {
-        if(tolower(*fn) != tolower(*ext))
+        if(tolower((unsigned char) *fn) != tolower((unsigned char) *ext))
             return 0;
     }
     return 1;
@@ -715,7 +715,7 @@ static ssize_t u_hexncpy_encode(char *d, const char *s, size_t slen)
 
 	for(i = 0, t = 0; i < slen; ++i, t += 2)
 	{
-		c = s[i];
+		c = (unsigned char) s[i];
         d[t]   = u_tochex((c >> 4) & 0x0F);
         d[t+1] = u_tochex(c & 0x0F);
 	}
@@ -1165,7 +1165,7 @@ int u_printf_ccstr(io_t *o, const char *buf, size_t sz)
             io_printf(o, "\\\\");
             break;
         default:
-            if(isprint(c))
+            if(isprint((unsigned char) c))
                 io_putc(o, c);
             else {
                 io_printf(o, "\\x%c%c", u_tochex((c >> 4) & 0x0F),
@@ -1221,7 +1221,7 @@ void u_tohex(char *hex, const char *src, size_t sz)
     
     for(i = 0, t = 0; i < sz; ++i, t += 2)
     {
-        c = src[i];
+        c = (unsigned char) src[i];
         hex[t]   = u_tochex((c >> 4) & 0x0F);
         hex[t+1] = u_tochex(c & 0x0F);
     }

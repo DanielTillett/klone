@@ -1095,7 +1095,7 @@ static int request_get_fieldparam(request_t *rq, const char *field_name,
 
     /* a param value ends on the first ';', space or at the end of string */
     for(p = param_value; ; ++p)
-        if(*p == '\0' || *p == ';' || isspace(*p))
+        if(*p == '\0' || *p == ';' || isspace((unsigned char) *p))
             break; /* end of param value */
 
     /* param value len */
@@ -1172,7 +1172,7 @@ static int parse_content_disposition(header_t *h, char *name, char *filename,
     for(src = buf; (tok = strtok_r(src, ";", &pp)) != NULL; src = NULL)
     {
         /* skip trailing blanks */
-        while(isspace(*tok))
+        while(isspace((unsigned char) *tok))
             ++tok;
 
         if(strncmp(tok, "form-data", strlen("form-data")) == 0)

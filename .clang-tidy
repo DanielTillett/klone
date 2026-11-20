@@ -20,4 +20,5 @@ Checks: >
   cert-msc30-c,
   cert-msc50-cpp
 HeaderFilterRegex: '(src|klin)/'
-WarningsAsErrors: ''
+# the analyzer's bug checks fail the job; the rest is listed in its summary
+WarningsAsErrors: 'clang-analyzer-core.*,clang-analyzer-unix.*,clang-analyzer-security.*,clang-analyzer-valist.*'

@@ -305,7 +305,7 @@ int translate_makefile_filepath(const char *filepath, const char *prefix,
     if(filepath[0] == '/' || filepath[0] == '\\')
     {   /* absolute path */
         dbg_err_if(u_snprintf(file_in, U_FILENAME_MAX, "%s", filepath));
-    } else if(isalpha(filepath[0]) && filepath[1] == ':') {
+    } else if(isalpha((unsigned char) filepath[0]) && filepath[1] == ':') {
         /* absolute path Windows (X:/....) */
         dbg_err_if(u_snprintf(file_in, U_FILENAME_MAX, "%s", filepath));
     } else {
@@ -690,7 +690,7 @@ static int cb_pre_html_block(parser_t *p, void *arg, const char *buf, size_t sz)
         {
             if(buf[i] == '\n')
                 ln++; /* find out the line of the first not-blank char */
-            if(!isspace(buf[i]))
+            if(!isspace((unsigned char) buf[i]))
             {
                 dbg_err_if(io_name_get(p->in, file, U_FILENAME_MAX));
                 u_con("[%s:%d] warning: text out of blocks is not allowed in "

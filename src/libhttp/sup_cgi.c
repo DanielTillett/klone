@@ -338,7 +338,7 @@ static int cgi_makeenv(request_t *rq, response_t *rs, cgi_env_t *env)
             if(*p == '-')
                 *p = '_';
             else
-                *p = toupper(*p);
+                *p = (char) toupper((unsigned char) *p);
         }
 
         if(field_get_value(field))

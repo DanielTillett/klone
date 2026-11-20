@@ -25,6 +25,7 @@
 #include <klin/timer.h>
 #include <klin/translat.h>
 #include <klin/json.h>
+#include <math.h>
 #include <klin/crypto.h>
 #ifdef SSL_OPENSSL
 #include <klin/auth.h>
@@ -421,6 +422,14 @@ static void test_json_parse(void)
     CHECK(!strcmp(json_key_at(j, 0), "name"));
     /* lookups through missing values are safe */
     CHECK(json_string(json_get(json_get(j, "nope"), "deeper")) == NULL);
+    json_free(j);
+
+    /* -0 keeps its sign: a double, not the integer 0 (found by fuzzing:
+       -0.0 was written "-0", which read back as 0) */
+    CHECK(parse("-0", &j) == 0 && json_int64(j, &v) != 0 &&
+            json_number(j) == 0 && signbit(json_number(j)));
+    json_free(j);
+    CHECK(parse("0", &j) == 0 && json_int64(j, &v) == 0 && v == 0);
     json_free(j);
 
     CHECK(parse("\"a\\u0000b\"", &j) == 0 && json_string_len(j) == 3);

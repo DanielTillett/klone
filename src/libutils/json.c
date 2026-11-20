@@ -340,7 +340,9 @@ static json_t *json_parse_number(json_parser_t *ps)
     {
         errno = 0;
         j->ival = strtoll(buf, &e, 10);
-        j->is_int = (errno == 0);
+        /* "-0" is the double -0.0 (as an integer it would lose its sign,
+           and -0.0 written back would read differently) */
+        j->is_int = (errno == 0) && !(j->ival == 0 && buf[0] == '-');
     }
     if(!isfinite(j->num))
     {

@@ -319,15 +319,19 @@ int tls_use_PrivateKey_file (SSL_CTX *ctx, const char *res_name, int type,
     dbg_return_if (!res_name, 0);
     dbg_return_if (type != SSL_FILETYPE_PEM, 0);
 
+    /* a key file goes to a key manager that reads it itself: klind never
+       decodes it, so no copy is left in memory the workers inherit */
+    if (keymgr && emb_lookup(res_name, &er) != 0)
+        return (tls_keyproxy_use_key_file(ctx, res_name, sandbox) == 0);
+
     dbg_goto_if (!(b = tls_get_file_bio(res_name)), end);
     dbg_goto_if (!(pkey = PEM_read_bio_PrivateKey(b, NULL, NULL, NULL)), end);
     if (keymgr)
     {
         /* built into klind, the key is in every process's memory anyway */
-        if (emb_lookup(res_name, &er) == 0)
-            warn("key_manager: %s is embedded in klind, so every process "
-                    "holds it; use a key file to keep it out of the "
-                    "workers", res_name);
+        warn("key_manager: %s is embedded in klind, so every process "
+                "holds it; use a key file to keep it out of the "
+                "workers", res_name);
         ret = (tls_keyproxy_use_key(ctx, pkey, sandbox) == 0);
     }
     else

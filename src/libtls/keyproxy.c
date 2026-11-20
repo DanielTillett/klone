@@ -7,8 +7,11 @@
  */
 
 /* The TLS key manager (doc/KEYMGR). The private key of an HTTPS server is
- * loaded once, at startup, and handed to a separate process, the key
- * manager, before any worker is forked; klind then wipes its own copy.
+ * read from its file by a separate process, the key manager, forked at
+ * startup before any worker: klind itself never decodes it (a decoded key
+ * leaves copies in freed memory that every worker would inherit), and only
+ * learns the public key. A key embedded in klind is in every process
+ * anyway; it is handed to the key manager, with a warning.
  * Workers only hold a proxy key: an OpenSSL 3 provider ("klin-keyproxy")
  * whose key management answers with the public key and whose signature
  * operation asks the key manager to sign the handshake digest. A worker
@@ -42,6 +45,7 @@
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/params.h>
+#include <openssl/pem.h>
 #include <openssl/provider.h>
 #include <openssl/x509.h>
 #include <u/libu.h>
@@ -60,8 +64,19 @@ enum {
     KP_TBS_MAX = 128,           /* largest digest signed                */
     KP_SIG_MAX = 1024,          /* largest signature (RSA 8192)          */
     KP_TIMEOUT = 5000,          /* ms a worker waits for a signature     */
+    KP_START_TIMEOUT = 10000,   /* ms klind waits for a key manager      */
+    KP_PUB_MAX = 4096,          /* largest public key (DER)              */
     KP_MAX_MANAGERS = 16
 };
+
+/* what a key manager that read its key file tells klind */
+typedef struct
+{
+    int32_t ok;
+    char type[8];               /* "RSA" or "EC"                         */
+    uint32_t len;
+    unsigned char der[KP_PUB_MAX];  /* SubjectPublicKeyInfo              */
+} kp_hello_t;
 
 /* a request to the key manager, and its answer */
 typedef struct
@@ -265,6 +280,86 @@ static int kp_manager_start(EVP_PKEY *key, int sandbox, int *pchan)
     /* the workers' end must not leak into exec'd CGIs */
     (void) fcntl(sv[0], F_SETFD, FD_CLOEXEC);
     kp_managers[kp_nmanagers++] = pid;
+    *pchan = sv[0];
+
+    return 0;
+err:
+    if(sv[0] >= 0)
+        close(sv[0]);
+    if(sv[1] >= 0)
+        close(sv[1]);
+    return ~0;
+}
+
+/* the type of 'key' the key manager can sign with, NULL if none */
+static const char *kp_key_type(EVP_PKEY *key)
+{
+    if(EVP_PKEY_is_a(key, "RSA"))
+        return "RSA";
+    if(EVP_PKEY_is_a(key, "EC"))
+        return "EC";
+    return NULL;
+}
+
+/* start a key manager that reads the key in 'path' itself; *pchan: the
+   control socket, *hello: the key's type and public key */
+static int kp_manager_start_file(const char *path, int sandbox, int *pchan,
+        kp_hello_t *hello)
+{
+    int sv[2] = { -1, -1 };
+    pid_t pid, parent = getpid();
+    struct pollfd pfd;
+    EVP_PKEY *key = NULL;
+    unsigned char *p;
+    const char *type;
+    BIO *b;
+    int len;
+
+    dbg_err_if(kp_nmanagers == KP_MAX_MANAGERS);
+    dbg_err_sif(socketpair(AF_UNIX, SOCK_DGRAM, 0, sv));
+
+    dbg_err_sif((pid = fork()) < 0);
+    if(pid == 0)
+    {   /* the key manager: read the key, say which it is, never return */
+        close(sv[0]);
+        memset(hello, 0, sizeof *hello);
+        if((b = tls_get_file_bio(path)) != NULL)
+        {
+            key = PEM_read_bio_PrivateKey(b, NULL, NULL, NULL);
+            BIO_free(b);    /* secure memory: wiped */
+        }
+        if(key && (type = kp_key_type(key)) != NULL &&
+                (len = i2d_PUBKEY(key, NULL)) > 0 && len <= KP_PUB_MAX)
+        {
+            p = hello->der;
+            hello->len = (uint32_t) i2d_PUBKEY(key, &p);
+            (void) u_strlcpy(hello->type, type, sizeof hello->type);
+            hello->ok = 1;
+        }
+        (void) send(sv[1], hello, sizeof *hello, 0);
+        if(!hello->ok)
+            _exit(1);
+        kp_manager_setup(sv[1]);
+        kp_warm_up(key);
+        if(sandbox && sandbox_keymgr())
+            _exit(1);
+        kp_manager_loop(key, sv[1], parent);
+        _exit(0);
+    }
+
+    close(sv[1]);
+    sv[1] = -1;
+    kp_managers[kp_nmanagers++] = pid;
+
+    pfd.fd = sv[0];
+    pfd.events = POLLIN;
+    warn_err_ifm(poll(&pfd, 1, KP_START_TIMEOUT) != 1 ||
+            recv(sv[0], hello, sizeof *hello, 0) != (ssize_t) sizeof *hello ||
+            !hello->ok || hello->len == 0 || hello->len > KP_PUB_MAX,
+            "key_manager: cannot load a private key from %s", path);
+
+    /* the workers' end must not leak into exec'd CGIs */
+    (void) fcntl(sv[0], F_SETFD, FD_CLOEXEC);
     *pchan = sv[0];
 
     return 0;
@@ -863,31 +958,16 @@ err:
  * \return \c 0 if successful, \c ~0 on error (e.g. a key that is neither
  *         RSA nor EC)
  */
-int tls_keyproxy_use_key(SSL_CTX *c, EVP_PKEY *key, int sandbox)
+/* give the context a proxy for the key a key manager holds */
+static int kp_use_proxy(SSL_CTX *c, const char *type, const unsigned char *der,
+        size_t len, int chan)
 {
-    unsigned char *der = NULL;
     EVP_PKEY_CTX *pc = NULL;
     EVP_PKEY *proxy = NULL;
     OSSL_PARAM params[3];
-    const char *type;
-    int len, chan = -1;
 
-    dbg_return_if (c == NULL || key == NULL, ~0);
-
-    if(EVP_PKEY_is_a(key, "RSA"))
-        type = "RSA";
-    else if(EVP_PKEY_is_a(key, "EC"))
-        type = "EC";
-    else
-        warn_err("key_manager: only RSA and EC keys are supported (set "
-                "key_manager no for this key)");
-
-    dbg_err_if(kp_provider_load());
-    dbg_err_if((len = i2d_PUBKEY(key, &der)) <= 0);
-    dbg_err_if(kp_manager_start(key, sandbox, &chan));
-
-    params[0] = OSSL_PARAM_construct_octet_string(KP_PARAM_PUBKEY, der,
-            (size_t) len);
+    params[0] = OSSL_PARAM_construct_octet_string(KP_PARAM_PUBKEY,
+            (void *) der, len);
     params[1] = OSSL_PARAM_construct_int(KP_PARAM_CHAN, &chan);
     params[2] = OSSL_PARAM_construct_end();
 
@@ -898,12 +978,57 @@ int tls_keyproxy_use_key(SSL_CTX *c, EVP_PKEY *key, int sandbox)
 
     EVP_PKEY_free(proxy);
     EVP_PKEY_CTX_free(pc);
-    OPENSSL_free(der);
-
     return 0;
 err:
     EVP_PKEY_free(proxy);
     EVP_PKEY_CTX_free(pc);
+    return ~0;
+}
+
+/**
+ * \brief   Use the private key in file \p path through a key manager, which
+ *          reads it itself: klind never decodes it
+ */
+int tls_keyproxy_use_key_file(SSL_CTX *c, const char *path, int sandbox)
+{
+    kp_hello_t hello;
+    int chan = -1;
+
+    dbg_return_if (c == NULL || path == NULL, ~0);
+
+    dbg_err_if(kp_provider_load());
+    dbg_err_if(kp_manager_start_file(path, sandbox, &chan, &hello));
+    dbg_err_if(kp_use_proxy(c, hello.type, hello.der, hello.len, chan));
+
+    return 0;
+err:
+    return ~0;
+}
+
+/**
+ * \brief   Use \p key (already in klind's memory: an embedded key) through
+ *          a key manager
+ */
+int tls_keyproxy_use_key(SSL_CTX *c, EVP_PKEY *key, int sandbox)
+{
+    unsigned char *der = NULL;
+    const char *type;
+    int len, chan = -1;
+
+    dbg_return_if (c == NULL || key == NULL, ~0);
+
+    if((type = kp_key_type(key)) == NULL)
+        warn_err("key_manager: only RSA and EC keys are supported (set "
+                "key_manager no for this key)");
+
+    dbg_err_if(kp_provider_load());
+    dbg_err_if((len = i2d_PUBKEY(key, &der)) <= 0);
+    dbg_err_if(kp_manager_start(key, sandbox, &chan));
+    dbg_err_if(kp_use_proxy(c, type, der, (size_t) len, chan));
+
+    OPENSSL_free(der);
+    return 0;
+err:
     OPENSSL_free(der);
     return ~0;
 }
@@ -942,6 +1067,13 @@ void tls_keyproxy_stop(void)
 int tls_keyproxy_use_key(SSL_CTX *c, EVP_PKEY *key, int sandbox)
 {
     u_unused_args(c, key, sandbox);
+    warn("key_manager is not supported on this platform");
+    return ~0;
+}
+
+int tls_keyproxy_use_key_file(SSL_CTX *c, const char *path, int sandbox)
+{
+    u_unused_args(c, path, sandbox);
     warn("key_manager is not supported on this platform");
     return ~0;
 }

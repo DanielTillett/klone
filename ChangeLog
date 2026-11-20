@@ -15,6 +15,11 @@ Klin 4.0.0:
 	  entries, so they survive a reconfigure. The Windows service keeps
 	  the name kloned. All of it is in cmake/klone_compat.cmake and the
 	  lines marked "before KLone was renamed Klin"
+	- key manager: the key manager process reads the key file itself, and
+	  klind learns only the public key. klind decoded the key and handed
+	  it over, and OpenSSL's decoder left copies in freed memory that the
+	  workers inherited (two servers sharing a key file, the second with a
+	  ca_file); the server tests now cover that configuration
 	- TLS settings (doc/TLS): the TLS 1.2 ciphers are Mozilla's
 	  "intermediate" list (forward secret key exchange, AEAD only; a new
 	  default: old clients with CBC-only or RSA key exchange are refused),

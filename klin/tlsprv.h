@@ -54,6 +54,7 @@ typedef struct tls_ctx_args_s tls_ctx_args_t;
    (the only code besides src/libutils/crypto.c that calls OpenSSL) */
 #ifdef SSL_OPENSSL
 int tls_keyproxy_use_key(SSL_CTX *c, EVP_PKEY *key, int sandbox);
+int tls_keyproxy_use_key_file(SSL_CTX *c, const char *path, int sandbox);
 int io_ssl_get_SSL(io_t *io_ssl, SSL **pssl);
 BIO *bio_from_emb (const char *);
 BIO *tls_get_file_bio(const char *res_name);

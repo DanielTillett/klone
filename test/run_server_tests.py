@@ -1414,8 +1414,10 @@ def run_keymgr_checks(check, root_pid, key, sanitized):
             check(False, f"Cannot read the memory of klind process {pid}")
     # the key manager keeps only its control socket (and /dev/null)
     managers = {pid for pid in procs if pid != root_pid and few_fds(pid)}
-    # one key manager per TLS server (two here), this key in one of them
-    check(len(managers) == 2 and len(holders) == 1 and holders <= managers,
+    # one key manager per TLS server: 'secure' and 'mtls' share this key, so
+    # both hold it, and nothing else does (klind decoding the key itself,
+    # for the second server with a ca_file, left a copy in the workers)
+    check(len(managers) == 2 and holders == managers,
           f"Private key found in {sorted(holders)}; key manager {sorted(managers)}, "
           f"processes {sorted(procs)}")
 
@@ -2014,15 +2016,6 @@ def run_server_checks(args, env, output, daemon):
 }}
 """)
         # 'limits' sets its own keep-alive and worker counts
-        # 'mtls' has its own server key: the key manager check counts where
-        # the 'secure' key is (one key manager), not two copies of one file
-        mtls_cert, mtls_key = temp / "mtls-cert.pem", temp / "mtls-key.pem"
-        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout",
-                        str(mtls_key), "-out", str(mtls_cert), "-days", "1", "-subj", "/CN=localhost"],
-                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        at = next(i for i, b in enumerate(blocks) if b.startswith("mtls\n"))
-        blocks[at] = blocks[at].replace(f"cert_file {cert}", f"cert_file {mtls_cert}").replace(
-            f"key_file {key}", f"key_file {mtls_key}")
         at = next(i for i, b in enumerate(blocks) if b.startswith("limits\n"))
         blocks[at] = re.sub(r"\n    (keep_alive_timeout|prefork\.start_child|prefork\.max_child) \d+",
                             "", blocks[at])

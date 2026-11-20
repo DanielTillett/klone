@@ -2,9 +2,10 @@ KLIN TLS KEY MANAGER
 --------------------
 
 The private key of an HTTPS server is kept out of the processes that
-serve requests. klind reads the key at startup and hands it to a key
-manager, a small process of its own, before any worker is forked; then
-it wipes its copy. Workers (and klind itself) only hold a proxy key: when
+serve requests. At startup, before any worker is forked, klind starts a
+key manager, a small process of its own, which reads the key file itself
+and tells klind only the public key: klind never decodes the private
+key. Workers (and klind itself) only hold a proxy key: when
 a TLS handshake needs a signature, the worker sends the digest to the key
 manager, which signs it and sends the signature back. A worker that runs
 attacker-controlled code can ask for signatures while it runs, but it
@@ -42,8 +43,13 @@ HOW IT WORKS
 - If a key manager exits, klind stops: nothing else holds the key, so no
   handshake could succeed. A key manager exits when klind does.
 - Key and certificate files are read into OpenSSL secure memory (wiped
-  when freed), not through stdio, so no copy of the key is left in the
-  freed memory the workers inherit.
+  when freed), not through stdio. Until 4.0's last changes klind decoded
+  the key and handed it over; OpenSSL's decoder leaves copies in ordinary
+  freed memory, which the workers inherited (seen with two servers
+  sharing a key file, the second with a ca_file). The key manager now
+  reads the file, so klind's memory never has the key.
+- One key manager per HTTPS server: servers sharing a key file have one
+  each.
 
 LIMITS
 
@@ -56,4 +62,5 @@ LIMITS
 
 The server tests check it: after TLS requests they scan the memory of
 klind and every process it started (Linux, /proc) for the private key,
-and expect to find it in the key manager only.
+and expect to find it in the key managers only (two servers share the
+key, one of them with client certificates: the case that leaked).

@@ -9,10 +9,13 @@ Builds in a temporary directory (nothing is written to the checkout):
 """
 import argparse
 import os
+import re
+import platform
 from pathlib import Path
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.parse
@@ -102,6 +105,27 @@ def check_openssl_confined():
                 found.add(path.relative_to(ROOT).as_posix())
     check(found <= OPENSSL_ALLOWED,
           f"OpenSSL used outside the crypto backend and TLS layer: {sorted(found - OPENSSL_ALLOWED)}")
+
+
+def check_hardening(daemon):
+    """The protections of KLIN_HARDENING are really in the program
+    (doc/HARDENING): read the ELF headers of klind (Linux, readelf)."""
+    if not sys.platform.startswith("linux") or shutil.which("readelf") is None:
+        return
+    rc, out = run(["readelf", "-W", "-h", "-l", "-d", "-n", "--dyn-syms", str(daemon)])
+    check(rc == 0, f"readelf failed: {out[-1000:]}")
+    stack = [line for line in out.splitlines() if "GNU_STACK" in line]
+    for name, ok in [
+            ("position independent (PIE)", re.search(r"Type:\s+DYN", out) is not None),
+            ("read-only relocations (RELRO)", "GNU_RELRO" in out),
+            ("immediate binding (BIND_NOW)", "BIND_NOW" in out or re.search(r"FLAGS_1.*\bNOW\b", out)),
+            ("non-executable stack", stack and " RWE " not in stack[0] and " RW " in stack[0]),
+            ("stack protector", "__stack_chk_fail" in out),
+            ("_FORTIFY_SOURCE", re.search(r"__\w+_chk\b", out.replace("__stack_chk_fail", "")))]:
+        check(ok, f"klind is not hardened: no {name}")
+    if platform.machine() in ("x86_64", "AMD64"):
+        check("IBT" in out and "SHSTK" in out,
+              "klind is not hardened: no control-flow protection (IBT, SHSTK)")
 
 
 def check_cgi(daemon, temp):
@@ -197,6 +221,7 @@ def main():
         check("KLONE_SITE_DIR is now KLIN_SITE_DIR" in " ".join(out.split()),
               "no deprecation warning for KLONE_SITE_DIR")
         version = (ROOT / "VERSION").read_text().strip()
+        check_hardening(b / "bin/klind")
         served = fetch_all(b / "bin/klind", temp, ["index.kl1", "old.kl1", "legacy.klone", *names])
         check("part-one" in str(served["index.kl1"]), f"page include not served: {served['index.kl1']!r}")
         check("flag=escaped" in str(served["index.kl1"]), f"escaped flag lost: {served['index.kl1']!r}")

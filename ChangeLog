@@ -15,6 +15,13 @@ Klin 4.0.0:
 	  entries, so they survive a reconfigure. The Windows service keeps
 	  the name kloned. All of it is in cmake/klone_compat.cmake and the
 	  lines marked "before KLone was renamed Klin"
+	- compiler and linker hardening (doc/HARDENING), on by default
+	  (KLIN_HARDENING=OFF turns it off): _FORTIFY_SOURCE=3 in release
+	  builds, -fstack-clash-protection, -fcf-protection (x86) or
+	  -mbranch-protection=standard (ARM64), -ftrivial-auto-var-init=zero,
+	  -Werror=format-security, PIE with -z relro -z now -z noexecstack;
+	  --dynamicbase/--nxcompat/--high-entropy-va on MinGW; MSVC
+	  equivalents. A build check reads klind's ELF headers to prove them
 	- cryptography behind one interface (doc/CRYPTO): klin/crypto.h (kc_*:
 	  digests, HMAC, PBKDF2, random bytes, constant-time compare, wiping,
 	  AES-256-CBC) implemented in src/libutils/crypto.c; TLS through an

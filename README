@@ -159,6 +159,11 @@ requests iteratively in a single process. -f overrides values in the
 embedded configuration. See klind(8) and klind.conf(5) in doc/man for all
 options.
 
+Hardening: klind is built with _FORTIFY_SOURCE, stack-clash and
+control-flow protection, PIE, full RELRO and a non-executable stack, each
+where the toolchain has it (doc/HARDENING); -DKLIN_HARDENING=OFF builds
+without.
+
 Sandbox: workers and the TLS key manager run under a seccomp filter on
 Linux (pledge on OpenBSD) that kills them for calls only an attacker needs
 and refuses the ones they have no use for (doc/SANDBOX). On by default;

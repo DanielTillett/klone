@@ -172,7 +172,8 @@ Fuzzing: every parser a client reaches has a libFuzzer target (fuzz/,
 test/run_fuzz.py), run by ClusterFuzzLite on pull requests and daily;
 CodeQL, clang-tidy and Coverity Scan analyse the code (doc/FUZZING).
 
-Limits: request header size and field count (431), body size (413), a
+Limits: request header size and field count (431), body size (413),
+workers' memory, open files and processes, a
 header deadline against slow clients, connections per client address and
 SSE/WebSocket connections per server are capped, and requests that could be
 smuggled past a proxy are refused (doc/LIMITS).

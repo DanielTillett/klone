@@ -27,6 +27,9 @@ enum {
 
     /* fork/prefork */
     SERVER_MAX_CHILD = 300,         /* total # of child process per-server    */
+    SERVER_WORKER_MEMORY = 1024,    /* MB of address space per worker      */
+    SERVER_WORKER_FILES = 1024,     /* open files per worker               */
+    SERVER_WORKER_EXTRA_PROCS = 64, /* processes beyond max_child (CGIs)   */
     SERVER_MAX_BACKEND_CHILD = 150, /* max # of child allowed to run at once 
                                        per-backend */
 

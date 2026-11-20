@@ -10,7 +10,9 @@
 #include "klin_conf.h"
 #ifdef OS_UNIX
 #include <grp.h>
+#include <sys/resource.h>
 #endif
+#include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #ifdef HAVE_SYS_WAIT
@@ -59,6 +61,7 @@ static void server_watch_fd(server_t *s, int fd, unsigned int mode);
 static void server_clear_fd(server_t *s, int fd, unsigned int mode);
 static void server_close_fd(server_t *s, int fd);
 static void server_sandbox(backend_t *be);
+static void server_limits(backend_t *be);
 
 static int server_be_listen(backend_t *be)
 {
@@ -588,6 +591,7 @@ static int server_child_serve(server_t *s, backend_t *be, int ad)
         U_CLOSE(be->ld);
 
         hook_call(child_init);
+        server_limits(be);
         server_sandbox(be);
 
         /* serve the page (the backend closes the client socket) and die */
@@ -775,6 +779,65 @@ static int server_config_has(u_config_t *c, const char *key)
 /* sandbox a worker of 'be' after its init hook (doc/SANDBOX); on by
  * default, "sandbox no" turns it off. A worker that cannot be sandboxed
  * does not serve */
+#ifdef OS_UNIX
+/* AddressSanitizer reserves terabytes of address space: no memory limit */
+#if defined(__SANITIZE_ADDRESS__)
+#define SERVER_ASAN 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define SERVER_ASAN 1
+#endif
+#endif
+
+/* set resource 'res' to 'value', soft and hard limit alike, so that the
+   worker (not root) cannot raise it again (never above the hard limit it
+   has); 0 leaves it as it is */
+static void server_rlimit(int res, rlim_t value, const char *name)
+{
+    struct rlimit rl;
+
+    if(value == 0 || getrlimit(res, &rl))
+        return;
+    if(rl.rlim_max != RLIM_INFINITY && value > rl.rlim_max)
+        value = rl.rlim_max;
+    rl.rlim_cur = rl.rlim_max = value;
+    if(setrlimit(res, &rl))
+        u_warn("worker: cannot set %s: %s", name, strerror(errno));
+}
+#endif
+
+/* a worker's resource limits (doc/LIMITS, WORKERS): its address space,
+ * open files and processes (its user's, CGIs included). Set before the
+ * sandbox, in the worker only: klind and the key manager keep theirs */
+static void server_limits(backend_t *be)
+{
+#ifdef OS_UNIX
+    int mem = SERVER_WORKER_MEMORY, files = SERVER_WORKER_FILES,
+        procs = (int) be->max_child + SERVER_WORKER_EXTRA_PROCS;
+
+    (void) u_config_get_subkey_value_i(be->config, "worker_max_memory",
+            mem, &mem);
+    (void) u_config_get_subkey_value_i(be->config, "worker_max_files",
+            files, &files);
+    (void) u_config_get_subkey_value_i(be->config, "worker_max_procs",
+            procs, &procs);
+
+#ifndef SERVER_ASAN
+    if(mem > 0)
+        server_rlimit(RLIMIT_AS, (rlim_t) mem * 1024 * 1024,
+                "worker_max_memory");
+#endif
+    if(files > 0)
+        server_rlimit(RLIMIT_NOFILE, (rlim_t) files, "worker_max_files");
+#ifdef RLIMIT_NPROC
+    if(procs > 0)
+        server_rlimit(RLIMIT_NPROC, (rlim_t) procs, "worker_max_procs");
+#endif
+#else
+    u_unused_args(be);
+#endif
+}
+
 static void server_sandbox(backend_t *be)
 {
     int on = 1;
@@ -1021,7 +1084,9 @@ int server_spawn_child(server_t *s, backend_t *be)
     /* call the hook that runs the on-child user code */
     hook_call(child_init);
 
-    /* then nothing an attacker needs is left to it (doc/SANDBOX) */
+    /* then its resource limits, and nothing an attacker needs is left to
+       it (doc/SANDBOX) */
+    server_limits(be);
     server_sandbox(be);
 
     /* child main loop: 

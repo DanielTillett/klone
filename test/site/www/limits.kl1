@@ -1,0 +1,52 @@
+<%!
+    #include <errno.h>
+    #include <fcntl.h>
+    #include <stdlib.h>
+    #include <string.h>
+    #include <unistd.h>
+    #include <sys/resource.h>
+%><%
+    /* worker resource limits (doc/LIMITS): the limits this worker has;
+       ?alloc=MB tries to allocate (and touch) that much; ?files=N tries to
+       open N descriptors */
+    const char *a = request_get_arg(request, "alloc"),
+          *f = request_get_arg(request, "files");
+    struct rlimit as, nofile, nproc;
+    char *p;
+    int i, n, fds[4096];
+
+    getrlimit(RLIMIT_AS, &as);
+    getrlimit(RLIMIT_NOFILE, &nofile);
+    getrlimit(RLIMIT_NPROC, &nproc);
+
+    if(a)
+    {
+        /* the memory is used (printed), so the compiler cannot drop the
+           allocation and assume it succeeded */
+        size_t sz = (size_t) atoi(a) * 1024 * 1024;
+        p = malloc(sz);
+        if(p)
+        {
+            memset(p, 1, sz);
+            p[sz - 1] = (char) sz;
+        }
+        io_printf(out, "%s\n", p ? (p[sz / 2] + p[sz - 1] >= 0 ? "allocated" : "?")
+                : "ENOMEM");
+        free(p);
+    }
+    else if(f)
+    {
+        n = atoi(f);
+        for(i = 0; i < n && i < 4096; ++i)
+            if((fds[i] = open("/dev/null", O_RDONLY)) < 0)
+                break;
+        io_printf(out, "%s %d\n", i == n ? "opened" : strerror(errno), i);
+        while(i > 0)
+            close(fds[--i]);
+    }
+    else
+        io_printf(out, "as=%lld nofile=%lld nproc=%lld\n",
+                as.rlim_cur == RLIM_INFINITY ? -1LL : (long long) as.rlim_cur,
+                nofile.rlim_cur == RLIM_INFINITY ? -1LL : (long long) nofile.rlim_cur,
+                nproc.rlim_cur == RLIM_INFINITY ? -1LL : (long long) nproc.rlim_cur);
+%>

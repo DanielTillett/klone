@@ -94,6 +94,9 @@ Request header limits: the number of fields (default 100), the bytes of one fiel
 \fBmax_conn_per_ip\fR
 Connections served at once from one client address (default 32; 0: no limit). Beyond it a new connection is closed as soon as it is accepted, before any TLS handshake.
 .TP
+\fBworker_max_memory\fR, \fBworker_max_files\fR, \fBworker_max_procs\fR
+Resource limits of each worker process: MB of address space (default 1024), open files (default 1024) and processes of its user (default the server's max_child plus 64). 0 leaves a limit unchanged. See doc/LIMITS.
+.TP
 \fBmax_streams\fR
 Server-sent event and WebSocket connections open at once on this server (default 100; 0: no limit), so that they cannot take every worker. Beyond it \fBsse_start\fR() and \fBws_accept\fR() answer 503 with Retry-After.
 .TP

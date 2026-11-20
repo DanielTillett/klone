@@ -61,6 +61,29 @@ max_conn_per_ip, or set it to 0 and limit clients at the proxy.
 In the iterative model (klind -d) there is one connection at a time and
 these caps never apply.
 
+WORKERS
+
+Each worker process (prefork or fork model) gets resource limits when it
+starts, before its sandbox:
+
+    worker_max_memory   1024      MB of address space (RLIMIT_AS)
+    worker_max_files    1024      open files (RLIMIT_NOFILE)
+    worker_max_procs    max_child processes of its user (RLIMIT_NPROC),
+                        + 64      so the CGIs it starts are bounded too
+    prefork.max_child   150       workers at once (fork.max_child for the
+                                  fork model); max_child, 300, for the whole
+                                  of klind
+
+0 leaves a limit as klind has it. Past a limit, malloc() returns NULL,
+open() fails with EMFILE and fork() with EAGAIN: the page sees the error,
+and the worker goes on. Both the soft and the hard limit are set, so a
+worker running as an ordinary user (uid and gid set, doc/SYSTEMD) cannot
+raise them; one running as root could. RLIMIT_NPROC counts all the
+processes of the user, so give klind a user of its own. Sanitizer builds
+set no memory limit (AddressSanitizer reserves terabytes of address
+space). klind itself and the key manager keep their own limits; the
+iterative model (-d) has no workers.
+
 TESTED
 
 test/run_server_tests.py sends each refused request with a valid request
@@ -69,3 +92,7 @@ answered), valid requests at each limit, a header trickled in 6-byte lines
 every 250 ms (closed within the deadline), and in the prefork model a
 fourth connection over max_conn_per_ip 3 and a third stream over
 max_streams 2. With either cap set to 0 the corresponding checks fail.
+For the worker limits, a page reports the limits it runs under (the
+defaults, and 256 MB / 64 files on another server) and finds that 20
+files open and 200 do not, and that 16 MB can be allocated and 512 MB
+cannot, after which the worker still serves.

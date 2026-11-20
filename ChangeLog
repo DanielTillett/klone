@@ -15,6 +15,10 @@ Klin 4.0.0:
 	  entries, so they survive a reconfigure. The Windows service keeps
 	  the name kloned. All of it is in cmake/klone_compat.cmake and the
 	  lines marked "before KLone was renamed Klin"
+	- worker resource limits (doc/LIMITS): each worker gets RLIMIT_AS
+	  (worker_max_memory, 1024 MB), RLIMIT_NOFILE (worker_max_files,
+	  1024) and RLIMIT_NPROC (worker_max_procs, max_child + 64), soft and
+	  hard, before its sandbox; 0 turns one off (new defaults)
 	- key manager: the key manager process reads the key file itself, and
 	  klind learns only the public key. klind decoded the key and handed
 	  it over, and OpenSSL's decoder left copies in freed memory that the

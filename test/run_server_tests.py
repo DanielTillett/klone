@@ -1161,6 +1161,9 @@ ACCESS = """access
 
 LIMITS = """max_conn_per_ip 3
     max_streams 2
+    worker_max_memory 256
+    worker_max_files 64
+    worker_max_procs 0
     keep_alive_timeout 8
     prefork.start_child 4
     prefork.max_child 6"""
@@ -1822,6 +1825,39 @@ def run_tls_checks(check, secure, mtls, client_cert):
         check("\nNew, " in late, f"{version} session resumed after its ticket key expired")
 
 
+def run_worker_limit_checks(args, check, plain, limits, sanitized):
+    """Worker resource limits (doc/LIMITS): the defaults on 'plain' (1024
+    MB, 1024 files, max_child 2 + 64 processes), 256 MB, 64 files and no
+    process limit on 'limits'; past them, malloc() and open() fail and the
+    worker goes on. Prefork only (-d has no workers); the memory limit is
+    not set in sanitizer builds."""
+    if not args.prefork:
+        return
+
+    def page(port, query=b""):
+        reply = exchange(port, b"GET /limits.kl1?" + query + b" HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        return reply.partition(b"\r\n\r\n")[2].decode().strip()
+
+    def limits_of(port):
+        return dict(kv.split("=") for kv in page(port).split())
+
+    got = limits_of(plain)
+    check(got["nofile"] == "1024" and got["nproc"] == "66" and
+          got["as"] == ("-1" if sanitized else str(1024 * 1024 * 1024)),
+          f"Wrong default worker limits: {got}")
+    got = limits_of(limits)
+    check(got["nofile"] == "64" and got["as"] == ("-1" if sanitized else str(256 * 1024 * 1024)) and
+          got["nproc"] != "70", f"Wrong configured worker limits: {got}")
+    check(page(limits, b"files=20") == "opened 20", "A worker could not open 20 files under 64")
+    check(page(limits, b"files=200").startswith("Too many open files"),
+          f"worker_max_files not enforced: {page(limits, b'files=200')}")
+    if not sanitized:
+        check(page(limits, b"alloc=16") == "allocated", "A worker could not allocate 16 MB under 256")
+        big = page(limits, b"alloc=512")
+        check(big == "ENOMEM", f"worker_max_memory not enforced: {big!r}")
+        check(page(limits, b"alloc=16") == "allocated", "The worker did not go on after ENOMEM")
+
+
 def run_bad_auth_checks(check, daemon, env, temp):
     """Unsafe or broken auth (and route) configurations stop klind at
     startup, instead of serving the realm unprotected (the reason goes to
@@ -2164,6 +2200,9 @@ def run_server_checks(args, env, output, daemon):
                 run_limit_checks(args, check, plain, limits, temp)
                 run_session_checks(check, plain, client, files, limits, sessions)
                 run_tls_checks(check, secure, mtls, (client_cert, client_key))
+                run_worker_limit_checks(args, check, plain, limits,
+                                        "-fsanitize" in cmake_cache_value(daemon.parent.parent,
+                                                                          "CMAKE_C_FLAGS"))
                 run_route_checks(args, check, plain)
                 run_access_checks(check, client, blocked, temp)
                 run_validation_checks(check, plain)

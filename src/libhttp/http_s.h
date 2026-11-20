@@ -40,4 +40,11 @@ struct http_s
     int conn_class;
 };
 
+/* http.c */
+int http_path_join(char *dst, size_t sz, const char *dir, const char *uri);
+int http_load_aliases(vhost_t *vhost);
+
+/* files.c: open a file resolved for a request (doc/FILES) */
+int http_open_file(http_t *h, request_t *rq, const char *fqn, int flags);
+
 #endif

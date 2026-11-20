@@ -90,6 +90,8 @@ int request_set_addr(request_t *rq, const char *addr);
 int request_set_peer_addr(request_t *rq, const char *addr);
 void request_set_cgi(request_t *rq, int cgi);
 void request_clear_uri(request_t *rq);
+int request_resplit_uri(request_t *rq,
+        int (*is_valid_uri)(void*, const char *, size_t), void* arg);
 
 int request_print(request_t *rq);
 

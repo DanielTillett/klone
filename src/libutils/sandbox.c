@@ -94,9 +94,14 @@ static const sb_call_t sb_worker[] = {
     { NULL, 0 }
 };
 
-/* CGI scripts: a worker that runs them forks and executes */
+/* CGI scripts: a worker that runs them forks and executes (in the
+   script's directory); a new program sets up its thread pointer */
 static const sb_call_t sb_exec[] = {
     C(clone), C(execve), C(wait4), C(waitid), C(setpgid), C(setsid),
+    C(chdir), C(fchdir),
+#ifdef SYS_arch_prctl
+    C(arch_prctl),
+#endif
 #ifdef SYS_clone3
     C(clone3),
 #endif

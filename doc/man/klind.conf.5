@@ -240,6 +240,26 @@ a request to
 will be mapped to
 \fIsup://var/httpd/img/a.gif\fR.
 .TP
+\fBfollow_symlinks\fR
+Symbolic links in files served from the file system and in CGI scripts:
+\fIinside\fR (the default) follows a link whose target is inside the dir_root or alias target the path was resolved under,
+\fIno\fR follows none,
+\fIyes\fR follows all. See doc/FILES.
+.TP
+\fBserve_files\fR, \fBrun_cgi\fR
+\fIno\fR turns off the file system or the CGI supplier for this server or virtual host (default \fIyes\fR, when built in). See doc/FILES.
+.TP
+\fBcgi.timeout\fR, \fBcgi.max_cpu\fR, \fBcgi.max_memory\fR
+Limits of a CGI script: seconds before it is killed (default 60; 504 if it sent nothing), seconds of CPU time (default 30) and MB of address space (default 512). 0 sets none. See doc/CGI.
+.TP
+\fBcgi.pass_env\fR
+Variables of klind's environment passed to CGI scripts (default none).
+.TP
+\fBcgi.pass_headers\fR
+Request header fields passed to CGI scripts as HTTP_* variables:
+\fIdefault\fR (all but Authorization and Proxy-Authorization),
+\fIall\fR, or a list of field names. Proxy, and names with other than letters, digits and '\-', are never passed. See doc/CGI.
+.TP
 \fBserver_sig\fR
 Set the server signature string which will be returned in the HTTP head (Server: %s). When setting a custom Product token, the guidelines stated in paragraph 3.7 of RFC 1945 should be followed. The default value is
 "klin/1.0".

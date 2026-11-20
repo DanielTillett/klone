@@ -85,6 +85,7 @@ struct http_status_map_s
     { HTTP_STATUS_NOT_IMPLEMENTED       , "Not Implemented"         },
     { HTTP_STATUS_BAD_GATEWAY           , "Bad Gateway"             },
     { HTTP_STATUS_SERVICE_UNAVAILABLE   , "Service Unavailable"     },
+    { HTTP_STATUS_GATEWAY_TIMEOUT       , "Gateway Timeout"         },
     { 0                                 , NULL                      }
 };
 
@@ -128,8 +129,7 @@ const char *http_get_status_desc(int status)
 /* dst = dir + "/" + uri, with each run of slashes reduced to one: what
  * u_path_snprintf(dst, sz, '/', "%s/%s", dir, uri) does, without formatting
  * and in one pass (this is done for every request) */
-static int http_path_join(char *dst, size_t sz, const char *dir,
-        const char *uri)
+int http_path_join(char *dst, size_t sz, const char *dir, const char *uri)
 {
     const char *part[3], *s;
     size_t i, n = 0;
@@ -263,7 +263,7 @@ err:
 
 /* collect the vhost's dir_alias and then cgi.script_alias values once (they
  * are tried in this order for every request) */
-static int http_load_aliases(vhost_t *vhost)
+int http_load_aliases(vhost_t *vhost)
 {
     u_config_t *config, *cgi = NULL;
     size_t n = 0;
@@ -353,12 +353,9 @@ static int http_is_valid_uri(void *arg, const char *buf, size_t len)
 
     memcpy(uri, buf, len);
     uri[len] = '\0';
-    
-    /* try the url itself */
-    if(broker_is_valid_uri(h->broker, h, rq, uri, strlen(uri)))
-        return 1;
 
-    /* try the path-resolved url */
+    /* the path-resolved url (never the url itself: the fs and cgi suppliers
+       would look for it from the file system's root) */
     dbg_err_if(http_alias_resolv(h, rq, resolved, uri, sizeof resolved));
 
     return broker_is_valid_uri(h->broker, h, rq, resolved, strlen(resolved));
@@ -943,6 +940,12 @@ static int http_serve_request(http_t *h, io_t *cin, io_t *cout, int cgi,
     dbg_err_if((vhost = http_get_vhost(h, rq)) == NULL);
     request_set_vhost(rq, vhost);
 
+    /* the path info was split against the files of the default vhost (the
+       request line comes before the Host field): split it for this one */
+    if(vhost != vhost_list_get_n(h->vhosts, 0) &&
+            request_resplit_uri(rq, http_is_valid_uri, rq))
+        goto err;
+
     rc = http_serve_page(h, rq, rs, &served);
 
     if(served)
@@ -1199,8 +1202,24 @@ static int http_add_vhost(http_t *http, const char *host, u_config_t *c)
     }
 
     /* send_enc_deflate (disable if not configured) */
-    dbg_err_if(u_config_get_subkey_value_b(c, "send_enc_deflate", 0, 
+    dbg_err_if(u_config_get_subkey_value_b(c, "send_enc_deflate", 0,
         &vhost->send_enc_deflate));
+
+    /* the file system and CGI suppliers (doc/FILES) */
+    dbg_err_if(u_config_get_subkey_value_b(c, "serve_files", 1,
+        &vhost->serve_files));
+    dbg_err_if(u_config_get_subkey_value_b(c, "run_cgi", 1, &vhost->run_cgi));
+    vhost->follow_symlinks = VHOST_SYMLINKS_INSIDE;
+    if((v = u_config_get_subkey_value(c, "follow_symlinks")) != NULL)
+    {
+        if(!strcasecmp(v, "no"))
+            vhost->follow_symlinks = VHOST_SYMLINKS_NO;
+        else if(!strcasecmp(v, "yes"))
+            vhost->follow_symlinks = VHOST_SYMLINKS_YES;
+        else
+            crit_err_ifm(strcasecmp(v, "inside"), "follow_symlinks: \"%s\" "
+                    "is not inside, no or yes (vhost: %s)", v, vhost->host);
+    }
 
     /* server signature */
     if((v = u_config_get_subkey_value(c, "server_sig")) != NULL)

@@ -34,8 +34,10 @@ system calls in three groups:
 
 System calls of another architecture (and the x32 ABI) kill the process.
 
-A server whose configuration has a script_alias (CGI) also allows fork,
-clone, execve and wait: the CGI scripts inherit the filter. A page that
+A server whose configuration has a script_alias or an extension's
+handler (CGI, doc/CGI) also allows fork, clone, execve, wait, chdir and
+(x86-64) arch_prctl, which every new program calls at start: the CGI
+scripts inherit the filter. A page that
 needs a call outside the list names it:
 
     sandbox_allow   flock, inotify_init1, inotify_add_watch

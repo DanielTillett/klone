@@ -15,34 +15,63 @@
 #include <klin/supplier.h>
 #include <klin/io.h>
 #include <klin/utils.h>
+#include <klin/http.h>
+#include <klin/vhost.h>
+#include "http_s.h"
 
-static int fs_is_valid_uri(http_t *h, request_t *rq, const char *uri, 
+#ifndef O_NONBLOCK
+#define O_NONBLOCK 0
+#endif
+
+/* open a file to serve, with the vhost's symlink policy (doc/FILES); not
+ * blocking on a FIFO, which is then refused as not a regular file */
+static int fs_open(http_t *h, request_t *rq, const char *fqn, struct stat *st)
+{
+    vhost_t *vhost;
+    int fd;
+
+    /* fqn must be already normalized */
+    if(strstr(fqn, ".."))
+        return -1;
+
+    /* serve_files no */
+    if((vhost = http_get_vhost(h, rq)) == NULL || !vhost->serve_files)
+        return -1;
+
+    if((fd = http_open_file(h, rq, fqn, O_RDONLY | O_NONBLOCK)) < 0)
+        return -1;
+
+    if(fstat(fd, st) || !S_ISREG(st->st_mode))
+    {
+        close(fd);
+        return -1;
+    }
+
+    return fd;
+}
+
+static int fs_is_valid_uri(http_t *h, request_t *rq, const char *uri,
         size_t len, void **handle, time_t *mtime)
 {
-    struct stat st; 
+    struct stat st;
     char fqn[U_FILENAME_MAX];
+    int fd;
 
     dbg_return_if (uri == NULL, 0);
     dbg_return_if (mtime == NULL, 0);
     dbg_return_if (len + 1 > U_FILENAME_MAX, 0);
 
-    u_unused_args(h, rq);
-
     memcpy(fqn, uri, len);
     fqn[len] = '\0';
 
-    /* fqn must be already normalized */
-    if(strstr(fqn, ".."))
-        return 0; 
-
-    if(stat(fqn, &st) == 0 && S_ISREG(st.st_mode))
-    {
-        *mtime = st.st_mtime;
-        *handle = NULL;
-
-        return 1;
-    } else
+    if((fd = fs_open(h, rq, fqn, &st)) < 0)
         return 0;
+    close(fd);
+
+    *mtime = st.st_mtime;
+    *handle = NULL;
+
+    return 1;
 }
 
 static int fs_serve(request_t *rq, response_t *rs)
@@ -54,6 +83,7 @@ static int fs_serve(request_t *rq, response_t *rs)
     char buf[BUFSZ];
     struct stat st;
     off_t left;
+    int fd = -1;
 
     dbg_err_if (rq == NULL);
     dbg_err_if (rs == NULL);
@@ -64,9 +94,12 @@ static int fs_serve(request_t *rq, response_t *rs)
 
     fqn = request_get_resolved_filename(rq);
 
-    /* open the file first so the size sent is the size of what is read */
-    dbg_err_if(u_file_open(fqn, O_RDONLY, &io));
-    dbg_err_if(fstat(io_fd_get_d(io), &st));
+    /* open the file first so the size sent is the size of what is read (it
+       is checked again: it may have changed since fs_is_valid_uri) */
+    dbg_err_if(fqn == NULL ||
+            (fd = fs_open(request_get_http(rq), rq, fqn, &st)) < 0);
+    dbg_err_if(io_fd_create(fd, IO_FD_CLOSE, &io));
+    fd = -1;    /* io owns it */
     dbg_err_if(response_set_content_length(rs, st.st_size));
 
     /* guess the mime type append a Content-Type field to the response*/
@@ -108,6 +141,8 @@ static int fs_serve(request_t *rq, response_t *rs)
 err:
     if(io)
         io_free(io);
+    if(fd >= 0)
+        close(fd);
     return ~0;
 }
 

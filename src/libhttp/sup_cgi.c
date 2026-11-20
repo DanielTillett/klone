@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/resource.h>
 #include <signal.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -20,7 +21,9 @@
 #include <klin/io.h>
 #include <klin/utils.h>
 #include <klin/rsfilter.h>
+#include <klin/timer.h>
 #include <klin/vhost.h>
+#include "http_s.h"
 
 /* holds environment variables passed to the cgi */
 typedef struct cgi_env_s
@@ -28,6 +31,28 @@ typedef struct cgi_env_s
     char **env;
     int size, count;
 } cgi_env_t;
+
+/* limits of a cgi run (doc/CGI): seconds of wall-clock time and of CPU
+ * time, MB of address space; 0 sets none */
+enum { CGI_TIMEOUT = 60, CGI_MAX_CPU = 30, CGI_MAX_MEMORY = 512 };
+
+typedef struct cgi_limits_s
+{
+    int timeout, max_cpu, max_memory;
+} cgi_limits_t;
+
+/* the running cgi, for the timeout alarm */
+typedef struct cgi_run_s
+{
+    pid_t child;
+    int timed_out;
+} cgi_run_t;
+
+/* request fields not passed to cgis unless "pass_headers" lists them:
+ * credentials, which are for the server (doc/AUTH), not for every script */
+static const char *cgi_private_fields[] = {
+    "Authorization", "Proxy-Authorization", NULL
+};
 
 static int cgi_get_config(http_t *h, request_t *rq, u_config_t **pc)
 {
@@ -45,6 +70,17 @@ err:
     return ~0;
 }
 
+
+/* the vhost's "cgi" block, or NULL */
+static u_config_t *cgi_block(http_t *h, request_t *rq)
+{
+    u_config_t *base, *config;
+
+    if(cgi_get_config(h, rq, &base) || u_config_get_subkey(base, "cgi", &config))
+        return NULL;
+
+    return config;
+}
 
 static int cgi_script(http_t *h, request_t *rq, const char *fqn)
 {
@@ -172,11 +208,13 @@ err:
     return ~0;
 }
 
-static int cgi_is_valid_uri(http_t *h, request_t *rq, const char *uri, 
+static int cgi_is_valid_uri(http_t *h, request_t *rq, const char *uri,
         size_t len, void **handle, time_t *mtime)
 {
-    struct stat st; 
+    struct stat st;
     char fqn[U_FILENAME_MAX];
+    vhost_t *vhost;
+    int fd, rc;
 
     dbg_return_if (uri == NULL, 0);
     dbg_return_if (mtime == NULL, 0);
@@ -187,9 +225,25 @@ static int cgi_is_valid_uri(http_t *h, request_t *rq, const char *uri,
 
     /* fqn must be already normalized */
     if(strstr(fqn, ".."))
-        return 0; 
-    
-    if(stat(fqn, &st) == 0 && S_ISREG(st.st_mode))
+        return 0;
+
+    /* run_cgi no */
+    if((vhost = http_get_vhost(h, rq)) == NULL || !vhost->run_cgi)
+        return 0;
+
+    /* the vhost's symlink policy (doc/FILES); the script needs no read
+       permission (a binary may be execute-only) */
+#ifdef O_PATH
+    fd = http_open_file(h, rq, fqn, O_PATH);
+#else
+    fd = http_open_file(h, rq, fqn, O_RDONLY | O_NONBLOCK);
+#endif
+    if(fd < 0)
+        return 0;
+    rc = fstat(fd, &st);
+    close(fd);
+
+    if(rc == 0 && S_ISREG(st.st_mode))
     {
         /* if it's not a cgi given its extension of uri then exit */
         if(!cgi_ext(h, rq, fqn, NULL) && !cgi_script(h, rq, fqn))
@@ -259,14 +313,78 @@ err:
     return ~0;
 }
 
+/* the variables of klind's own environment that "pass_env" lists */
+static int cgi_pass_env(cgi_env_t *env, u_config_t *config)
+{
+    char list[1024], *name, *pp = NULL;
+    const char *v, *value;
+
+    if(config == NULL || (v = u_config_get_subkey_value(config, "pass_env"))
+            == NULL)
+        return 0;
+
+    dbg_err_if(u_strlcpy(list, v, sizeof list));
+
+    for(name = strtok_r(list, " \t", &pp); name; name = strtok_r(NULL, " \t", &pp))
+        if((value = getenv(name)) != NULL)
+            dbg_err_if(cgi_setenv(env, name, value));
+
+    return 0;
+err:
+    return ~0;
+}
+
+/* whether a request field is passed to the cgi as HTTP_<name>: never
+ * "Proxy" (HTTP_PROXY would be read as a proxy setting, "httpoxy") nor a
+ * name with other than letters, digits and '-' (X-A and X_A would both be
+ * HTTP_X_A); then those "pass_headers" lists, or "all", or by default all
+ * but the credentials */
+static int cgi_pass_field(u_config_t *config, const char *name)
+{
+    char list[1024], *tok, *pp = NULL;
+    const char *v, **f;
+    const unsigned char *p;
+
+    if(!strcasecmp(name, "Proxy"))
+        return 0;
+    for(p = (const unsigned char *) name; *p; ++p)
+        if(!isalnum(*p) && *p != '-')
+            return 0;
+
+    v = config ? u_config_get_subkey_value(config, "pass_headers") : NULL;
+
+    if(v == NULL || !strcasecmp(v, "default"))
+    {
+        for(f = cgi_private_fields; *f; ++f)
+            if(!strcasecmp(name, *f))
+                return 0;
+        return 1;
+    }
+
+    if(!strcasecmp(v, "all"))
+        return 1;
+
+    if(u_strlcpy(list, v, sizeof list))
+        return 0;
+    for(tok = strtok_r(list, " \t", &pp); tok; tok = strtok_r(NULL, " \t", &pp))
+        if(!strcasecmp(tok, name))
+            return 1;
+
+    return 0;
+}
+
 static int cgi_makeenv(request_t *rq, response_t *rs, cgi_env_t *env)
 {
     const char *addr, *cstr;
     header_t *h;
     field_t *field;
+    u_config_t *config;
     char *p, buf[1024];
 
     u_unused_args(rs);
+
+    config = cgi_block(request_get_http(rq), rq);
+    dbg_err_if(cgi_pass_env(env, config));
 
     dbg_err_if(cgi_setenv(env, "SERVER_SOFTWARE", "klin/" KLIN_VERSION));
     dbg_err_if(cgi_setenv(env, "SERVER_PROTOCOL", "HTTP/1.0"));
@@ -325,9 +443,11 @@ static int cgi_makeenv(request_t *rq, response_t *rs, cgi_env_t *env)
 
     dbg_err_if((h = request_get_header(rq)) == NULL);
 
-    /* export all client request headers prefixing them with HTTP_ */
+    /* export the client request headers prefixing them with HTTP_ */
     for(field = NULL; (field = header_next_field(h, NULL, field)) != NULL; )
     {
+        if(!cgi_pass_field(config, field_get_name(field)))
+            continue;
 
         dbg_err_if(u_snprintf(buf, sizeof(buf), "HTTP_%s", 
                     field_get_name(field)));
@@ -358,8 +478,36 @@ err:
         if(fd[1] != -1) close(fd[1]);       \
     } while(0); 
 
-static int cgi_exec(request_t *rq, response_t *rs, pid_t *pchild, 
-        int *pcgi_stdin, int *pcgi_stdout)
+/* set a resource limit of the cgi (soft and hard: it cannot raise it) */
+static void cgi_rlimit(int resource, rlim_t value)
+{
+    struct rlimit rl;
+
+    rl.rlim_cur = rl.rlim_max = value;
+    (void) setrlimit(resource, &rl);
+}
+
+static void cgi_load_limits(http_t *h, request_t *rq, cgi_limits_t *lim)
+{
+    u_config_t *config = cgi_block(h, rq);
+
+    lim->timeout = CGI_TIMEOUT;
+    lim->max_cpu = CGI_MAX_CPU;
+    lim->max_memory = CGI_MAX_MEMORY;
+
+    if(config == NULL)
+        return;
+
+    (void) u_config_get_subkey_value_i(config, "timeout", CGI_TIMEOUT,
+            &lim->timeout);
+    (void) u_config_get_subkey_value_i(config, "max_cpu", CGI_MAX_CPU,
+            &lim->max_cpu);
+    (void) u_config_get_subkey_value_i(config, "max_memory", CGI_MAX_MEMORY,
+            &lim->max_memory);
+}
+
+static int cgi_exec(request_t *rq, response_t *rs, const cgi_limits_t *lim,
+        pid_t *pchild, int *pcgi_stdin, int *pcgi_stdout)
 {
     enum { RD_END /* read end point */, WR_END /* write end point */};
     int cgi_stdin[2] = { -1, -1 };
@@ -369,7 +517,7 @@ static int cgi_exec(request_t *rq, response_t *rs, pid_t *pchild,
     const char *argv[] = { NULL, NULL, NULL };
     const char *cgi_file, *handler;
     char *p, *cgi_path = NULL;
-    pid_t child;
+    pid_t child = -1;   /* not forked yet: an error before is the parent's */
     int fd;
 
     dbg_err_if((h = request_get_http(rq)) == NULL);
@@ -382,6 +530,9 @@ static int cgi_exec(request_t *rq, response_t *rs, pid_t *pchild,
 
     if(child == 0)
     {   /* child */
+
+        /* a process group of its own, which the timeout kills whole */
+        (void) setpgid(0, 0);
 
         /* close one end of both channels */
         close(cgi_stdin[WR_END]);
@@ -442,6 +593,21 @@ static int cgi_exec(request_t *rq, response_t *rs, pid_t *pchild,
             argv[1] = cgi_file;
         }
 
+        /* its limits (doc/CGI), set last: the memory one would also bind
+           this process (a sanitizer build maps far more than a script) */
+        if(lim->max_cpu > 0)
+        {
+            /* SIGXCPU, then SIGKILL a second later */
+            struct rlimit rl;
+
+            rl.rlim_cur = (rlim_t) lim->max_cpu;
+            rl.rlim_max = (rlim_t) lim->max_cpu + 1;
+            (void) setrlimit(RLIMIT_CPU, &rl);
+        }
+        if(lim->max_memory > 0)
+            cgi_rlimit(RLIMIT_AS, (rlim_t) lim->max_memory * 1024 * 1024);
+        cgi_rlimit(RLIMIT_CORE, 0);
+
         /* run the cgi (never returns); execve() does not modify argv, its
          * prototype is just not const-qualified */
         crit_err_sif(execve(argv[0], KLIN_UNCONST(argv), cgi_env.env));
@@ -450,6 +616,9 @@ static int cgi_exec(request_t *rq, response_t *rs, pid_t *pchild,
 
     } else if(child > 0) {
         /* parent */
+
+        /* (both set it: either may run first) */
+        (void) setpgid(child, child);
 
         /* close one end of both channels */
         close(cgi_stdin[RD_END]);
@@ -548,6 +717,27 @@ static void cgi_relay(io_t *cgi_in, io_t *out)
     }
 }
 
+/* kill the cgi and what it started */
+static void cgi_kill(pid_t child)
+{
+    (void) kill(-child, SIGKILL);
+    (void) kill(child, SIGKILL);
+}
+
+/* the cgi ran past its timeout: killed, its output ends */
+static int cgi_cb_timeout(talarm_t *al, void *arg)
+{
+    cgi_run_t *run = (cgi_run_t *) arg;
+
+    u_unused_args(al);
+
+    run->timed_out = 1;
+    cgi_kill(run->child);
+    warn("cgi killed after its timeout (pid %d)", (int) run->child);
+
+    return 0;
+}
+
 /* reap the cgi; after an error it is killed first, as nobody reads its
  * output any more */
 static void cgi_wait(pid_t child, int failed)
@@ -555,7 +745,7 @@ static void cgi_wait(pid_t child, int failed)
     int status;
 
     if(failed)
-        (void) kill(child, SIGKILL);
+        cgi_kill(child);
 
     if(waitpid(child, &status, 0) == child && !failed &&
             WIFEXITED(status) && WEXITSTATUS(status))
@@ -568,6 +758,9 @@ static int cgi_serve(request_t *rq, response_t *rs)
     io_t *cgi_in = NULL;
     int cgi_stdin = -1, cgi_stdout = -1;
     pid_t child = -1;
+    cgi_limits_t lim;
+    cgi_run_t run = { -1, 0 };
+    talarm_t *al = NULL;
 
     dbg_err_if (rq == NULL);
     dbg_err_if (rs == NULL);
@@ -582,7 +775,14 @@ static int cgi_serve(request_t *rq, response_t *rs)
     filename++;
 
     /* run the CGI and return its stdin and stdout descriptor */
-    crit_err_if(cgi_exec(rq, rs, &child, &cgi_stdin, &cgi_stdout));
+    cgi_load_limits(request_get_http(rq), rq, &lim);
+    crit_err_if(cgi_exec(rq, rs, &lim, &child, &cgi_stdin, &cgi_stdout));
+
+    /* killed when it runs too long (the alarm fires while its output or
+       stdin is waited for) */
+    run.child = child;
+    if(lim.timeout > 0)
+        dbg_err_if(timerm_add(lim.timeout, cgi_cb_timeout, &run, &al));
 
     /* by default disable caching */
     response_disable_caching(rs);
@@ -597,18 +797,33 @@ static int cgi_serve(request_t *rq, response_t *rs)
 
     /* header of cgis whose name start with nph- must not be parsed */
     if(strncmp(filename, "nph-", 4))
-        dbg_err_if(cgi_merge_header(rq, rs, cgi_in));
-    else
+    {
+        if(cgi_merge_header(rq, rs, cgi_in))
+        {
+            /* killed before it sent its header: 504, with no body */
+            dbg_err_if(!run.timed_out);
+            response_set_status(rs, HTTP_STATUS_GATEWAY_TIMEOUT);
+        }
+    } else
         response_set_status(rs, HTTP_STATUS_OK);
 
     cgi_relay(cgi_in, response_io(rs));
 
+    /* killed in the middle of its output: the client must not take it for
+       the whole of it */
+    if(run.timed_out)
+        response_close_connection(rs);
+
+    if(al)
+        timerm_del(al);
     io_free(cgi_in);
     close(cgi_stdout);
     cgi_wait(child, 0);
 
     return 0;
 err:
+    if(al)
+        timerm_del(al);
     if(cgi_in)
         io_free(cgi_in);
     if(cgi_stdin != -1)

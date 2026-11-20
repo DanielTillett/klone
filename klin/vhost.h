@@ -25,6 +25,14 @@ struct klog_s;
 /* the security headers of http.c's http_sec_headers table */
 enum { VHOST_SEC_HEADERS = 5 };
 
+/* follow_symlinks (doc/FILES): symbolic links in the files served by the fs
+ * and cgi suppliers */
+enum {
+    VHOST_SYMLINKS_INSIDE,  /* followed if the target is under the root      */
+    VHOST_SYMLINKS_NO,      /* never followed below the root                 */
+    VHOST_SYMLINKS_YES      /* always followed                               */
+};
+
 /* a dir_alias or cgi.script_alias "src dst" value, split once */
 typedef struct vhost_alias_s
 {
@@ -48,6 +56,9 @@ typedef struct vhost_s
     const char *dir_root;   /* base html directory                           */
     const char *index;      /* user-provided index page(s)                   */
     int send_enc_deflate;   /* >0 if sending deflated content is not disabled*/
+    int follow_symlinks;    /* VHOST_SYMLINKS_*                              */
+    int serve_files;        /* the fs supplier serves this vhost             */
+    int run_cgi;            /* the cgi supplier serves this vhost            */
 
     /* filled on first use (see http_alias_resolv, request_load_config);
        like the fields above, read once: later changes to the configuration

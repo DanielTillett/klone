@@ -763,16 +763,23 @@ static void server_watchdog_end(void)
 }
 #endif
 
-/* does a configuration tree run CGI scripts (a script_alias anywhere)? */
+/* does a configuration tree run CGI scripts (a script_alias, or an
+   extension's handler, anywhere)? */
 static int server_config_has(u_config_t *c, const char *key)
 {
     u_config_t *child;
+    const char *k;
+    size_t n;
     int i;
 
     for(i = 0; (child = u_config_get_child_n(c, NULL, i)) != NULL; ++i)
-        if(!strcmp(u_config_get_key(child), key) ||
+    {
+        k = u_config_get_key(child);
+        n = strlen(k);
+        if(!strcmp(k, key) || (n > 8 && !strcmp(k + n - 8, ".handler")) ||
                 server_config_has(child, key))
             return 1;
+    }
     return 0;
 }
 

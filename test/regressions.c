@@ -101,8 +101,6 @@ static int response_set_last_modified(response_t *rs, time_t t)
 static int response_print_header_to_io(response_t *rs, io_t *io)
 { (void)rs; (void)io; return 0; }
 static int response_get_method(response_t *rs) { return rs->method; }
-static int u_file_open(const char *path, int flags, io_t **out)
-{ (void)path; (void)flags; *out = &file_input; return 0; }
 static ssize_t io_write(io_t *io, const char *buf, size_t n)
 {
     (void)io; (void)buf;
@@ -114,10 +112,19 @@ static void io_free(io_t *io) { (void)io; ++freed; }
  * connection because fewer bytes could be read */
 static off_t file_size;
 static int conn_closed;
-static int io_fd_get_d(io_t *io) { (void)io; return -1; }
-static int mock_fstat(int fd, struct stat *st)
-{ (void)fd; memset(st, 0, sizeof *st); st->st_size = file_size; return 0; }
-#define fstat(fd, st) mock_fstat(fd, st)
+enum { IO_FD_CLOSE = 1 };
+static void *request_get_http(request_t *rq) { (void)rq; return NULL; }
+/* fs_open() (the symlink policy, doc/FILES) has the server tests: here the
+   file is open, regular, and file_size long */
+static int fs_open(void *h, request_t *rq, const char *fqn, struct stat *st)
+{
+    (void)h; (void)rq; (void)fqn;
+    memset(st, 0, sizeof *st); st->st_size = file_size;
+    return 3;
+}
+static int io_fd_create(int fd, int flags, io_t **out)
+{ (void)fd; (void)flags; *out = &file_input; return 0; }
+static int close(int fd) { (void)fd; return 0; }
 static void response_close_connection(response_t *rs)
 { (void)rs; ++conn_closed; }
 

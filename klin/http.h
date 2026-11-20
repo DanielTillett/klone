@@ -75,8 +75,10 @@ enum {
     /**< request method not supported */
     HTTP_STATUS_BAD_GATEWAY               = 502,
     /**< invalid response while acting as gateway or proxy */
-    HTTP_STATUS_SERVICE_UNAVAILABLE       = 503 
+    HTTP_STATUS_SERVICE_UNAVAILABLE       = 503,
     /**< server unavailable due to temporary overloading or maintenance */
+    HTTP_STATUS_GATEWAY_TIMEOUT           = 504
+    /**< no timely response from a gateway (a CGI killed after its timeout) */
 };
 
 /** HTTP Methods */

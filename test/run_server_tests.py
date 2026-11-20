@@ -27,7 +27,7 @@ def free_port():
         return sock.getsockname()[1]
 
 
-def exchange(port, data, context=None, half_close=False, close=True):
+def exchange(port, data, context=None, half_close=False, close=True, timeout=3):
     """Send one request and read until the server closes the connection.
 
     With close, "Connection: close" is added so a persistent (keep-alive)
@@ -35,7 +35,7 @@ def exchange(port, data, context=None, half_close=False, close=True):
     if close and b"\r\n" in data:
         line, rest = data.split(b"\r\n", 1)
         data = line + b"\r\nConnection: close\r\n" + rest
-    with socket.create_connection(("127.0.0.1", port), timeout=3) as raw:
+    with socket.create_connection(("127.0.0.1", port), timeout=timeout) as raw:
         connection = context.wrap_socket(raw, server_hostname="localhost") if context else raw
         with connection:
             connection.sendall(data)
@@ -1858,6 +1858,190 @@ def run_worker_limit_checks(args, check, plain, limits, sanitized):
         check(page(limits, b"alloc=16") == "allocated", "The worker did not go on after ENOMEM")
 
 
+def make_file_tree(temp):
+    """Files for run_file_checks (doc/FILES): /pub (pub) with links whose
+    targets are inside and outside it, a FIFO, the CGI scripts (cgi-bin)
+    and the files of the open.test vhost (pub-open)."""
+    pub, cgi, other = temp / "pub", temp / "cgi-bin", temp / "pub-open"
+    for d in (pub / "sub", cgi, other):
+        d.mkdir(parents=True)
+    (pub / "hello.txt").write_text("public file\n")
+    (pub / "sub/s.txt").write_text("in a subdirectory\n")
+    (pub / "in").symlink_to("hello.txt")
+    (pub / "out").symlink_to("../secret.txt")
+    (pub / "dirlink").symlink_to("..")
+    (pub / "subl").symlink_to("sub")
+    os.mkfifo(pub / "fifo")
+    (other / "only.txt").write_text("open vhost\n")
+    (other / "out").symlink_to("../secret.txt")
+    scripts = {
+        "env.sh": "printf 'Content-Type: text/plain\\r\\n\\r\\n'\nenv\n",
+        "limits.sh": "printf 'Content-Type: text/plain\\r\\n\\r\\n'\n"
+                     "echo \"cpu=$(ulimit -t) as=$(ulimit -v) core=$(ulimit -c)\"\n",
+        "sleep.sh": "sleep 31\n",
+        "late.sh": "printf 'Content-Type: text/plain\\r\\n\\r\\npartial\\n'\nsleep 32 &\nwait\n",
+        "spin.sh": "printf 'Content-Type: text/plain\\r\\n\\r\\nspinning\\n'\nwhile :; do :; done\n",
+    }
+    for name, body in scripts.items():
+        (cgi / name).write_text("#!/bin/sh\n" + body)
+        (cgi / name).chmod(0o755)
+    (temp / "outside.sh").write_text("#!/bin/sh\nprintf 'Content-Type: text/plain\\r\\n\\r\\noutside\\n'\n")
+    (temp / "outside.sh").chmod(0o755)
+    (cgi / "linked.sh").symlink_to("../outside.sh")
+
+
+def files_config(temp):
+    """The fs and CGI settings of the 'files' server, and its vhosts: the
+    symlink policies, and the suppliers turned off."""
+    return f"""dir_alias /pub {temp / 'pub'}
+    cgi
+    {{
+        script_alias /cgi-bin {temp / 'cgi-bin'}
+        timeout 3
+        max_cpu 1
+        max_memory 64
+        pass_env KLIN_TEST_PASS
+    }}
+    strict.test
+    {{
+        dir_root /www
+        dir_alias /pub {temp / 'pub'}
+        follow_symlinks no
+    }}
+    open.test
+    {{
+        dir_root /www
+        dir_alias /pub {temp / 'pub-open'}
+        follow_symlinks yes
+    }}
+    off.test
+    {{
+        dir_root /www
+        dir_alias /pub {temp / 'pub'}
+        cgi
+        {{
+            script_alias /cgi-bin {temp / 'cgi-bin'}
+        }}
+        serve_files no
+        run_cgi no
+    }}"""
+
+
+def run_file_checks(check, files, temp, cgi):
+    """File system and CGI hardening (doc/FILES, doc/CGI): paths that try to
+    leave the document root, encoded and Windows-style; the symlink policies
+    (inside by default, no, yes); a raw file system path is never looked
+    up (it was: If-Modified-Since told whether a file existed); the path
+    info split for the vhost's own files; serve_files and run_cgi; and, when
+    the build has CGI, the environment allowlist and the limits."""
+
+    def get(path, host=b"localhost", extra=b""):
+        request = b"GET " + path + b" HTTP/1.1\r\nHost: " + host + b"\r\n" + extra + b"\r\n"
+        start = time.monotonic()
+        reply = exchange(files, request, timeout=10)
+        status = reply.split(b" ", 2)[1] if reply.startswith(b"HTTP/") else b"none"
+        return status, reply.partition(b"\r\n\r\n")[2], time.monotonic() - start
+
+    status, body, _ = get(b"/pub/hello.txt")
+    check(status == b"200" and body == b"public file\n", f"/pub not served: {status} {body!r}")
+
+    # out of the root: secret.txt is next to pub, served if the path got out
+    escapes = [b"/pub/../secret.txt", b"/pub/%2e%2e/secret.txt", b"/pub/%2E%2E%2Fsecret.txt",
+               b"/pub/..%2fsecret.txt", b"/pub/.%2e/secret.txt", b"/pub/sub/..%2f..%2fsecret.txt",
+               b"/pub/..\\secret.txt", b"/pub/..%5csecret.txt", b"/pub/%2e%2e%5csecret.txt",
+               b"/pub/sub\\..\\..\\secret.txt", b"/pub/%252e%252e/secret.txt",
+               b"/pub/..%c0%afsecret.txt", b"/pub/..%25%32%66secret.txt", b"/pub//../secret.txt",
+               b"/pub/./../secret.txt", b"/pub/" + str(temp / "secret.txt").encode(),
+               b"/pub/%2f" + str(temp / "secret.txt").lstrip("/").encode(),
+               b"/pub/C:%5cWindows%5cwin.ini", b"/pub/hello.txt::$DATA", b"/pub/hello.txt.",
+               b"/pub/HELLO~1.TXT", b"/pub/dirlink/secret.txt", b"/pub/out",
+               str(temp / "secret.txt").encode(), b"//etc/passwd", b"/pub/../../../../etc/passwd"]
+    for path in escapes:
+        status, body, _ = get(path)
+        check(status in (b"400", b"404") and b"top secret" not in body and b"root:" not in body,
+              f"{path!r} left the document root: {status} {body[:80]!r}")
+    status, _, _ = get(b"/pub/hello.txt%00.txt")
+    check(status == b"400", f"A NUL in the path was not refused: {status}")
+
+    # a raw file system path: with If-Modified-Since, 304 said it existed
+    for path in [b"/etc/passwd", str(temp / "secret.txt").encode()]:
+        status, _, _ = get(path, extra=b"If-Modified-Since: Fri, 01 Jan 2100 00:00:00 GMT\r\n")
+        check(status == b"404", f"{path!r} looked up from the file system's root: {status}")
+
+    # follow_symlinks inside (default), no and yes
+    for host, path, want in [
+            (b"localhost", b"/pub/in", b"public file\n"),
+            (b"localhost", b"/pub/subl/s.txt", b"in a subdirectory\n"),
+            (b"localhost", b"/pub/out", None),
+            (b"localhost", b"/pub/dirlink/secret.txt", None),
+            (b"localhost", b"/pub/fifo", None),
+            (b"strict.test", b"/pub/hello.txt", b"public file\n"),
+            (b"strict.test", b"/pub/in", None),
+            (b"strict.test", b"/pub/subl/s.txt", None),
+            (b"open.test", b"/pub/out", b"top secret\n")]:
+        status, body, _ = get(path, host)
+        if want is None:
+            check(status == b"404", f"{host!r} {path!r}: link followed: {status} {body[:80]!r}")
+        else:
+            check(status == b"200" and body == want, f"{host!r} {path!r}: {status} {body[:80]!r}")
+
+    # the path info is split against the files of the request's vhost (the
+    # default one has no only.txt)
+    status, body, _ = get(b"/pub/only.txt/extra", b"open.test")
+    check(status == b"200" and body == b"open vhost\n",
+          f"Path info not split for the vhost's files: {status} {body[:80]!r}")
+
+    # serve_files no, run_cgi no: embedded pages are still served
+    for path in [b"/pub/hello.txt", b"/cgi-bin/env.sh"]:
+        status, _, _ = get(path, b"off.test")
+        check(status == b"404", f"{path!r} served with serve_files/run_cgi no: {status}")
+    status, _, _ = get(b"/pid.kl1", b"off.test")
+    check(status == b"200", f"Embedded page not served with serve_files no: {status}")
+
+    if not cgi:
+        return
+
+    # the environment: request fields but the credentials, Proxy (httpoxy)
+    # and names with an underscore; klind's own variables pass_env lists
+    status, body, _ = get(b"/cgi-bin/env.sh", extra=b"X-Fine: yes\r\nProxy: http://evil:1/\r\n"
+                          b"Authorization: Basic YTpi\r\nX_Under: x\r\nCookie: c=1\r\n")
+    variables = dict(line.split("=", 1) for line in body.decode().splitlines() if "=" in line)
+    check(status == b"200" and variables.get("HTTP_X_FINE") == "yes" and
+          variables.get("HTTP_COOKIE") == "c=1" and variables.get("KLIN_TEST_PASS") == "passed",
+          f"CGI environment lost a variable: {status} {body[:400]!r}")
+    for name in ["HTTP_PROXY", "HTTP_AUTHORIZATION", "HTTP_X_UNDER", "KLIN_TEST_SECRET"]:
+        check(name not in variables, f"{name} passed to a CGI")
+    check(variables.get("REQUEST_METHOD") == "GET" and variables.get("GATEWAY_INTERFACE") == "CGI/1.1",
+          f"CGI meta-variables missing: {sorted(variables)}")
+
+    status, body, _ = get(b"/cgi-bin/limits.sh")
+    check(status == b"200" and body.strip() == b"cpu=1 as=65536 core=0",
+          f"CGI limits not set: {status} {body!r}")
+
+    # a script out of its directory through a link
+    status, body, _ = get(b"/cgi-bin/linked.sh")
+    check(status == b"404" and b"outside" not in body, f"CGI link out of script_alias run: {status}")
+
+    # timeout 3: no header yet gives 504; one killed in its output (with
+    # what it started) ends it and the connection
+    status, body, took = get(b"/cgi-bin/sleep.sh")
+    check(status == b"504" and took < 6, f"CGI timeout: {status} after {took:.1f}s")
+    status, body, took = get(b"/cgi-bin/late.sh")
+    check(status == b"200" and body.startswith(b"partial") and took < 6,
+          f"CGI timeout in its output: {status} {body[:80]!r} after {took:.1f}s")
+    time.sleep(0.3)
+    left = subprocess.run(["pgrep", "-f", "sleep 3[12]"], capture_output=True, text=True).stdout
+    check(not left.strip(), f"Processes of killed CGIs left: {left}")
+
+    # max_cpu 1: killed for its CPU time before the timeout
+    status, body, took = get(b"/cgi-bin/spin.sh")
+    check(status == b"200" and body.startswith(b"spinning") and took < 2.8,
+          f"CGI max_cpu not enforced: {status} after {took:.1f}s")
+
+    status, _, _ = get(b"/pub/hello.txt")
+    check(status == b"200", "The server did not go on after the CGI checks")
+
+
 def run_bad_auth_checks(check, daemon, env, temp):
     """Unsafe or broken auth (and route) configurations stop klind at
     startup, instead of serving the realm unprotected (the reason goes to
@@ -2002,6 +2186,10 @@ def run_server_checks(args, env, output, daemon):
         (temp / "a?b.txt").write_text("encoded question\n")
         (temp / "secret.txt").write_text("top secret\n")
         (temp / "old.txt").write_text("old client\n")
+        make_file_tree(temp)
+        has_cgi = cmake_cache_value(daemon.parent.parent, "KLIN_ENABLE_SUP_CGI") == "ON"
+        env["KLIN_TEST_PASS"] = "passed"
+        env["KLIN_TEST_SECRET"] = "hidden"
         auth = auth_config(*auth_users(daemon.parent / "klin", temp))
         run_bad_auth_checks(check, daemon, env, temp)
         run_root_checks(check, daemon, env, temp)
@@ -2023,7 +2211,7 @@ def run_server_checks(args, env, output, daemon):
                 ("client", client, False, "client", SECURITY_HEADERS + "\n    " + ACCESS),
                 ("secure", secure, True, "client", auth),
                 ("files", files, False, f"file\n        file.path {sessions}",
-                 "index missing.kl1 pid.kl1\n    send_enc_deflate yes"),
+                 "index missing.kl1 pid.kl1\n    send_enc_deflate yes\n    " + files_config(temp)),
                 ("memlog", memlog, False, "memory",
                  "log\n    {\n        type memory\n    }\n    sandbox no"),
                 ("blocked", blocked, False, "memory", BLOCKED),
@@ -2204,6 +2392,7 @@ def run_server_checks(args, env, output, daemon):
                                         "-fsanitize" in cmake_cache_value(daemon.parent.parent,
                                                                           "CMAKE_C_FLAGS"))
                 run_route_checks(args, check, plain)
+                run_file_checks(check, files, temp, has_cgi)
                 run_access_checks(check, client, blocked, temp)
                 run_validation_checks(check, plain)
                 run_sandbox_checks(args, check, process.pid, plain, memlog)

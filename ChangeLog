@@ -15,6 +15,28 @@ Klin 4.0.0:
 	  entries, so they survive a reconfigure. The Windows service keeps
 	  the name kloned. All of it is in cmake/klone_compat.cmake and the
 	  lines marked "before KLone was renamed Klin"
+	- files from the file system (doc/FILES): symbolic links are followed
+	  only to targets inside the dir_root or alias target the path was
+	  resolved under (follow_symlinks inside; no follows none, yes all,
+	  as before: a new default), and the file is opened one segment at a
+	  time without following links, so a link swapped in meanwhile is not
+	  followed either; only regular files are served (a FIFO hung the
+	  worker). A request path was also looked up from the file system's
+	  root when the request arrived: If-Modified-Since then told whether
+	  any file on the host existed (304) and when it changed. The path info
+	  is now split against the files of the vhost the Host field names.
+	  serve_files no and run_cgi no turn the suppliers off per server or
+	  vhost (the build options KLIN_ENABLE_SUP_FS/CGI leave them out)
+	- CGI (doc/CGI): scripts are killed after cgi.timeout (60 s; 504 if
+	  they had sent nothing), with what they started; RLIMIT_CPU
+	  (cgi.max_cpu, 30 s) and RLIMIT_AS (cgi.max_memory, 512 MB), no core
+	  dumps; klind's environment variables only as cgi.pass_env lists;
+	  the Proxy field (httpoxy), field names with other than letters,
+	  digits and '-', and Authorization and Proxy-Authorization (unless
+	  cgi.pass_headers says so) are not passed (new defaults; 0 turns a
+	  limit off). CGI scripts could not run in a sandboxed worker (chdir
+	  and arch_prctl were refused): fixed, and a server with only an
+	  extension handler now allows exec too
 	- worker resource limits (doc/LIMITS): each worker gets RLIMIT_AS
 	  (worker_max_memory, 1024 MB), RLIMIT_NOFILE (worker_max_files,
 	  1024) and RLIMIT_NPROC (worker_max_procs, max_child + 64), soft and

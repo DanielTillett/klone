@@ -92,6 +92,9 @@ def cmake_build(args, source, output, env, flags):
                  f"-DCMAKE_C_FLAGS={flags}",
                  "-DKLIN_DEBUG=ON", "-DKLIN_ENABLE_SUP_FS=ON", "-DKLIN_SITE_DIR=",
                  "-DKLIN_BUILD_TESTS=ON"]
+    # the server tests run CGI scripts (CGI is not built on Windows)
+    if sys.platform not in ("win32", "cygwin", "msys"):
+        configure.append("-DKLIN_ENABLE_SUP_CGI=ON")
     if args.sanitize:
         configure.append("-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined")
     if args.make_program:

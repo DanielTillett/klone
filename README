@@ -178,6 +178,13 @@ header deadline against slow clients, connections per client address and
 SSE/WebSocket connections per server are capped, and requests that could be
 smuggled past a proxy are refused (doc/LIMITS).
 
+Files and CGI: serving files from the file system and running CGI scripts
+are build options, off by default, and serve_files no / run_cgi no turn
+them off per server or vhost. Symbolic links out of the document root
+are not followed (follow_symlinks, doc/FILES). CGI scripts get only the
+environment variables listed, never HTTP_PROXY or the credentials, and
+time, CPU and memory limits (doc/CGI).
+
 systemd: contrib/systemd/klind.service is a hardened unit; klind drops
 from root to the uid and gid in klind.conf and refuses to keep root
 credentials otherwise, unless 'allow_root yes' (doc/SYSTEMD).

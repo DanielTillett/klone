@@ -636,46 +636,26 @@ err:
     return ~0;
 }
 
-/*
- * \ingroup request
- * \brief   Set the URI field of a request
- *
- * Set the URI field of request \p rq to \p uri given 
- *
- * \param rq           request object
- * \param uri          URI string
- * \param is_valid_uri URI validation function 
- * \param arg          argument to is_valid_uri
- *
- * \return \c 0 if successful, non-zero on error
- */
-int request_set_uri(request_t *rq, const char *uri,
-        int (*is_valid_uri)(void*, const char *, size_t),
-        void* arg)
+/* set the filename and the path info from the URI's path: decoded,
+ * normalized, and split where is_valid_uri() finds a page */
+static int request_split_uri(request_t *rq,
+        int (*is_valid_uri)(void*, const char *, size_t), void* arg)
 {
     char *p, *fn, *pi;
     size_t uri_len, path_len;
     ssize_t decoded;
     char cp[4096];
 
-    dbg_err_if (rq == NULL);
-    dbg_err_if (uri == NULL);
-    /* is_valid_uri may be NULL */
-    /* arg may be NULL */
+    dbg_err_if (rq == NULL || rq->uri == NULL);
 
-    uri_len = strlen(uri);
- 
-    request_clear_uri(rq);
+    uri_len = strlen(rq->uri);
+    dbg_err_if(uri_len >= sizeof(cp));
 
-    /* this is just to avoid recursive infinite redirect loops for pages that 
-       appends something to the URI and redirects to the same page */
-    warn_err_ifm(uri_len >= sizeof(cp), "Request URI too long");
-
-    REQUEST_SET_STRING_FIELD(rq->uri, uri);
-
-    /* save (undecoded) query string i.e. everything after '?' */
-    if((p = strchr(uri, '?')) != NULL)
-        dbg_err_if(request_set_query_string(rq, ++p));
+    U_FREE(rq->path_info);
+    U_FREE(rq->filename);
+    U_FREE(rq->resolved_path_info);
+    U_FREE(rq->resolved_filename);
+    request_set_sup_info(rq, NULL, NULL, 0);
 
     /* Split before decoding, so %3f remains part of the path. A '+' in a
      * URI path is literal; form/query decoding has different rules. */
@@ -724,6 +704,55 @@ int request_set_uri(request_t *rq, const char *uri,
     return 0;
 err:
     return ~0;
+}
+
+/*
+ * \ingroup request
+ * \brief   Set the URI field of a request
+ *
+ * Set the URI field of request \p rq to \p uri given
+ *
+ * \param rq           request object
+ * \param uri          URI string
+ * \param is_valid_uri URI validation function
+ * \param arg          argument to is_valid_uri
+ *
+ * \return \c 0 if successful, non-zero on error
+ */
+int request_set_uri(request_t *rq, const char *uri,
+        int (*is_valid_uri)(void*, const char *, size_t),
+        void* arg)
+{
+    char *p;
+
+    dbg_err_if (rq == NULL);
+    dbg_err_if (uri == NULL);
+    /* is_valid_uri may be NULL */
+    /* arg may be NULL */
+
+    request_clear_uri(rq);
+
+    /* this is just to avoid recursive infinite redirect loops for pages that
+       appends something to the URI and redirects to the same page */
+    warn_err_ifm(strlen(uri) >= 4096, "Request URI too long");
+
+    REQUEST_SET_STRING_FIELD(rq->uri, uri);
+
+    /* save (undecoded) query string i.e. everything after '?' */
+    if((p = strchr(uri, '?')) != NULL)
+        dbg_err_if(request_set_query_string(rq, ++p));
+
+    return request_split_uri(rq, is_valid_uri, arg);
+err:
+    return ~0;
+}
+
+/* split the path again, e.g. once the virtual host is known: the request
+ * line is read before the Host field (the other fields are kept) */
+int request_resplit_uri(request_t *rq,
+        int (*is_valid_uri)(void*, const char *, size_t), void* arg)
+{
+    return request_split_uri(rq, is_valid_uri, arg);
 }
 
 static int request_set_proto(request_t *rq, const char *proto)

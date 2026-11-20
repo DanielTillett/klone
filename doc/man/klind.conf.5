@@ -351,7 +351,7 @@ are kept for compatibility only.
 .PP
 All the cryptographic material examined in this section MUST not be password protected. This is because on unattended devices such as appliances or similar, password protection is useless if not harmful.
 .PP
-OpenSSL 3 is required. HTTPS servers accept TLS 1.2 or newer only; TLS 1.0 and 1.1 are rejected and TLS compression is disabled. The minimum protocol version is fixed and has no configuration directive. OpenSSL 3 also enforces minimum key sizes and signature algorithms according to the system's security level; on common distributions such as Ubuntu, 1024\-bit RSA keys and MD5\-signed certificates are refused. Use certificates with at least 2048\-bit RSA (or equivalent) keys.
+OpenSSL 3 is required. HTTPS servers accept TLS 1.2 or newer only (TLS 1.3 when the client has it); TLS 1.0 and 1.1 are rejected, and TLS compression and renegotiation are disabled. See doc/TLS. OpenSSL 3 also enforces minimum key sizes and signature algorithms according to the system's security level; on common distributions such as Ubuntu, 1024\-bit RSA keys and MD5\-signed certificates are refused. Use certificates with at least 2048\-bit RSA (or equivalent) keys.
 .TP
 \fBcert_file\fR
 PEM\-encoded certificate file for the server and optionally also its corresponding RSA or DSA Private Key file (contained in the same file). The certificate should be configured with the Common Name matching the fully qualified domain name of the server. This parameter is
@@ -375,7 +375,9 @@ to send the intermediate CA of Verisign with the GID while one wants to avoid th
 All\-in\-one file where you can assemble the certificates of Certification Authorities (CA) for all certificates expected from clients. These are used for Client authentication. Such a file is simply the concatenation of the various PEM\-encoded certificate files, in order of preference. It is mandatory when
 \fBverify_mode\fR
 is
-\fIrequired\fR.
+\fIoptional\fR
+or
+\fIrequire\fR.
 .TP
 \fBdh_file\fR
 PEM\-encoded file containing Diffie\-Hellman parameters to be used on session data negotiation phase. When missing, OpenSSL selects suitable DH parameters automatically. Ephemeral RSA keys are no longer used.
@@ -405,13 +407,31 @@ no client certificate is required at all
 \fBOPTIONAL\fR
 the client may present a valid certificate
 .TP
-\fBREQUIRED\fR
-the client has to present a valid certificate
+\fBREQUIRE\fR
+the client has to present a valid certificate (mutual TLS; doc/TLS)
 .RE
 .IP
 .sp
 Note that optional makes sense only in testing scenarios. The default value is
 \fBNO\fR.
+.TP
+\fBtls_min_version\fR
+\fI1.2\fR
+(default) or
+\fI1.3\fR, to accept TLS 1.3 clients only.
+.TP
+\fBtls_ciphers\fR
+The TLS 1.2 cipher list (OpenSSL syntax). The default is Mozilla's "intermediate" list: ECDHE and DHE key exchange with AES\-GCM or ChaCha20\-Poly1305 only.
+.TP
+\fBtls_ciphersuites\fR
+The TLS 1.3 cipher suites (OpenSSL syntax); by default OpenSSL's (all AEAD).
+.TP
+\fBtls_ticket_key_lifetime\fR
+How long a session ticket key is used, in minutes or seconds with an
+\fIs\fR
+suffix; a ticket is taken for twice that. The default is 720 (12 hours);
+\fI0\fR
+turns session tickets off.
 .SS "LOG"
 .PP
 Klin provides three types of log device: memory, syslog and file. The first is especially targeted for ROM appliances, while the second and third need a device with available (and writeable) storage in order to work. The file type is for systems with no available system message logger (RFC 3164 like). Instead, if the host system has syslog, either as a locally running daemon or just as a set of client API interfacing an external device, then the syslog type (which is nothing but a wrapper to the

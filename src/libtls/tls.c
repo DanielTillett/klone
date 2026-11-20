@@ -16,6 +16,9 @@
 #include <openssl/ssl.h>
 #include <openssl/rand.h>
 #include <openssl/err.h>
+#include <openssl/evp.h>
+#include <openssl/core_names.h>
+#include <openssl/params.h>
 #ifdef SSL_OPENSSL
 #include <openssl/x509_vfy.h>
 #endif
@@ -23,6 +26,18 @@
 #include <klin/tls.h>
 #include <klin/utils.h>
 #include <klin/tlsprv.h>
+#include <klin/crypto.h>
+
+/* TLS 1.2 ciphers: Mozilla's "intermediate" configuration (forward secret
+   key exchange, AEAD ciphers only); doc/TLS */
+static const char TLS_DEFAULT_CIPHERS[] =
+    "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:"
+    "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:"
+    "ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:"
+    "DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:"
+    "DHE-RSA-CHACHA20-POLY1305";
+
+enum { TLS_TICKET_PERIOD = 12 * 60 * 60 };  /* a ticket key's 12 hours */
 
 static int tls_sid = 1;
 static int tls_inited = 0; 
@@ -45,6 +60,171 @@ static void tls_free_ctx_args (tls_ctx_args_t *cargs);
 static int tls_load_ctx_args (u_config_t *cfg, tls_ctx_args_t **cargs);
 static SSL_CTX *tls_init_ctx (tls_ctx_args_t *cargs);
 static int cb_vfy (int ok, X509_STORE_CTX *store_ctx);
+
+/* tls_ciphers, tls_ciphersuites, tls_min_version (1.2 or 1.3) and
+   tls_ticket_key_lifetime (minutes, or "Ns" seconds; 0: no tickets) */
+static int tls_load_protocol_args (u_config_t *cfg, tls_ctx_args_t *cargs)
+{
+    const char *v;
+    char *end;
+    long n;
+
+    if ((v = u_config_get_subkey_value(cfg, "tls_ciphers")) != NULL)
+        cargs->ciphers = v;
+    cargs->suites = u_config_get_subkey_value(cfg, "tls_ciphersuites");
+
+    if ((v = u_config_get_subkey_value(cfg, "tls_min_version")) != NULL)
+    {
+        if (!strcmp(v, "1.2"))
+            cargs->minver = TLS1_2_VERSION;
+        else if (!strcmp(v, "1.3"))
+            cargs->minver = TLS1_3_VERSION;
+        else
+            return ~0;
+    }
+
+    if ((v = u_config_get_subkey_value(cfg, "tls_ticket_key_lifetime")) != NULL)
+    {
+        n = strtol(v, &end, 10);
+        if (end == v || n < 0 || n > 60L * 24 * 31)
+            return ~0;
+        if (*end == 's' || *end == 'S')
+            ++end;
+        else
+            n *= 60;
+        if (*end != '\0')
+            return ~0;
+        cargs->ticket_period = (int) n;
+    }
+
+    return 0;
+}
+
+/* Session ticket keys. A random master secret is drawn once, before the
+ * workers fork, and the keys of each period are derived from it and the
+ * period's number: every worker has the same keys without talking to the
+ * others, and they change every period. A ticket of the period before is
+ * still taken (and replaced by a new one); older ones mean a full
+ * handshake. */
+static unsigned char tls_ticket_master[32];
+static int tls_ticket_master_set = 0;
+static int tls_ticket_idx = -1;     /* SSL_CTX ex data: the period */
+
+/* the key name, AES key and HMAC key of period 'epoch' */
+static int tls_ticket_keys (long long epoch, unsigned char name[16],
+        unsigned char aes[32], unsigned char mac[32])
+{
+    unsigned char msg[32], out[KC_MD_MAX];
+    size_t n;
+    int i;
+    unsigned char *dst[3];
+
+    dst[0] = name; dst[1] = aes; dst[2] = mac;
+    for (i = 0; i < 3; ++i)
+    {
+        n = (size_t) snprintf((char *) msg, sizeof msg, "klin-ticket|%d|%lld",
+                i, epoch);
+        dbg_err_if (kc_hmac(KC_SHA256, tls_ticket_master,
+                    sizeof tls_ticket_master, msg, n, out, &n) || n < 32);
+        memcpy(dst[i], out, i == 0 ? 16 : 32);
+    }
+    kc_cleanse(out, sizeof out);
+
+    return 0;
+err:
+    return ~0;
+}
+
+static int tls_ticket_cb (SSL *s, unsigned char key_name[16],
+        unsigned char *iv, EVP_CIPHER_CTX *ectx, EVP_MAC_CTX *hctx, int enc)
+{
+    unsigned char name[16], aes[32], mac[32];
+    OSSL_PARAM params[3];
+    long long period, epoch, e;
+    int rc = -1;
+
+    period = (long long) (intptr_t) SSL_CTX_get_ex_data(SSL_get_SSL_CTX(s),
+            tls_ticket_idx);
+    dbg_return_if (period <= 0, -1);
+    epoch = (long long) time(NULL) / period;
+
+    for (e = epoch; e >= epoch - 1; --e)
+    {
+        dbg_err_if (tls_ticket_keys(e, name, aes, mac));
+        if (enc)
+        {
+            memcpy(key_name, name, sizeof name);
+            dbg_err_if (RAND_bytes(iv, EVP_CIPHER_get_iv_length(
+                            EVP_aes_256_cbc())) != 1);
+        }
+        else if (memcmp(key_name, name, sizeof name))
+            continue;   /* another period's key */
+
+        params[0] = OSSL_PARAM_construct_octet_string(OSSL_MAC_PARAM_KEY,
+                mac, sizeof mac);
+        params[1] = OSSL_PARAM_construct_utf8_string(OSSL_MAC_PARAM_DIGEST,
+                (char *) "SHA256", 0);
+        params[2] = OSSL_PARAM_construct_end();
+        dbg_err_if (EVP_MAC_CTX_set_params(hctx, params) != 1);
+        dbg_err_if (EVP_CipherInit_ex(ectx, EVP_aes_256_cbc(), NULL, aes, iv,
+                    enc) != 1);
+
+        /* 1: go on; 2: take it, and issue a ticket with the current key */
+        rc = (enc || e == epoch) ? 1 : 2;
+        break;
+    }
+    if (rc < 0)
+        rc = 0;     /* unknown or expired key: a full handshake */
+err:
+    kc_cleanse(aes, sizeof aes);
+    kc_cleanse(mac, sizeof mac);
+    return rc;
+}
+
+static int tls_set_protocol (SSL_CTX *c, tls_ctx_args_t *cargs)
+{
+    char ciphers[1024];
+
+    dbg_err_if (SSL_CTX_set_min_proto_version(c, cargs->minver) != 1);
+
+    /* RSA key exchange (TLS 1.2) decrypts with the private key, which the
+       key manager does not do; it has no forward secrecy anyway */
+    dbg_err_if (u_snprintf(ciphers, sizeof ciphers, "%s%s", cargs->ciphers,
+                cargs->keymgr ? ":!kRSA" : ""));
+    crit_err_ifm (SSL_CTX_set_cipher_list(c, ciphers) != 1,
+            "tls_ciphers: no usable cipher in '%s'", cargs->ciphers);
+    if (cargs->suites)
+        crit_err_ifm (SSL_CTX_set_ciphersuites(c, cargs->suites) != 1,
+                "tls_ciphersuites: bad list '%s'", cargs->suites);
+
+    if (cargs->ticket_period == 0)
+    {
+        /* no tickets: TLS 1.2 session ids only, none for TLS 1.3 */
+        SSL_CTX_set_options(c, SSL_OP_NO_TICKET);
+        dbg_err_if (SSL_CTX_set_num_tickets(c, 0) != 1);
+        return 0;
+    }
+
+    if (!tls_ticket_master_set)
+    {
+        dbg_err_if (RAND_bytes(tls_ticket_master,
+                    sizeof tls_ticket_master) != 1);
+        tls_ticket_master_set = 1;
+    }
+    if (tls_ticket_idx < 0)
+        dbg_err_if ((tls_ticket_idx = SSL_CTX_get_ex_new_index(0, NULL,
+                        NULL, NULL, NULL)) < 0);
+    dbg_err_if (SSL_CTX_set_ex_data(c, tls_ticket_idx,
+                (void *) (intptr_t) cargs->ticket_period) != 1);
+    dbg_err_if (SSL_CTX_set_tlsext_ticket_key_evp_cb(c, tls_ticket_cb) != 1);
+
+    /* a session lives no longer than its ticket's key */
+    (void) SSL_CTX_set_timeout(c, 2 * cargs->ticket_period);
+
+    return 0;
+err:
+    return ~0;
+}
 
 /* the tls_ctx_t of klin/tls.h is an OpenSSL SSL_CTX */
 tls_ctx_t *tls_load_init_ctx (u_config_t *cfg)
@@ -101,6 +281,8 @@ static int tls_load_ctx_args (u_config_t *cfg, tls_ctx_args_t **pcargs)
     dbg_err_if (tls_set_ctx_crlopts(cfg, cargs));
     dbg_err_if (tls_set_ctx_vdepth(cfg, cargs));
     dbg_err_if (tls_set_ctx_vmode(cfg, cargs));
+    crit_err_ifm (tls_load_protocol_args(cfg, cargs),
+            "bad tls_min_version or tls_ticket_key_lifetime");
 
     /* check cargs consistency against the supplied values */
     crit_err_ifm (tls_check_ctx(cargs), 
@@ -144,6 +326,9 @@ static SSL_CTX *tls_init_ctx (tls_ctx_args_t *cargs)
     dbg_err_if (tls_gendh_params(c, cargs->dh));
 #endif
 
+    /* protocol versions, ciphers and session tickets */
+    dbg_err_if (tls_set_protocol(c, cargs));
+
     /* set the session id context */
     dbg_err_if (tls_sid_context(c, &tls_sid));
 
@@ -181,7 +366,12 @@ static int tls_context (SSL_CTX **pc)
     c = SSL_CTX_new(TLS_server_method());
     dbg_err_ifm (c == NULL, "error creating SSL CTX: %s", tls_get_error());
     dbg_err_if (SSL_CTX_set_min_proto_version(c, TLS1_2_VERSION) != 1);
-    SSL_CTX_set_options(c, SSL_OP_NO_COMPRESSION);
+
+    /* no compression (CRIME); no renegotiation, which TLS 1.3 dropped and
+       TLS 1.2 clients have no need of; the server's cipher order, so the
+       best cipher both sides have is used */
+    SSL_CTX_set_options(c, SSL_OP_NO_COMPRESSION | SSL_OP_NO_RENEGOTIATION |
+            SSL_OP_CIPHER_SERVER_PREFERENCE);
 
     /* free the read/write buffers (~34 KB) of a connection while it is idle,
        e.g. between requests on a kept-alive connection */
@@ -235,11 +425,6 @@ static int tls_load_x509_creds (SSL_CTX *c, tls_ctx_args_t *cargs)
                 cargs->keymgr, cargs->sandbox) <= 0,
             "error loading the private key from %s", cargs->key);
 
-    /* RSA key exchange (TLS 1.2) decrypts with the private key, which the
-       key manager does not do; it has no forward secrecy anyway */
-    if (cargs->keymgr)
-        crit_err_ifm (SSL_CTX_set_cipher_list(c, "DEFAULT:!kRSA") != 1,
-                "cannot set the cipher list");
 
     /* check skey consistency against scert */
     crit_err_ifm (!SSL_CTX_check_private_key(c),
@@ -397,6 +582,10 @@ static int tls_init_ctx_args (tls_ctx_args_t *cargs)
     cargs->crlopts = 0;
     cargs->depth = 1;
     cargs->vmode = SSL_VERIFY_NONE;
+    cargs->ciphers = TLS_DEFAULT_CIPHERS;
+    cargs->suites = NULL;
+    cargs->minver = TLS1_2_VERSION;
+    cargs->ticket_period = TLS_TICKET_PERIOD;
 
     return 0;
 }

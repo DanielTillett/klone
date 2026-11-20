@@ -159,6 +159,10 @@ requests iteratively in a single process. -f overrides values in the
 embedded configuration. See klind(8) and klind.conf(5) in doc/man for all
 options.
 
+TLS: 1.2 or 1.3 (preferred), forward-secret AEAD ciphers only, no
+renegotiation, rotating session ticket keys, optional client certificates
+(doc/TLS).
+
 Sessions: HttpOnly, SameSite=Lax (and Secure over TLS) cookies, ids a
 client makes up refused, session_regenerate_id() at login, idle and
 absolute timeouts, client-side sessions sealed with AES-256-GCM, and CSRF

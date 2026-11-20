@@ -41,6 +41,11 @@ struct tls_ctx_args_s
     int vmode;              /* SSL verification mode */
     int keymgr;             /* the private key is held by a key manager */
     int sandbox;            /* ... in a sandbox (doc/SANDBOX)           */
+    /* protocol settings (doc/TLS) */
+    const char *ciphers;    /* TLS 1.2 cipher list                      */
+    const char *suites;     /* TLS 1.3 cipher suites (NULL: OpenSSL's)  */
+    int minver;             /* TLS1_2_VERSION or TLS1_3_VERSION         */
+    int ticket_period;      /* seconds a ticket key is used; 0: none    */
 };
 
 typedef struct tls_ctx_args_s tls_ctx_args_t;

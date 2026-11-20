@@ -1414,7 +1414,8 @@ def run_keymgr_checks(check, root_pid, key, sanitized):
             check(False, f"Cannot read the memory of klind process {pid}")
     # the key manager keeps only its control socket (and /dev/null)
     managers = {pid for pid in procs if pid != root_pid and few_fds(pid)}
-    check(len(managers) == 1 and holders == managers,
+    # one key manager per TLS server (two here), this key in one of them
+    check(len(managers) == 2 and len(holders) == 1 and holders <= managers,
           f"Private key found in {sorted(holders)}; key manager {sorted(managers)}, "
           f"processes {sorted(procs)}")
 
@@ -1715,6 +1716,110 @@ def run_session_checks(check, plain, client, files, limits, sessions):
           f"The absolute timeout ended a session in use at {ended} s (4 s to 6 s)")
 
 
+def make_client_ca(temp):
+    """A test CA and a client certificate it signs (mutual TLS)."""
+    def ssl_cmd(*args):
+        subprocess.run(["openssl", *args], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    ca, ca_key = temp / "ca.pem", temp / "ca-key.pem"
+    ccert, ckey, csr = temp / "client.pem", temp / "client-key.pem", temp / "client.csr"
+    ssl_cmd("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(ca_key),
+            "-out", str(ca), "-days", "1", "-subj", "/CN=Klin test CA")
+    ssl_cmd("req", "-newkey", "rsa:2048", "-nodes", "-keyout", str(ckey), "-out", str(csr),
+            "-subj", "/CN=alice")
+    ssl_cmd("x509", "-req", "-in", str(csr), "-CA", str(ca), "-CAkey", str(ca_key),
+            "-CAcreateserial", "-out", str(ccert), "-days", "1")
+    return ca, ccert, ckey
+
+
+def run_tls_checks(check, secure, mtls, client_cert):
+    """TLS settings (doc/TLS): TLS 1.3 when the client has it; for TLS 1.2,
+    forward-secret AEAD ciphers only; no renegotiation; session tickets
+    whose keys change (2 s on 'mtls'); client certificates ('mtls'
+    requires one)."""
+
+    def handshake(port, context):
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as raw:
+            with context.wrap_socket(raw, server_hostname="localhost") as tls:
+                return tls.version(), tls.cipher()[0]
+
+    def context(minimum=ssl.TLSVersion.TLSv1_2, maximum=ssl.TLSVersion.TLSv1_3, ciphers=None,
+                cert=False):
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE  # ephemeral local test certificate
+        ctx.minimum_version, ctx.maximum_version = minimum, maximum
+        if ciphers:
+            ctx.set_ciphers(ciphers)
+        if cert:
+            ctx.load_cert_chain(*client_cert)
+        return ctx
+
+    version, _ = handshake(secure, context())
+    check(version == "TLSv1.3", f"TLS 1.3 not chosen: {version}")
+    tls12 = ssl.TLSVersion.TLSv1_2
+    version, cipher = handshake(secure, context(tls12, tls12))
+    check(version == "TLSv1.2" and cipher.startswith(("ECDHE-", "DHE-")) and
+          ("GCM" in cipher or "CHACHA20" in cipher), f"TLS 1.2 cipher not modern: {cipher}")
+    for weak in ["AES128-SHA:AES256-SHA:AES128-GCM-SHA256",  # no forward secrecy
+                 "ECDHE-RSA-AES128-SHA:ECDHE-RSA-AES256-SHA384"]:  # CBC
+        try:
+            handshake(secure, context(tls12, tls12, weak))
+            check(False, f"A TLS 1.2 client with only {weak} was accepted")
+        except (ssl.SSLError, ConnectionResetError):
+            check(True, "")
+
+    # renegotiation (TLS 1.2: openssl s_client's R command) is refused
+    # (not -quiet: it sends R as data); stdin stays open for the attempt
+    client = subprocess.Popen(["openssl", "s_client", "-connect", f"127.0.0.1:{secure}", "-tls1_2"],
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    client.stdin.write(b"R\n")
+    client.stdin.flush()
+    time.sleep(2)
+    client.stdin.close()
+    out = client.communicate(timeout=20)[0].decode("latin-1")
+    check("RENEGOTIATING" in out and "no renegotiation" in out,
+          f"Renegotiation not refused: {out[-600:]}")
+
+    # mutual TLS: no certificate, no connection; with one, the handshake
+    # and a request work
+    try:
+        with socket.create_connection(("127.0.0.1", mtls), timeout=5) as raw:
+            with context().wrap_socket(raw, server_hostname="localhost") as tls:
+                tls.sendall(b"GET /static/hello.txt HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+                got = tls.recv(100)
+        check(not got.startswith(b"HTTP/1.1 200"), "A client without a certificate was served")
+    except (ssl.SSLError, ConnectionResetError, BrokenPipeError):
+        check(True, "")
+    reply = exchange(mtls, b"GET /static/hello.txt HTTP/1.1\r\nHost: localhost\r\n\r\n",
+                     context(cert=True))
+    check(b"200 OK" in reply, f"A client with a certificate was refused: {reply[:200]!r}")
+
+    # session tickets (openssl s_client keeps the session in a file): resumed
+    # by any worker, until the key has changed twice (2 s each)
+    saved = Path(client_cert[0]).with_name("tls-session.pem")
+
+    def visit(version, resume):
+        command = ["openssl", "s_client", "-connect", f"127.0.0.1:{mtls}", version,
+                   "-cert", str(client_cert[0]), "-key", str(client_cert[1]),
+                   "-sess_in" if resume else "-sess_out", str(saved)]
+        if not resume:
+            command.append("-ign_eof")   # read the response (and the ticket)
+        out = subprocess.run(command, input=b"GET /static/hello.txt HTTP/1.0\r\n\r\n",
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20).stdout
+        return out.decode("latin-1")
+
+    for version in ["-tls1_2", "-tls1_3"]:
+        first = visit(version, False)
+        check("\nNew, " in first, f"{version}: no handshake: {first[-400:]}")
+        again = [visit(version, True) for _ in range(3)]   # prefork: several workers
+        check(all("\nReused, " in out for out in again),
+              f"{version} session not resumed: {[o[-300:] for o in again]}")
+        time.sleep(4.5)
+        late = visit(version, True)
+        check("\nNew, " in late, f"{version} session resumed after its ticket key expired")
+
+
 def run_bad_auth_checks(check, daemon, env, temp):
     """Unsafe or broken auth (and route) configurations stop klind at
     startup, instead of serving the realm unprotected (the reason goes to
@@ -1866,7 +1971,8 @@ def run_server_checks(args, env, output, daemon):
         subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
                         "-keyout", str(key), "-out", str(cert), "-days", "1", "-subj", "/CN=localhost"],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        plain, client, secure, files, memlog, blocked, limits = (free_port() for _ in range(7))
+        plain, client, secure, files, memlog, blocked, limits, mtls = (free_port() for _ in range(8))
+        ca, client_cert, client_key = make_client_ca(temp)
         sessions = temp / "sessions"
         sessions.mkdir()
         config = temp / "klind.conf"
@@ -1884,7 +1990,9 @@ def run_server_checks(args, env, output, daemon):
                  "log\n    {\n        type memory\n    }\n    sandbox no"),
                 ("blocked", blocked, False, "memory", BLOCKED),
                 ("limits", limits, False,
-                 "memory\n        idle_timeout 2s\n        absolute_timeout 4s", LIMITS)]:
+                 "memory\n        idle_timeout 2s\n        absolute_timeout 4s", LIMITS),
+                ("mtls", mtls, True, "memory",
+                 f"ca_file {ca}\n    verify_mode require\n    tls_ticket_key_lifetime 2s")]:
             blocks.append(f"""{name}
 {{
     type {'https' if tls else 'http'}
@@ -1906,11 +2014,22 @@ def run_server_checks(args, env, output, daemon):
 }}
 """)
         # 'limits' sets its own keep-alive and worker counts
-        blocks[-1] = re.sub(r"\n    (keep_alive_timeout|prefork\.start_child|prefork\.max_child) \d+",
-                            "", blocks[-1])
+        # 'mtls' has its own server key: the key manager check counts where
+        # the 'secure' key is (one key manager), not two copies of one file
+        mtls_cert, mtls_key = temp / "mtls-cert.pem", temp / "mtls-key.pem"
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout",
+                        str(mtls_key), "-out", str(mtls_cert), "-days", "1", "-subj", "/CN=localhost"],
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        at = next(i for i, b in enumerate(blocks) if b.startswith("mtls\n"))
+        blocks[at] = blocks[at].replace(f"cert_file {cert}", f"cert_file {mtls_cert}").replace(
+            f"key_file {key}", f"key_file {mtls_key}")
+        at = next(i for i, b in enumerate(blocks) if b.startswith("limits\n"))
+        blocks[at] = re.sub(r"\n    (keep_alive_timeout|prefork\.start_child|prefork\.max_child) \d+",
+                            "", blocks[at])
         # blanks of every kind between the names: all servers must start (a
         # doubled or leading blank used to drop the ones after it)
-        config.write_text("server_list  plain client\tsecure  files memlog blocked limits\nallow_root yes\n" +
+        config.write_text("server_list  plain client\tsecure  files memlog blocked limits mtls\n"
+                          "allow_root yes\n" +
                           "\n".join(blocks))
         log_path = output / ("server-prefork-test.log" if args.prefork else "server-test.log")
         with log_path.open("w") as log:
@@ -2051,6 +2170,7 @@ def run_server_checks(args, env, output, daemon):
                 run_websocket_checks(check, plain, secure)
                 run_limit_checks(args, check, plain, limits, temp)
                 run_session_checks(check, plain, client, files, limits, sessions)
+                run_tls_checks(check, secure, mtls, (client_cert, client_key))
                 run_route_checks(args, check, plain)
                 run_access_checks(check, client, blocked, temp)
                 run_validation_checks(check, plain)

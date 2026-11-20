@@ -15,6 +15,17 @@ Klin 4.0.0:
 	  entries, so they survive a reconfigure. The Windows service keeps
 	  the name kloned. All of it is in cmake/klone_compat.cmake and the
 	  lines marked "before KLone was renamed Klin"
+	- releases and supply chain (doc/RELEASES): SECURITY.md (private
+	  reporting through GitHub); build/release.py makes a reproducible
+	  source tarball with the pinned LibU (it builds with CMake alone,
+	  offline), an SPDX 2.3 SBOM and SHA256SUMS; a release workflow signs
+	  them with GitHub artifact attestations (keyless, Sigstore) and makes
+	  a draft release, published by hand. Every workflow has
+	  "permissions: {}" at the top and per-job permissions, actions pinned
+	  to commit SHAs with their versions, and no untrusted values expanded
+	  into scripts, as test/run_release_checks.py checks; Dependabot
+	  updates the pins and the fuzzing image's digest; OpenSSF Scorecard
+	  runs weekly (results not published)
 	- files from the file system (doc/FILES): symbolic links are followed
 	  only to targets inside the dir_root or alias target the path was
 	  resolved under (follow_symlinks inside; no follows none, yes all,

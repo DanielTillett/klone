@@ -1,0 +1,120 @@
+KLIN RELEASES AND WORKFLOWS
+---------------------------
+
+RELEASE FILES
+
+A release is three files and two signatures:
+
+    klin-<version>.tar.gz          the tag's tracked files, and the pinned
+                                   LibU (build/dependencies.json) under
+                                   klin-<version>/libu
+    klin-<version>.spdx.json       SBOM (SPDX 2.3): Klin, LibU (contained),
+                                   and OpenSSL and zlib, which the build
+                                   links from the system and which are not
+                                   in the tarball
+    SHA256SUMS                     the two files' SHA-256 digests
+    klin-<version>.provenance.sigstore.json
+    klin-<version>.sbom.sigstore.json
+                                   the attestations (signatures) below, as
+                                   Sigstore bundles for offline checking
+
+The tarball builds with CMake alone, without git or network access:
+
+    tar xzf klin-4.0.0.tar.gz && cd klin-4.0.0
+    cmake -S . -B out -G Ninja && cmake --build out
+
+build/build.py needs a git checkout and is not used from a tarball.
+
+build/release.py writes the three files (into .build/dist by default). They
+depend only on the commit and the pinned LibU: every owner, time and mode
+in the tarball is fixed, so anyone can rebuild them from the tag and
+compare the digests with SHA256SUMS (with the same zlib, as gzip output
+can differ between zlib versions):
+
+    python3 build/release.py --ref v4.0.0 --out /tmp/check
+    diff /tmp/check/SHA256SUMS SHA256SUMS
+
+MAKING A RELEASE
+
+1. Set VERSION and add the release's section to the ChangeLog ("Klin
+   <version>:"), which becomes the release notes.
+2. Push a tag v<VERSION> on that commit (the tag must match VERSION).
+3. The release workflow (.github/workflows/release.yml) runs:
+     build   build/release.py and test/run_release_checks.py (the files are
+             reproducible, the SBOM matches them, and the tarball builds on
+             its own and its unit tests pass);
+     sign    GitHub artifact attestations: SLSA build provenance for the
+             tarball and the SBOM, and an SBOM attestation for the tarball;
+     draft   a DRAFT GitHub release with the files and the bundles.
+4. Review the draft (notes, files) and publish it by hand. Until then only
+   people with write access to the repository can see it.
+
+The workflow can also be started by hand from the Actions tab, for a tag
+that already exists.
+
+SIGNING
+
+The attestations are signed without a long-lived key: the workflow gets a
+short-lived certificate from Sigstore for its GitHub OIDC identity (this
+repository, this workflow, the tag), and the signature is recorded in
+Sigstore's public transparency log (Rekor). There is no private key to keep,
+rotate or lose, and a signature made anywhere other than this repository's
+release workflow does not verify. The log entry is public as soon as the
+workflow runs, before the draft is published.
+
+To check a downloaded release:
+
+    sha256sum -c SHA256SUMS
+    gh attestation verify klin-4.0.0.tar.gz --repo DanielTillett/klin
+    gh attestation verify klin-4.0.0.tar.gz --repo DanielTillett/klin \
+        --predicate-type https://spdx.dev/Document/v2.3
+
+or offline, with the bundle:
+
+    gh attestation verify klin-4.0.0.tar.gz --repo DanielTillett/klin \
+        --bundle klin-4.0.0.provenance.sigstore.json
+
+Tags and commits are not GPG- or SSH-signed (that needs a maintainer's key).
+
+WORKFLOWS
+
+Every workflow in .github/workflows follows the same rules, which
+test/run_release_checks.py checks (with samples of each mistake, which it
+must refuse) and continuous integration runs:
+
+  - actions are pinned to a full commit SHA, with the version as a comment
+    ("# v4.4.0"), so a moved or compromised tag cannot change what runs;
+  - "permissions: {}" at the top, and each job names the permissions it
+    needs (most only contents: read; writes are commented);
+  - actions/checkout does not keep the token in .git/config
+    (persist-credentials: false);
+  - no pull_request_target, and no event or input values expanded into a
+    run script (they go through env).
+
+actionlint and zizmor (a GitHub Actions security linter) also pass on
+them, with zizmor's pedantic checks; they are not run in CI.
+
+Dependabot (.github/dependabot.yml) opens weekly pull requests for new
+releases of the actions, updating the SHA and the comment (minor and patch
+updates together, each new major version on its own), and for the digest
+of the ClusterFuzzLite base image. LibU, and the OpenSSL tag, CMake and
+Ninja in .clusterfuzzlite/Dockerfile, are pinned and updated by hand.
+
+OpenSSF Scorecard (.github/workflows/scorecard.yml) checks the
+repository's supply-chain practices weekly and on pushes to master, into
+code scanning. Its results are not published (publish_results: false), so
+there is no Scorecard badge; setting it to true, with id-token: write on the
+job, publishes them to the public Scorecard API.
+
+SECURITY.md says how to report a vulnerability (privately, through GitHub)
+and what is supported.
+
+TESTED
+
+test/run_release_checks.py (in CI's release build): the workflow rules,
+two build/release.py runs giving the same bytes, the tarball's contents
+(every tracked file and LibU's, nothing else, owners, times, modes, order),
+the SBOM (SPDX 2.3, checksums, LibU's commit, relationships) and SHA256SUMS,
+and an offline build of the tarball with its unit tests. The SBOM also
+passes the SPDX project's validator (pyspdxtools). The release workflow
+itself has not run: it needs a tag push.

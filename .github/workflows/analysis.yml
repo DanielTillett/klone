@@ -21,7 +21,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
       - name: Install build tools
@@ -39,7 +39,7 @@ jobs:
           echo "clang-tidy: $findings findings" | tee -a "$GITHUB_STEP_SUMMARY"
           grep -E ': (warning|error): ' clang-tidy.log | sed 's|^'"$PWD"'/||' | sort -u | head -200 | tee -a "$GITHUB_STEP_SUMMARY"
           ! grep -qE ': error: ' clang-tidy.log
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: clang-tidy

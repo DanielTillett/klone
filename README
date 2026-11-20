@@ -172,6 +172,12 @@ Fuzzing: every parser a client reaches has a libFuzzer target (fuzz/,
 test/run_fuzz.py), run by ClusterFuzzLite on pull requests and daily;
 CodeQL, clang-tidy and Coverity Scan analyse the code (doc/FUZZING).
 
+Releases and supply chain: release tarballs are reproducible, come with an
+SPDX SBOM and are signed with GitHub artifact attestations (keyless,
+through Sigstore); workflows pin actions to commit SHAs with least-privilege
+tokens, Dependabot keeps the pins current and OpenSSF Scorecard checks the
+repository (doc/RELEASES). SECURITY.md says how to report a vulnerability.
+
 Limits: request header size and field count (431), body size (413),
 workers' memory, open files and processes, a
 header deadline against slow clients, connections per client address and
@@ -301,12 +307,18 @@ against the install tree alone (in a temporary directory):
     python3 test/run_build_checks.py [--generator G] [--make-program P]
 The fuzz runner uses GNU linker options, so it runs on Linux only.
 
+Release checks build the release files twice and compare them, check the
+SBOM and checksums, build the tarball offline and run its unit tests, and
+check every workflow's pins and permissions (doc/RELEASES; needs PyYAML):
+
+    python3 test/run_release_checks.py [--no-build]
+
 Continuous integration (.github/workflows/build.yml) runs on every push and
 pull request: the release and sanitizer builds and tests with CMake and
-Ninja on Linux and macOS, the fuzz test, and a build and test with BSD make
-(bmake) while any
-GNU make on the PATH is made to fail, proving GNU make is not needed. Build
-logs are uploaded.
+Ninja on Linux (and on macOS weekly and by hand), the fuzz test, the
+build-system and release checks, and a build and test with BSD make (bmake)
+while any GNU make on the PATH is made to fail, proving GNU make is not
+needed. Build logs are uploaded.
 
 
 RENAMED FROM KLONE

@@ -12,6 +12,10 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   scan:
     runs-on: ubuntu-latest
@@ -25,7 +29,7 @@ jobs:
       - name: Skipped until COVERITY_SCAN_TOKEN and COVERITY_EMAIL are set
         if: env.COVERITY_TOKEN == '' || env.COVERITY_EMAIL == ''
         run: echo "::notice::Coverity Scan skipped (no COVERITY_SCAN_TOKEN secret or COVERITY_EMAIL variable)"
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         if: env.COVERITY_TOKEN != '' && env.COVERITY_EMAIL != ''
         with:
           persist-credentials: false

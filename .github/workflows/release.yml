@@ -1,0 +1,118 @@
+# Release (doc/RELEASES): on a pushed tag v<VERSION>, or by hand from the
+# Actions tab for an existing tag, builds the source tarball, SBOM and
+# SHA256SUMS (build/release.py), checks that the tarball builds and serves
+# a page on its own, signs both files with GitHub artifact attestations
+# (build provenance, and the SBOM; keyless, through Sigstore) and creates a
+# DRAFT GitHub release with them. Nothing is published to the release page
+# until a maintainer reviews the draft and publishes it by hand.
+#
+# Signing uses the workflow's OIDC identity: there is no key to create or
+# store. In a public repository the signatures are recorded in Sigstore's
+# public transparency log (Rekor) when this workflow runs.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build a draft release for (vX.Y.Z)"
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          persist-credentials: false
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential libssl-dev zlib1g-dev python3 python3-yaml git cmake ninja-build
+      - name: Source tarball, SBOM and checksums
+        run: python3 build/release.py --tag "$TAG" --repo "$GITHUB_REPOSITORY" --out dist
+      - name: Release checks (reproducible, SBOM, the tarball builds alone)
+        run: python3 test/run_release_checks.py --dist dist
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  sign:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write          # the OIDC identity the signatures carry
+      attestations: write      # store the attestations with the repository
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist
+          path: dist
+      - name: Version
+        id: v
+        run: echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+      - name: Build provenance (SLSA) for the tarball and the SBOM
+        id: provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/klin-*
+      - name: SBOM attestation for the tarball
+        id: sbom
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/klin-*.tar.gz
+          sbom-path: dist/klin-${{ steps.v.outputs.version }}.spdx.json
+      - name: Collect the attestation bundles
+        env:
+          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
+          SBOM: ${{ steps.sbom.outputs.bundle-path }}
+        run: |
+          mkdir bundles
+          cp "$PROVENANCE" "bundles/klin-${TAG#v}.provenance.sigstore.json"
+          cp "$SBOM" "bundles/klin-${TAG#v}.sbom.sigstore.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bundles
+          path: bundles/
+          if-no-files-found: error
+
+  draft:
+    needs: sign
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write          # create the draft release
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: out
+      - name: Draft release (not published)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${TAG#v}"
+          # this version's ChangeLog section as the notes
+          awk -v v="Klin $version:" '{ sub(/\r$/, "") } /^(Klin|KLone) [0-9]/ { if (f) exit; f = ($0 == v); next }
+            f { sub(/^\t/, ""); print }' ChangeLog > notes.txt
+          test -s notes.txt
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+            --title "Klin $version" --notes-file notes.txt \
+            out/dist/* out/bundles/*

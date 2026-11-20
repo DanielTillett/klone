@@ -664,7 +664,7 @@ err:
  * hash Basic checks, and the Digest HA1 of each realm asked for */
 static int command_passwd(void)
 {
-    char pw[1024], hash[AUTH_PASSWORD_SZ], ha1[AUTH_HEX_SZ];
+    char pw[1024], hash[AUTH_PASSWORD_SZ], ha1[AUTH_HEX_SZ], *nl;
     const char *user;
     size_t i, len;
     int alg;
@@ -675,8 +675,9 @@ static int command_passwd(void)
             "a user name cannot contain ':', quotes, backslashes or blanks");
 
     klin_die_if(fgets(pw, sizeof pw, stdin) == NULL, "no password on stdin");
-    len = strcspn(pw, "\r\n");
-    pw[len] = '\0';
+    if((nl = strpbrk(pw, "\r\n")) != NULL)
+        *nl = '\0';
+    len = strlen(pw);
     klin_die_if(len == 0, "empty password");
 
     klin_die_if(auth_password_hash(pw, ctx->iterations ? (unsigned int)

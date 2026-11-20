@@ -78,7 +78,13 @@ STATIC ANALYSIS
     results are code-scanning alerts.
   - clang-tidy (analysis.yml, .clang-tidy): the clang static analyzer,
     bugprone and some CERT checks over src/; findings are listed in the
-    job summary and as an artifact.
+    job summary and as an artifact, and the analyzer's core, unix,
+    security and valist checks fail the job. The same locally:
+
+        CC=clang cmake -S . -B .build/tidy -G Ninja \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DKLIN_BUILD_TESTS=ON
+        cmake --build .build/tidy --target klin_utils
+        run-clang-tidy -p .build/tidy -quiet "$PWD/src/"
   - Coverity Scan (coverity.yml): weekly, once the repository has a
     COVERITY_SCAN_TOKEN secret and a COVERITY_EMAIL variable (and,
     optionally, COVERITY_PROJECT if the project is not named owner/repo).
